@@ -9,3 +9,7 @@ docker-compose.override.yml
 
 # Ignores any __pycache__ folder.
 __pycache__
+
+# Claude Code project settings (local only — not for team-wide sharing)
+.claude/settings.json
+.claude/settings.local.json

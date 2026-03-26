@@ -1,0 +1,80 @@
+name: Odoo Unit Tests
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'odoo/custom-addons/**'
+      - '.github/workflows/odoo-unit-tests.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'odoo/custom-addons/**'
+      - '.github/workflows/odoo-unit-tests.yml'
+
+jobs:
+  test:
+    name: Run gg_inventory tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: odoo_test
+          POSTGRES_USER: odoo
+          POSTGRES_PASSWORD: odoo
+        # Health check so the job waits until Postgres is ready.
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install unaccent extension
+        run: |
+          PGPASSWORD=odoo psql -h localhost -U odoo -d odoo_test \
+            -c "CREATE EXTENSION IF NOT EXISTS unaccent;"
+
+      - name: Run Odoo unit tests
+        run: |
+          docker run --rm \
+            --network host \
+            -v "${{ github.workspace }}/odoo/custom-addons:/mnt/extra-addons" \
+            -e DB_HOST=localhost \
+            -e DB_PORT=5432 \
+            -e DB_USER=odoo \
+            -e DB_PASSWORD=odoo \
+            -e DB_NAME=odoo_test \
+            --entrypoint /usr/bin/odoo \
+            odoo:19.0 \
+              --addons-path=/usr/lib/python3/dist-packages/odoo/addons,/mnt/extra-addons \
+              --db_host=localhost \
+              --db_port=5432 \
+              --db_user=odoo \
+              --db_password=odoo \
+              --database=odoo_test \
+              --init=gg_inventory \
+              --test-enable \
+              --test-tags=/gg_inventory \
+              --stop-after-init \
+              --workers=0 \
+              --no-http \
+              2>&1 | tee /tmp/odoo-test.log
+
+          # Fail the step if Odoo reported any test errors.
+          grep -q "FAIL\|ERROR" /tmp/odoo-test.log && exit 1 || true
+
+      - name: Upload test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: odoo-test-log
+          path: /tmp/odoo-test.log
+          retention-days: 14
