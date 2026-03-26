@@ -12,6 +12,9 @@ services:
     ports:
       - 5432:5432
 
+  custom-modules-sync:
+    restart: 'no'
+
   nginx:
     restart: 'no'
 
