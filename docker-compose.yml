@@ -110,9 +110,13 @@ services:
       - ./nginx/nginx.conf:${NGINX_CONF}
       - ./nginx/default.conf:${NGINX_DEFAULT_CONF}
     environment:
+      # VIRTUAL_HOST contains all domains (backend + client sites). nginx-proxy reads this
+      # and routes every listed domain to this container. Inner nginx uses server_name _
+      # (catch-all) and proxies everything to Odoo, which selects the correct website by $host.
       - VIRTUAL_HOST
       - LETSENCRYPT_HOST
       - LETSENCRYPT_EMAIL
+      - CLIENT_DOMAINS
       - CORS_ALLOWED_DOMAIN
     networks:
       - internal
