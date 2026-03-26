@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "universal-mail": {
-      "command": "universal-mail-mcp"
+      "command": "/Users/joshuadunbar/Documents/Dev Projects/universal-mail-mcp-setup/venv/bin/universal-mail-mcp"
     }
   }
 }
