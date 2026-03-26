@@ -6,11 +6,28 @@ services:
       - 127.0.0.1:8070:8070
       - 127.0.0.1:8071:8071
       - 127.0.0.1:8072:8072
+    deploy:
+      resources:
+        limits:
+          # Adjust to your DigitalOcean droplet size.
+          # Recommended minimum for 3 businesses + inventory: 4 GB RAM, 2 vCPU
+          memory: 2G
+        reservations:
+          memory: 512M
 
   postgres:
     restart: unless-stopped
     ports:
       - 127.0.0.1:5432:5432
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 256M
+
+  custom-modules-sync:
+    restart: unless-stopped
 
   nginx:
     restart: unless-stopped

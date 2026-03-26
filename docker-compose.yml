@@ -23,6 +23,8 @@ services:
       - ./odoo/extra-addons:${EXTRA_ADDONS}
       - ./odoo/custom-addons:${CUSTOM_ADDONS}
       - ./odoo/entrypoint.sh:/entrypoint.sh
+      # Shared volume for git-sync live module updates (managed by custom-modules-sync service)
+      - custom-modules-data:/workspace
     environment:
       - HOST=${DB_HOST}
       - PORT=${DB_PORT}
@@ -55,12 +57,30 @@ services:
     profiles: [$ODOO_PROFILES]
 
   postgres:
-    build: 
+    build:
       context: ./
       dockerfile: ./postgres/Dockerfile
       args:
         - POSTGRES_TAG
     tty: true
+    # Increase Docker's /dev/shm to match shared_buffers so PostgreSQL uses
+    # POSIX shared memory instead of slower mmap fallback.
+    # Rule of thumb: shm_size >= POSTGRES_SHARED_BUFFERS + 256MB headroom.
+    shm_size: '1536mb'
+    command: >
+      postgres
+      -c shared_buffers=${POSTGRES_SHARED_BUFFERS:-1GB}
+      -c effective_cache_size=${POSTGRES_EFFECTIVE_CACHE_SIZE:-3GB}
+      -c work_mem=${POSTGRES_WORK_MEM:-16MB}
+      -c maintenance_work_mem=${POSTGRES_MAINTENANCE_WORK_MEM:-256MB}
+      -c wal_buffers=${POSTGRES_WAL_BUFFERS:-16MB}
+      -c max_wal_size=${POSTGRES_MAX_WAL_SIZE:-4GB}
+      -c checkpoint_completion_target=0.9
+      -c random_page_cost=${POSTGRES_RANDOM_PAGE_COST:-1.1}
+      -c effective_io_concurrency=${POSTGRES_EFFECTIVE_IO_CONCURRENCY:-200}
+      -c log_min_duration_statement=${POSTGRES_LOG_MIN_DURATION_STATEMENT:-1000}
+      -c max_connections=${DB_MAXCONN:-100}
+      -c default_statistics_target=100
     volumes:
       - pg-data:${PGDATA}
       - ./postgres/entrypoint.sh:/docker-entrypoint-initdb.d/entrypoint.sh
@@ -90,9 +110,13 @@ services:
       - ./nginx/nginx.conf:${NGINX_CONF}
       - ./nginx/default.conf:${NGINX_DEFAULT_CONF}
     environment:
+      # VIRTUAL_HOST contains all domains (backend + client sites). nginx-proxy reads this
+      # and routes every listed domain to this container. Inner nginx uses server_name _
+      # (catch-all) and proxies everything to Odoo, which selects the correct website by $host.
       - VIRTUAL_HOST
       - LETSENCRYPT_HOST
       - LETSENCRYPT_EMAIL
+      - CLIENT_DOMAINS
       - CORS_ALLOWED_DOMAIN
     networks:
       - internal
@@ -206,6 +230,32 @@ services:
       - internal
     profiles: [$PGADMIN_PROFILES]
 
+  # Live custom-module sync — mounts the same volume as the odoo service at /workspace.
+  # git-sync clones CUSTOM_MODULES_REPO and creates /workspace/current -> latest checkout.
+  # Odoo reads modules from /workspace/current (included in ADDONS_PATH via SYNC_ADDONS).
+  # No image rebuild needed: push to your modules repo and changes appear within SYNC_PERIOD.
+  # Webhook endpoint: POST https://your-domain/modules-sync/ (proxied via nginx to port 9000)
+  custom-modules-sync:
+    image: registry.k8s.io/git-sync/git-sync:${GIT_SYNC_TAG:-v4.2.3}
+    # Run as root so it can write to the shared volume regardless of mount permissions
+    user: "0:0"
+    volumes:
+      - custom-modules-data:/workspace
+    environment:
+      - GITSYNC_REPO=${CUSTOM_MODULES_REPO}
+      - GITSYNC_BRANCH=${CUSTOM_MODULES_BRANCH:-main}
+      - GITSYNC_ROOT=/workspace
+      - GITSYNC_LINK=current
+      - GITSYNC_DEPTH=1
+      - GITSYNC_PERIOD=${CUSTOM_MODULES_SYNC_PERIOD:-30s}
+      # Exposes /metrics and /healthz; also accepts POST /sync for webhook-triggered pulls
+      - GITSYNC_HTTP_BIND=:9000
+      - GITSYNC_USERNAME=${GITHUB_USER}
+      - GITSYNC_PASSWORD=${GITHUB_ACCESS_TOKEN}
+    networks:
+      - internal
+    profiles: [$GIT_SYNC_PROFILES]
+
 volumes:
   odoo-data:
   pg-data:
@@ -216,6 +266,8 @@ volumes:
   vhost:
   certs:
   acme:
+  # Shared between custom-modules-sync (writer) and odoo (reader)
+  custom-modules-data:
 
 networks:
   internal:
