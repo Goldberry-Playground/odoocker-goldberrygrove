@@ -1,10 +1,7 @@
 {
   "mcpServers": {
-    "apple-mail": {
-      "command": "node",
-      "args": [
-        "/home/user/apple-mail-mcp-server/dist/index.js"
-      ]
+    "universal-mail": {
+      "command": "universal-mail-mcp"
     }
   }
 }
