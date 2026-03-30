@@ -1,0 +1,58 @@
+###############################################################################
+# Grove Multi-Tenant Ecosystem — Ghost CMS Services
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.override.grove.yml up
+###############################################################################
+
+services:
+  ghost-goldberry:
+    image: ghost:5-alpine
+    restart: unless-stopped
+    environment:
+      url: https://blog.goldberrygrove.farm
+      database__client: sqlite3
+      database__connection__filename: /var/lib/ghost/content/data/ghost.db
+      NODE_ENV: production
+    volumes:
+      - ghost-goldberry-data:/var/lib/ghost/content
+    expose:
+      - "2368"
+    networks:
+      - internal
+
+  ghost-ggg:
+    image: ghost:5-alpine
+    restart: unless-stopped
+    environment:
+      url: https://blog.georgeggg.com
+      database__client: sqlite3
+      database__connection__filename: /var/lib/ghost/content/data/ghost.db
+      NODE_ENV: production
+      PORT: "2369"
+    volumes:
+      - ghost-ggg-data:/var/lib/ghost/content
+    expose:
+      - "2369"
+    networks:
+      - internal
+
+  ghost-nursery:
+    image: ghost:5-alpine
+    restart: unless-stopped
+    environment:
+      url: https://blog.atthegrove.com
+      database__client: sqlite3
+      database__connection__filename: /var/lib/ghost/content/data/ghost.db
+      NODE_ENV: production
+      PORT: "2370"
+    volumes:
+      - ghost-nursery-data:/var/lib/ghost/content
+    expose:
+      - "2370"
+    networks:
+      - internal
+
+volumes:
+  ghost-goldberry-data:
+  ghost-ggg-data:
+  ghost-nursery-data:
