@@ -1,8 +1,9 @@
 import json
 import logging
 
+from odoo.http import Response, request
+
 from odoo import http
-from odoo.http import request, Response
 
 _logger = logging.getLogger(__name__)
 
@@ -107,12 +108,7 @@ class GroveHeadlessAPI(http.Controller):
             .with_company(current_company)
             .search(domain, limit=limit, offset=offset, order="name asc")
         )
-        total = (
-            request.env["product.template"]
-            .sudo()
-            .with_company(current_company)
-            .search_count(domain)
-        )
+        total = request.env["product.template"].sudo().with_company(current_company).search_count(domain)
 
         items = []
         for product in products:
@@ -121,12 +117,14 @@ class GroveHeadlessAPI(http.Controller):
                 data["image_url"] = f"/web/image/product.template/{product.id}/image_128"
                 items.append(data)
 
-        return _json_response({
-            "count": total,
-            "limit": limit,
-            "offset": offset,
-            "results": items,
-        })
+        return _json_response(
+            {
+                "count": total,
+                "limit": limit,
+                "offset": offset,
+                "results": items,
+            }
+        )
 
     # ── Product detail ───────────────────────────────────────────────────
 
@@ -145,11 +143,14 @@ class GroveHeadlessAPI(http.Controller):
             request.env["product.template"]
             .sudo()
             .with_company(current_company)
-            .search([
-                ("id", "=", product_id),
-                ("website_published", "=", True),
-                ("company_id", "in", [current_company.id, False]),
-            ], limit=1)
+            .search(
+                [
+                    ("id", "=", product_id),
+                    ("website_published", "=", True),
+                    ("company_id", "in", [current_company.id, False]),
+                ],
+                limit=1,
+            )
         )
 
         if not product:
@@ -184,27 +185,31 @@ class GroveHeadlessAPI(http.Controller):
 
         lines = []
         for line in sale_order.order_line:
-            lines.append({
-                "id": line.id,
-                "product_id": line.product_id.id,
-                "product_name": line.product_id.name,
-                "quantity": line.product_uom_qty,
-                "price_unit": line.price_unit,
-                "price_subtotal": line.price_subtotal,
-                "image_url": f"/web/image/product.product/{line.product_id.id}/image_128",
-            })
+            lines.append(
+                {
+                    "id": line.id,
+                    "product_id": line.product_id.id,
+                    "product_name": line.product_id.name,
+                    "quantity": line.product_uom_qty,
+                    "price_unit": line.price_unit,
+                    "price_subtotal": line.price_subtotal,
+                    "image_url": f"/web/image/product.product/{line.product_id.id}/image_128",
+                }
+            )
 
-        return _json_response({
-            "id": sale_order.id,
-            "lines": lines,
-            "amount_untaxed": sale_order.amount_untaxed,
-            "amount_tax": sale_order.amount_tax,
-            "amount_total": sale_order.amount_total,
-            "currency": {
-                "id": sale_order.currency_id.id,
-                "name": sale_order.currency_id.name,
-            },
-        })
+        return _json_response(
+            {
+                "id": sale_order.id,
+                "lines": lines,
+                "amount_untaxed": sale_order.amount_untaxed,
+                "amount_tax": sale_order.amount_tax,
+                "amount_total": sale_order.amount_total,
+                "currency": {
+                    "id": sale_order.currency_id.id,
+                    "name": sale_order.currency_id.name,
+                },
+            }
+        )
 
     @http.route(
         "/grove/api/v1/cart",
@@ -239,11 +244,14 @@ class GroveHeadlessAPI(http.Controller):
             request.env["product.product"]
             .sudo()
             .with_company(current_company)
-            .search([
-                ("id", "=", product_id),
-                ("website_published", "=", True),
-                ("company_id", "in", [current_company.id, False]),
-            ], limit=1)
+            .search(
+                [
+                    ("id", "=", product_id),
+                    ("website_published", "=", True),
+                    ("company_id", "in", [current_company.id, False]),
+                ],
+                limit=1,
+            )
         )
 
         if not product:

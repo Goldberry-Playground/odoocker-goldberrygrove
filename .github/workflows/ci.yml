@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  lint-python:
+    name: Lint Python (Odoo Modules)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install linters
+        run: pip install ruff
+
+      - name: Ruff check (custom addons)
+        run: ruff check odoo/custom-addons/ --select E,F,I --line-length 120
+
+      - name: Ruff format check (custom addons)
+        run: ruff format --check odoo/custom-addons/ --line-length 120
+
+  validate-compose:
+    name: Validate Docker Compose (Grove)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate grove overlay syntax
+        run: |
+          python3 -c "
+          import yaml, sys
+          for f in ['docker-compose.override.grove.yml', 'docker-compose.override.sandbox.yml']:
+              try:
+                  with open(f) as fh:
+                      yaml.safe_load(fh)
+                  print(f'{f}: valid YAML')
+              except Exception as e:
+                  print(f'{f}: INVALID — {e}')
+                  sys.exit(1)
+          "
+
+  validate-nginx:
+    name: Validate Nginx Config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check nginx grove config syntax
+        run: |
+          # Validate nginx config is parseable (basic structure check)
+          python3 -c "
+          import re, sys
+          with open('nginx/grove-ghost.conf') as f:
+              content = f.read()
+          # Check for balanced braces
+          opens = content.count('{')
+          closes = content.count('}')
+          if opens != closes:
+              print(f'Unbalanced braces: {opens} opens, {closes} closes')
+              sys.exit(1)
+          print(f'nginx/grove-ghost.conf: syntax OK ({opens} blocks)')
+          "
