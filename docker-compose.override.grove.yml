@@ -9,7 +9,7 @@ services:
     image: ghost:5-alpine
     restart: unless-stopped
     environment:
-      url: https://blog.goldberrygrove.farm
+      url: ${GHOST_GOLDBERRY_URL}
       database__client: sqlite3
       database__connection__filename: /var/lib/ghost/content/data/ghost.db
       NODE_ENV: production
@@ -24,7 +24,7 @@ services:
     image: ghost:5-alpine
     restart: unless-stopped
     environment:
-      url: https://blog.georgeggg.com
+      url: ${GHOST_GGG_URL}
       database__client: sqlite3
       database__connection__filename: /var/lib/ghost/content/data/ghost.db
       NODE_ENV: production
@@ -40,7 +40,7 @@ services:
     image: ghost:5-alpine
     restart: unless-stopped
     environment:
-      url: https://blog.atthegrove.com
+      url: ${GHOST_NURSERY_URL}
       database__client: sqlite3
       database__connection__filename: /var/lib/ghost/content/data/ghost.db
       NODE_ENV: production

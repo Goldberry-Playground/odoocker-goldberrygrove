@@ -22,19 +22,19 @@ services:
 
   ghost-goldberry:
     environment:
-      url: https://blog-sandbox.goldberrygrove.farm
+      url: ${SANDBOX_GHOST_GOLDBERRY_URL}
       NODE_ENV: development
     restart: "no"
 
   ghost-ggg:
     environment:
-      url: https://blog-sandbox.georgeggg.com
+      url: ${SANDBOX_GHOST_GGG_URL}
       NODE_ENV: development
     restart: "no"
 
   ghost-nursery:
     environment:
-      url: https://blog-sandbox.atthegrove.com
+      url: ${SANDBOX_GHOST_NURSERY_URL}
       NODE_ENV: development
     restart: "no"
 
