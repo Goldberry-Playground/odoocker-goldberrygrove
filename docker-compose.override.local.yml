@@ -31,6 +31,21 @@ services:
   letsencrypt:
     restart: 'no'
 
+  ghost-goldberry:
+    restart: 'no'
+    ports:
+      - 2368:2368
+
+  ghost-ggg:
+    restart: 'no'
+    ports:
+      - 2369:2369
+
+  ghost-nursery:
+    restart: 'no'
+    ports:
+      - 2370:2370
+
   redis:
     restart: 'no'
 

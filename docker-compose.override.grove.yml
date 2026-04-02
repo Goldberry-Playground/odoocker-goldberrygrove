@@ -28,7 +28,7 @@ services:
       database__client: sqlite3
       database__connection__filename: /var/lib/ghost/content/data/ghost.db
       NODE_ENV: production
-      PORT: "2369"
+      server__port: "2369"
     volumes:
       - ghost-ggg-data:/var/lib/ghost/content
     expose:
@@ -44,7 +44,7 @@ services:
       database__client: sqlite3
       database__connection__filename: /var/lib/ghost/content/data/ghost.db
       NODE_ENV: production
-      PORT: "2370"
+      server__port: "2370"
     volumes:
       - ghost-nursery-data:/var/lib/ghost/content
     expose:
