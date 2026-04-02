@@ -45,24 +45,12 @@ RUN touch ${LOG_PATH} && chown odoo:odoo ${LOG_PATH}
 #    APT Dependencies    #
 #------------------------#
 # Install Odoocker image dependencies
-RUN apt-get update && apt-get install -y \
-    # `zip` and `unzip` for filestore management
+RUN apt-get update && apt-get install -y --no-install-recommends \
     zip \
     unzip \
-    # `git` required packages
     git \
-    git-man \
-    less \
-    libcbor0.8 \
-    libcurl3-gnutls \
-    libedit2 \
-    liberror-perl \
-    libfido2-1 \
-    libxmuu1 \
     openssh-client \
     patch \
-    xauth \
-    # Remove apt lists
     && rm -rf /var/lib/apt/lists/*
 
 #---------------------#
@@ -71,7 +59,7 @@ RUN apt-get update && apt-get install -y \
 # Copy & Install PIP requirements
 COPY --chown=odoo:odoo ./odoo/requirements.txt /tmp/requirements.txt
 
-RUN python3 -m pip install -r /tmp/requirements.txt && \
+RUN python3 -m pip install --break-system-packages -r /tmp/requirements.txt && \
     rm /tmp/requirements.txt
 
 #--------------------------------------------#

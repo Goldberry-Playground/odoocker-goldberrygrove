@@ -22,10 +22,21 @@ jobs:
         run: pip install ruff
 
       - name: Ruff check (custom addons)
-        run: ruff check odoo/custom-addons/ --select E,F,I --line-length 120
+        run: |
+          # Skip if no Python files in custom-addons (modules moved to grove-odoo-modules repo)
+          if find odoo/custom-addons/ -name "*.py" | grep -q .; then
+            ruff check odoo/custom-addons/ --select E,F,I --line-length 120
+          else
+            echo "No Python files in custom-addons/, skipping"
+          fi
 
       - name: Ruff format check (custom addons)
-        run: ruff format --check odoo/custom-addons/ --line-length 120
+        run: |
+          if find odoo/custom-addons/ -name "*.py" | grep -q .; then
+            ruff format --check odoo/custom-addons/ --line-length 120
+          else
+            echo "No Python files in custom-addons/, skipping"
+          fi
 
   validate-compose:
     name: Validate Docker Compose (Grove)

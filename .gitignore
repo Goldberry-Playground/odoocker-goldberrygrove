@@ -9,3 +9,6 @@ docker-compose.override.yml
 
 # Ignores any __pycache__ folder.
 __pycache__
+
+# MCP server config (contains env-specific paths)
+.mcp.json

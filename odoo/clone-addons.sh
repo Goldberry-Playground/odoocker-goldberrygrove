@@ -44,7 +44,11 @@ clone_and_copy_modules() {
 
         # Clone the repo if should_clone is true and it's not already cloned
         if [[ $should_clone == true && ! -d "$repo_name" ]]; then
-            $clone_cmd --depth 1 --branch ${ODOO_TAG} --single-branch --no-tags
+            if ! $clone_cmd --depth 1 --branch ${ODOO_TAG} --single-branch --no-tags 2>/dev/null; then
+                echo "WARN: branch ${ODOO_TAG} not found for ${repo_name}, trying main..."
+                $clone_cmd --depth 1 --branch main --single-branch --no-tags 2>/dev/null || \
+                echo "WARN: skipping ${repo_name} — no compatible branch found"
+            fi
         fi
 
         # Copy the modules if the condition is true

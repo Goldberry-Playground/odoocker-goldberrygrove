@@ -1,6 +1,10 @@
 services:
   odoo:
     restart: 'no'
+    volumes:
+      # Bind mount local grove-odoo-modules clone for instant code changes.
+      # Overrides the git-sync shared volume — no git-sync needed locally.
+      - ../grove-odoo-modules:/workspace/current
     ports:
       - 8069:8069
       - 8070:8070

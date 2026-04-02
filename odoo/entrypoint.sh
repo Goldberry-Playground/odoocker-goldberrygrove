@@ -6,7 +6,7 @@ set -e
 # even when the custom-modules-sync container is not running.
 # When git-sync IS running it replaces /workspace/current with a symlink to the
 # latest module checkout — Odoo follows symlinks in addons_path correctly.
-mkdir -p /workspace/current
+mkdir -p /workspace/current 2>/dev/null || true
 
 while IFS='=' read -r key value || [[ -n $key ]]; do
     # Skip comments and empty lines
