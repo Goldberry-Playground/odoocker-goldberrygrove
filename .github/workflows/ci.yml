@@ -22,7 +22,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
       - run: pip install ruff
       - name: Ruff check
         run: |
@@ -50,43 +49,43 @@ jobs:
           [ -f .env.example ] && cp .env.example .env
           [ -f .env.grove.example ] && cp .env.grove.example .env.grove || true
 
-      - name: Validate base + local overlay
+      # Note: docker-compose.override.local.yml partially overrides ghost-*
+      # services (port mappings only). Their actual image is declared in
+      # override.grove.yml — so the local overlay is INVALID without grove.
+      # Same applies to sandbox and production overlays. Each combination
+      # below must include override.grove.yml.
+
+      - name: Validate base + local + grove
         run: |
           docker compose \
             -f docker-compose.yml \
             -f docker-compose.override.local.yml \
-            --profile odoo --profile postgres \
+            -f docker-compose.override.grove.yml \
+            --env-file .env --env-file .env.grove \
+            --profile odoo --profile postgres --profile ghost \
             config --quiet
 
-      - name: Validate base + local + grove overlay
+      - name: Validate base + production + grove
         run: |
-          if [ -f docker-compose.override.grove.yml ]; then
+          if [ -f docker-compose.override.production.yml ]; then
             docker compose \
               -f docker-compose.yml \
-              -f docker-compose.override.local.yml \
               -f docker-compose.override.grove.yml \
+              -f docker-compose.override.production.yml \
               --env-file .env --env-file .env.grove \
               --profile odoo --profile postgres --profile ghost \
               config --quiet
           fi
 
-      - name: Validate base + production overlay
-        run: |
-          if [ -f docker-compose.override.production.yml ]; then
-            docker compose \
-              -f docker-compose.yml \
-              -f docker-compose.override.production.yml \
-              --profile odoo --profile postgres \
-              config --quiet
-          fi
-
-      - name: Validate base + sandbox overlay
+      - name: Validate base + sandbox + grove
         run: |
           if [ -f docker-compose.override.sandbox.yml ]; then
             docker compose \
               -f docker-compose.yml \
+              -f docker-compose.override.grove.yml \
               -f docker-compose.override.sandbox.yml \
-              --profile odoo --profile postgres \
+              --env-file .env --env-file .env.grove \
+              --profile odoo --profile postgres --profile ghost \
               config --quiet
           fi
 
@@ -95,14 +94,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Brace balance + reserved-word smell test
+      - name: Brace balance smell test
         run: |
           python3 - <<'PY'
           import pathlib, re, sys
           fail = False
           for conf in pathlib.Path("nginx").glob("*.conf"):
               text = conf.read_text()
-              # Strip comments before counting braces.
               stripped = re.sub(r"#[^\n]*", "", text)
               opens = stripped.count("{")
               closes = stripped.count("}")
@@ -110,7 +108,6 @@ jobs:
                   print(f"  {conf}: FAIL — unbalanced braces ({opens} opens, {closes} closes)")
                   fail = True
                   continue
-
               print(f"  {conf}: ok ({opens} blocks)")
           if fail:
               sys.exit(1)
@@ -131,11 +128,16 @@ jobs:
           sed -i 's/^APP_ENV=.*/APP_ENV=local/' .env || true
           [ -f .env.grove.example ] && cp .env.grove.example .env.grove || true
 
+      # Same overlay rule as validate-compose: local needs grove for ghost
+      # services to have an image. We skip --profile ghost to keep the test
+      # fast — only Odoo+Postgres need to come up for the smoke check.
       - name: Start Postgres + Odoo
         run: |
           docker compose \
             -f docker-compose.yml \
             -f docker-compose.override.local.yml \
+            -f docker-compose.override.grove.yml \
+            --env-file .env --env-file .env.grove \
             --profile odoo --profile postgres \
             up -d
 
@@ -159,5 +161,7 @@ jobs:
           docker compose \
             -f docker-compose.yml \
             -f docker-compose.override.local.yml \
+            -f docker-compose.override.grove.yml \
+            --env-file .env --env-file .env.grove \
             --profile odoo --profile postgres \
             down -v
