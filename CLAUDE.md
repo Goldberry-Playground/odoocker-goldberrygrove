@@ -2,8 +2,8 @@
 
 Multi-tenant Docker Compose stack for **Gather at the Grove** ecosystem:
 - **Goldberry Grove Farm** (`goldberrygrove.farm`)
-- **GGG Woodworking** (`woodworkingeorge.com`)
-- **At The Grove Nursery** (`atthegrovenursery.com`)
+- **George George George Woodworking, LLC** (`woodworkingeorge.com`)
+- **At The Grove Nursery, LLC** (`atthegrovenursery.com`)
 
 ## Stack
 

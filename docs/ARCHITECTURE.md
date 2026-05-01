@@ -65,9 +65,9 @@ sequenceDiagram
 ```mermaid
 graph LR
     subgraph "Single Odoo Database"
-        C1[Company 1: Goldberry Grove]
-        C2[Company 2: GGG Woodworking]
-        C3[Company 3: At The Grove Nursery]
+        C1[Company 1: Goldberry Grove Farm]
+        C2[Company 2: George George George Woodworking, LLC]
+        C3[Company 3: At The Grove Nursery, LLC]
     end
 
     subgraph "Record Rules"
