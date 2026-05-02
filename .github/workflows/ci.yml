@@ -141,18 +141,33 @@ jobs:
             --profile odoo --profile postgres \
             up -d
 
-      - name: Wait for Odoo to respond
+      - name: Wait for Odoo to respond (up to 10 minutes)
         run: |
-          for i in $(seq 1 60); do
+          # GitHub runners are slower than dev machines — Odoo 19 cold-boot
+          # can take 4-6 minutes here. 120 polls × 5s = 10 min budget.
+          for i in $(seq 1 120); do
             if curl -fsS -o /dev/null http://localhost:8069/web/database/manager 2>/dev/null \
                || curl -fsS -o /dev/null http://localhost:8069/web/login 2>/dev/null; then
-              echo "Odoo responding after ${i} polls"
+              echo "Odoo responding after ${i} polls (~$((i * 5))s)"
               exit 0
+            fi
+            # Every 30s, dump the last few log lines so a failure can be
+            # diagnosed from the workflow output without re-running.
+            if [ $((i % 6)) -eq 0 ]; then
+              echo "::group::Odoo logs (poll ${i})"
+              docker compose -f docker-compose.yml \
+                -f docker-compose.override.local.yml \
+                -f docker-compose.override.grove.yml \
+                logs --tail=20 odoo 2>&1 || true
+              echo "::endgroup::"
             fi
             sleep 5
           done
-          echo "::error::Odoo never came online"
-          docker compose logs odoo postgres
+          echo "::error::Odoo never came online after 10 minutes"
+          docker compose -f docker-compose.yml \
+            -f docker-compose.override.local.yml \
+            -f docker-compose.override.grove.yml \
+            logs odoo postgres
           exit 1
 
       - name: Tear down
