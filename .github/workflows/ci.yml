@@ -15,7 +15,7 @@ env:
 
 jobs:
   lint-python:
-    name: Lint Python (custom addons)
+    name: Lint Python (Odoo Modules)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -39,7 +39,7 @@ jobs:
           fi
 
   validate-compose:
-    name: Validate docker compose config
+    name: Validate Docker Compose (Grove)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -90,7 +90,7 @@ jobs:
           fi
 
   validate-nginx-syntax:
-    name: Validate nginx textual syntax
+    name: Validate Nginx Config
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
