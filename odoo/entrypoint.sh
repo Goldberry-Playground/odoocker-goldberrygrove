@@ -8,6 +8,31 @@ set -e
 # latest module checkout — Odoo follows symlinks in addons_path correctly.
 mkdir -p /workspace/current 2>/dev/null || true
 
+# Hash the admin_passwd in odoo.conf so Odoo 19 accepts it.
+# The .env → odoorc.sh pipeline writes plaintext, but Odoo 19 requires
+# pbkdf2-hashed passwords for the database manager.
+if command -v python3 &>/dev/null && [ -f "${ODOO_RC:-/usr/lib/python3/dist-packages/odoo/odoo.conf}" ]; then
+    python3 -c "
+import re, sys
+from pathlib import Path
+try:
+    from passlib.context import CryptContext
+    conf = Path('${ODOO_RC:-/usr/lib/python3/dist-packages/odoo/odoo.conf}')
+    text = conf.read_text()
+    m = re.search(r'^admin_passwd\s*=\s*(.+)$', text, re.MULTILINE)
+    if m:
+        val = m.group(1).strip()
+        if not val.startswith('\$pbkdf2'):
+            ctx = CryptContext(schemes=['pbkdf2_sha512'])
+            hashed = ctx.hash(val)
+            text = text[:m.start(1)] + hashed + text[m.end(1):]
+            conf.write_text(text)
+            print(f'Hashed admin_passwd in odoo.conf')
+except Exception as e:
+    print(f'WARN: could not hash admin_passwd: {e}', file=sys.stderr)
+" 2>&1 || true
+fi
+
 while IFS='=' read -r key value || [[ -n $key ]]; do
     # Skip comments and empty lines
     [[ $key =~ ^#.* ]] || [[ -z $key ]] && continue

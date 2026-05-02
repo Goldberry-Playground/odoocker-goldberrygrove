@@ -20,7 +20,7 @@ Unified DevOps skill for the Gather at the Grove ecosystem — covers local test
 with OrbStack, DigitalOcean droplet deployment, sandbox/QA environments, and CI/CD.
 
 **Stack**: Odoo 19 + PostgreSQL 17 + Nginx + Ghost CMS (x3) + KeyDB + MinIO
-**Tenants**: Goldberry Grove Farm, GGG Woodworking, At The Grove Nursery
+**Tenants**: Goldberry Grove Farm, George George George Woodworking LLC, At The Grove Nursery LLC
 **Infrastructure**: DigitalOcean Droplet (Docker Compose) + OrbStack (local dev)
 
 ---
@@ -210,7 +210,7 @@ docker compose config --services
 |--------|---------|-----------|
 | `erp.gatheringatthegrove.com` | Odoo backend/admin | Droplet IP |
 | `goldberrygrove.farm` | Goldberry Grove website | Droplet IP |
-| `woodworkingeorge.com` | GGG Woodworking website | Droplet IP |
+| `woodworkingeorge.com` | George George George Woodworking LLC website | Droplet IP |
 | `atthegrovenursery.com` | At The Grove Nursery website | Droplet IP |
 | `blog.goldberrygrove.farm` | Ghost CMS (Goldberry) | Droplet IP |
 | `blog.woodworkingeorge.com` | Ghost CMS (GGG) | Droplet IP |
