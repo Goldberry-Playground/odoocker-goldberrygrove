@@ -10,6 +10,9 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 env:
   PYTHON_VERSION: "3.12"
 
@@ -17,8 +20,10 @@ jobs:
   no-tracked-env-files:
     name: Reject tracked .env files
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
       # Single source of truth against the "real .env got committed" leak class.
       # Operator-owned .env files (.env, .env.local, .env.production, .env.grove,
       # .env.monitoring) MUST never appear in git history. Example/template files
@@ -36,12 +41,16 @@ jobs:
   lint-python:
     name: Lint Python (Odoo Modules)
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-      - run: pip install ruff
+      - name: Install ruff
+        run: pip install ruff
       - name: Ruff check
         run: |
           if find odoo/custom-addons/ -name "*.py" 2>/dev/null | grep -q .; then
@@ -60,8 +69,10 @@ jobs:
   validate-compose:
     name: Validate Docker Compose (Grove)
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Stub env files
         run: |
@@ -111,8 +122,10 @@ jobs:
   validate-nginx-syntax:
     name: Validate Nginx Config
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
       - name: Brace balance smell test
         run: |
           python3 - <<'PY'
@@ -138,8 +151,10 @@ jobs:
   stack-smoke-test:
     name: Backend stack smoke test
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Stub env files
         run: |
