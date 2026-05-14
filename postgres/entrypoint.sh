@@ -17,30 +17,46 @@ source /.env
 : "${DB_USER:?required for postgres init}"
 : "${DB_PASSWORD:?required for postgres init}"
 
-# All psql commands below use `-v var=value` for parameter binding and
-# `:"var"` (quoted identifier) / `:'var'` (quoted string) substitution.
-# This stops SQL injection via DB_USER / DB_PASSWORD / DB_TEMPLATE values
-# that contain single quotes or backslashes. Previously these were
-# interpolated unquoted into psql -c "...$VAR..." strings.
+# psql variable substitution (:'var' / :"var") only works when SQL is
+# read from stdin / `-f file`, NOT from `-c` (per the psql manual). We
+# pipe via HEREDOC so the substitution actually runs — passing user-
+# supplied identifiers/values to psql in a way that's safe against
+# embedded quotes or backslashes.
+#
+# Previously these were interpolated unquoted into `psql -c "...$VAR..."`
+# strings — a single quote in DB_PASSWORD or DB_TEMPLATE would break the
+# statement; a crafted value could execute arbitrary SQL.
 
-PSQL_ADMIN="psql -p ${POSTGRES_PORT} -U ${POSTGRES_MAIN_USER}"
+PG_FLAGS=(-p "${POSTGRES_PORT}" -U "${POSTGRES_MAIN_USER}" -v ON_ERROR_STOP=1)
 
-# Create the $DB_TEMPLATE database and install unaccent.
-${PSQL_ADMIN} -d "${POSTGRES_DB}" -v t="${DB_TEMPLATE}" -c 'CREATE DATABASE :"t" WITH TEMPLATE = template0;'
-${PSQL_ADMIN} -d "${DB_TEMPLATE}" -c "CREATE EXTENSION IF NOT EXISTS unaccent;"
-${PSQL_ADMIN} -d "${DB_TEMPLATE}" -c "ALTER FUNCTION unaccent(text) IMMUTABLE;"
+# Create the DB_TEMPLATE database and install unaccent.
+psql "${PG_FLAGS[@]}" -d "${POSTGRES_DB}" \
+    -v t="${DB_TEMPLATE}" <<-'EOSQL'
+    CREATE DATABASE :"t" WITH TEMPLATE = template0;
+EOSQL
+
+psql "${PG_FLAGS[@]}" -d "${DB_TEMPLATE}" <<-'EOSQL'
+    CREATE EXTENSION IF NOT EXISTS unaccent;
+    ALTER FUNCTION unaccent(text) IMMUTABLE;
+EOSQL
 
 # Create Odoo user with the configured password and grant CREATEDB.
-${PSQL_ADMIN} -d "${POSTGRES_DB}" \
-    -v u="${DB_USER}" -v p="${DB_PASSWORD}" \
-    -c 'CREATE USER :"u" WITH PASSWORD :'\''p'\'';'
-${PSQL_ADMIN} -d "${POSTGRES_DB}" -v u="${DB_USER}" -c 'ALTER USER :"u" CREATEDB;'
+psql "${PG_FLAGS[@]}" -d "${POSTGRES_DB}" \
+    -v u="${DB_USER}" -v p="${DB_PASSWORD}" <<-'EOSQL'
+    CREATE USER :"u" WITH PASSWORD :'p';
+    ALTER USER :"u" CREATEDB;
+EOSQL
 
 # Grant template access to the Odoo user.
-${PSQL_ADMIN} -d "${POSTGRES_DB}" -v t="${DB_TEMPLATE}" -v u="${DB_USER}" \
-    -c 'GRANT ALL PRIVILEGES ON DATABASE :"t" TO :"u";'
-${PSQL_ADMIN} -d "${DB_TEMPLATE}" -v t="${DB_TEMPLATE}" -v u="${DB_USER}" \
-    -c 'ALTER DATABASE :"t" OWNER TO :"u";'
+psql "${PG_FLAGS[@]}" -d "${POSTGRES_DB}" \
+    -v t="${DB_TEMPLATE}" -v u="${DB_USER}" <<-'EOSQL'
+    GRANT ALL PRIVILEGES ON DATABASE :"t" TO :"u";
+EOSQL
+
+psql "${PG_FLAGS[@]}" -d "${DB_TEMPLATE}" \
+    -v t="${DB_TEMPLATE}" -v u="${DB_USER}" <<-'EOSQL'
+    ALTER DATABASE :"t" OWNER TO :"u";
+EOSQL
 
 # Optional: PgAdmin's own metadata database. NOTE the upstream typo
 # `PGADMING_*` (with a stray G) is preserved here because the rest of the
@@ -51,21 +67,21 @@ if [[ "${USE_PGADMIN}" == "true" ]]; then
     : "${PGADMING_DB_USER:?required when USE_PGADMIN=true}"
     : "${PGADMIN_DB_PASSWORD:?required when USE_PGADMIN=true}"
 
-    ${PSQL_ADMIN} -d "${POSTGRES_DB}" -v n="${PGADMING_DB_NAME}" \
-        -c 'CREATE DATABASE :"n";'
-    ${PSQL_ADMIN} -d "${POSTGRES_DB}" \
-        -v u="${PGADMING_DB_USER}" -v p="${PGADMIN_DB_PASSWORD}" \
-        -c 'CREATE USER :"u" WITH PASSWORD :'\''p'\'';'
-    ${PSQL_ADMIN} -d "${POSTGRES_DB}" \
-        -v n="${PGADMING_DB_NAME}" -v u="${PGADMING_DB_USER}" \
-        -c 'GRANT ALL PRIVILEGES ON DATABASE :"n" TO :"u";'
-    ${PSQL_ADMIN} -d "${PGADMING_DB_NAME}" \
+    psql "${PG_FLAGS[@]}" -d "${POSTGRES_DB}" \
+        -v n="${PGADMING_DB_NAME}" \
         -v u="${PGADMING_DB_USER}" \
-        -c 'GRANT ALL PRIVILEGES ON SCHEMA public TO :"u";'
-    # Revoke Odoo user's access to pgadmin database.
-    ${PSQL_ADMIN} -d "${POSTGRES_DB}" \
-        -v n="${PGADMING_DB_NAME}" -v u="${DB_USER}" \
-        -c 'REVOKE CONNECT ON DATABASE :"n" FROM :"u";'
+        -v p="${PGADMIN_DB_PASSWORD}" \
+        -v odoo="${DB_USER}" <<-'EOSQL'
+        CREATE DATABASE :"n";
+        CREATE USER :"u" WITH PASSWORD :'p';
+        GRANT ALL PRIVILEGES ON DATABASE :"n" TO :"u";
+        REVOKE CONNECT ON DATABASE :"n" FROM :"odoo";
+EOSQL
+
+    psql "${PG_FLAGS[@]}" -d "${PGADMING_DB_NAME}" \
+        -v u="${PGADMING_DB_USER}" <<-'EOSQL'
+        GRANT ALL PRIVILEGES ON SCHEMA public TO :"u";
+EOSQL
 fi
 
 echo "Setup completed."

@@ -85,5 +85,13 @@ RUN /clone-addons.sh
 COPY --chown=odoo:odoo ./odoo/odoo.conf /
 COPY --chown=odoo:odoo ./odoo/odoorc.sh /
 
+# Pre-create ${ODOO_RC} with odoo ownership so the runtime odoorc.sh
+# (which executes as the `odoo` user) can rewrite it. Without this the
+# script's `cp /odoo.conf $ODOO_RC` fails with "Permission denied" on
+# the default Odoo image where /usr/lib/python3/dist-packages/odoo/ is
+# root-owned. We seed with the literal template so the file is valid
+# even before the first substitution pass; subsequent boots overwrite.
+RUN install -D -o odoo -g odoo -m 644 /odoo.conf "${ODOO_RC}"
+
 # Switch back to odoo user
 USER odoo
