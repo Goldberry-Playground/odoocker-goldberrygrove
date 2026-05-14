@@ -8,6 +8,16 @@ set -e
 # latest module checkout — Odoo follows symlinks in addons_path correctly.
 mkdir -p /workspace/current 2>/dev/null || true
 
+# Generate odoo.conf from /odoo.conf template + /.env (bind-mounted at
+# runtime). Previously /odoorc.sh ran at BUILD time, which required
+# baking /.env into the image. Moving it here keeps secrets out of
+# every image layer; the trade-off is a 1-2s startup cost. The script
+# runs as the `odoo` user (image USER), so generated files inherit
+# the right ownership without an explicit chown.
+if [ -x /odoorc.sh ] && [ -f /.env ]; then
+    cd / && /odoorc.sh
+fi
+
 # Hash the admin_passwd in odoo.conf so Odoo 19 accepts it.
 # The .env → odoorc.sh pipeline writes plaintext, but Odoo 19 requires
 # pbkdf2-hashed passwords for the database manager.

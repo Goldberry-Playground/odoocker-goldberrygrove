@@ -36,21 +36,37 @@ if [[ $USE_SENTRY == "true" ]]; then
     LOAD+=",sentry"
 fi
 
-# Copy the example conf to the destination to start replacing the variables
-cp "$TEMPLATE_CONF" "$ODOO_RC"
+# Generate the substituted conf in a writable temp location, then
+# truncate-and-write the final destination. This matters at runtime:
+# odoorc.sh now runs as the `odoo` user (it used to run as root at
+# build time), and $ODOO_RC typically lives in /usr/lib/python3/dist-
+# packages/odoo/ which is root-owned. `sed -i` writes its temp file
+# into the SAME directory as the target — that fails with "Permission
+# denied" when the parent dir isn't writable, even if the target file
+# itself is owned by us. Writing to $TEMP_RC (in /tmp, writable by
+# every user) then `cat > $ODOO_RC` opens the destination with O_TRUNC
+# which only needs write access to the FILE, not the parent dir.
+TEMP_RC=$(mktemp)
+trap "rm -f \"$TEMP_RC\"" EXIT
 
-# Second pass: Replace the variables in $ODOO_RC
+cp "$TEMPLATE_CONF" "$TEMP_RC"
+
+# Second pass: replace each ${VAR} placeholder with the resolved value.
 while IFS='=' read -r key value || [[ -n $key ]]; do
     # Skip comments and empty lines
     [[ $key =~ ^#.* ]] || [[ -z $key ]] && continue
-    
+
     value=${!key} # Get the value of the variable whose name is $key
-    
+
     # Escape characters which are special to sed
     value_escaped=$(echo "$value" | sed 's/[\/&]/\\&/g')
-    
-    # Replace occurrences of the key with the value in $ODOO_RC
-    sed -i "s/\${$key}/${value_escaped}/g" "$ODOO_RC"
+
+    # Substitute in the temp file (whose parent dir IS writable).
+    sed -i "s/\${$key}/${value_escaped}/g" "$TEMP_RC"
 done < .env
+
+# Truncate-write the target. Requires write access to the FILE only;
+# the Dockerfile pre-creates it with odoo ownership at build time.
+cat "$TEMP_RC" > "$ODOO_RC"
 
 echo "Configuration file is generated at $ODOO_RC"

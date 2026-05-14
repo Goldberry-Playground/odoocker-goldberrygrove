@@ -23,6 +23,11 @@ services:
       - ./odoo/extra-addons:${EXTRA_ADDONS}
       - ./odoo/custom-addons:${CUSTOM_ADDONS}
       - ./odoo/entrypoint.sh:/entrypoint.sh
+      # Bind-mount .env at runtime instead of baking it into the image.
+      # The Dockerfile no longer `COPY`s .env, so secrets don't live in
+      # any image layer. Read-only mount = container can't tamper with
+      # the operator's source-of-truth.
+      - ./.env:/.env:ro
       # Shared volume for git-sync live module updates (managed by custom-modules-sync service)
       - custom-modules-data:/workspace
     environment:
@@ -84,12 +89,15 @@ services:
     volumes:
       - pg-data:${PGDATA}
       - ./postgres/entrypoint.sh:/docker-entrypoint-initdb.d/entrypoint.sh
+      # Bind-mount .env at runtime instead of baking it into the image.
+      - ./.env:/.env:ro
     environment:
       - POSTGRES_DB
       - POSTGRES_USER
       - POSTGRES_PASSWORD
       - PGDATA
       - DB_USER
+      - DB_PASSWORD
       - DB_TEMPLATE
       - UNACCENT_TEMPLATE
       - PGADMING_DB_NAME
@@ -204,6 +212,9 @@ services:
       - 80
     volumes:
       - pgadmin-data:${PGADMIN_DATA}
+      # Bind-mount .env at runtime — start_pgadmin.sh sources this at
+      # container start. Dockerfile no longer bakes the file.
+      - ./.env:/.env:ro
     environment:
       - PGADMIN_DEFAULT_EMAIL
       - PGADMIN_DEFAULT_PASSWORD
