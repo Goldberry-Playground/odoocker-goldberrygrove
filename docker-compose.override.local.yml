@@ -21,12 +21,26 @@ services:
 
   nginx:
     restart: 'no'
+    volumes:
+      # Layer the dev-only CORS origins (localhost:3000-3003) alongside
+      # the prod allowlist. The base compose mounts ./nginx/snippets
+      # (prod-safe content only); this single-file mount adds the dev
+      # file at the same /etc/nginx/snippets/cors-allowlist-dev.conf path
+      # that cors-allowlist.conf includes via wildcard. The prod stack
+      # never sees this file, so prod responses cannot echo
+      # Access-Control-Allow-Origin for any http://localhost:* request.
+      - ./nginx/snippets-dev/cors-allowlist-dev.conf:/etc/nginx/snippets/cors-allowlist-dev.conf:ro
 
   nginx-proxy:
     restart: 'no'
     ports:
       - 80:80
       - 443:443
+    volumes:
+      # Same dev-allowlist overlay as the inner nginx — both tiers must
+      # agree on the origin set, or a preflight that succeeds on one tier
+      # will fail on the other.
+      - ./nginx/snippets-dev/cors-allowlist-dev.conf:/etc/nginx/snippets/cors-allowlist-dev.conf:ro
 
   letsencrypt:
     restart: 'no'
