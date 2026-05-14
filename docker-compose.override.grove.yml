@@ -4,9 +4,15 @@
 #   docker compose -f docker-compose.yml -f docker-compose.override.grove.yml up
 ###############################################################################
 
+# Ghost image is pinned by content-addressable SHA256 digest below. There
+# is no GHOST_TAG env var because all three tenants share the same image
+# and tenant differs only by `url` + port. To upgrade Ghost, re-run
+# `docker buildx imagetools inspect ghost:5-alpine` and update all three
+# `image:` lines together. See .env.example "Containers' Tags" for the
+# supply-chain-hardening rationale.
 services:
   ghost-goldberry:
-    image: ghost:5-alpine
+    image: ghost:5-alpine@sha256:a0506f3f05f5bdc6c950c5113cdcdb1e1f96fbf15f6dc0a39fc093c25348bdb5
     restart: unless-stopped
     environment:
       url: ${GHOST_GOLDBERRY_URL}
@@ -21,7 +27,7 @@ services:
       - internal
 
   ghost-ggg:
-    image: ghost:5-alpine
+    image: ghost:5-alpine@sha256:a0506f3f05f5bdc6c950c5113cdcdb1e1f96fbf15f6dc0a39fc093c25348bdb5
     restart: unless-stopped
     environment:
       url: ${GHOST_GGG_URL}
@@ -37,7 +43,7 @@ services:
       - internal
 
   ghost-nursery:
-    image: ghost:5-alpine
+    image: ghost:5-alpine@sha256:a0506f3f05f5bdc6c950c5113cdcdb1e1f96fbf15f6dc0a39fc093c25348bdb5
     restart: unless-stopped
     environment:
       url: ${GHOST_NURSERY_URL}
