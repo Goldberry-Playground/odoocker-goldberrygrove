@@ -43,16 +43,52 @@ except Exception as e:
 " 2>&1 || true
 fi
 
+# Safe .env parser — replaces the previous `eval "$key=\"$value\""` loop.
+# eval would execute `$(cmd)` or backticks embedded in any .env value at
+# container startup. Operators control .env, but defense-in-depth says:
+# never pipe untrusted-shaped data through eval in the startup path.
+#
+# This parser only expands `${VAR}` references against values seen earlier
+# in the same .env (or pre-existing environment vars). It deliberately does
+# NOT expand `$VAR` (no braces), `$(cmd)`, backticks, or arithmetic `$(())`
+# — those stay as literal characters in the resulting value.
+expand_env_refs() {
+    local input="$1"
+    local output=""
+    local rest="$input"
+    while [[ "$rest" == *'${'*'}'* ]]; do
+        local prefix="${rest%%\$\{*}"
+        local after="${rest#*\$\{}"
+        local name="${after%%\}*}"
+        local tail="${after#*\}}"
+        if [[ "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+            output+="${prefix}${!name}"
+        else
+            output+="${prefix}\${${name}}"
+        fi
+        rest="$tail"
+    done
+    output+="$rest"
+    printf '%s' "$output"
+}
+
 while IFS='=' read -r key value || [[ -n $key ]]; do
     # Skip comments and empty lines
-    [[ $key =~ ^#.* ]] || [[ -z $key ]] && continue
-    
-    # Removing any quotes around the value
-    value=${value%\"}
-    value=${value#\"}
-    
-    # Declare variable
-    eval "$key=\"$value\""
+    [[ $key =~ ^[[:space:]]*# ]] && continue
+    [[ -z ${key// /} ]] && continue
+    # Trim surrounding whitespace from key
+    key="${key#"${key%%[![:space:]]*}"}"
+    key="${key%"${key##*[![:space:]]}"}"
+    # Validate key is a legal identifier; otherwise skip the line
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    # Strip a single layer of surrounding double-quotes
+    if [[ ${#value} -ge 2 && "${value:0:1}" == '"' && "${value: -1}" == '"' ]]; then
+        value="${value:1:${#value}-2}"
+    fi
+    # Expand ${VAR} refs against vars set so far — NEVER via eval.
+    value="$(expand_env_refs "$value")"
+    # Assign without eval. printf -v assigns by indirect name.
+    printf -v "$key" '%s' "$value"
 done < .env
 
 # Check the USE_REDIS to add base_attachment_object_storage & session_redis to LOAD variable
