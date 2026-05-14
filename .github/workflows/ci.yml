@@ -127,6 +127,20 @@ jobs:
           cp .env.example .env
           sed -i 's/^APP_ENV=.*/APP_ENV=local/' .env || true
           [ -f .env.grove.example ] && cp .env.grove.example .env.grove || true
+          # `.env.example` deliberately ships empty values for fields that
+          # MUST be set in any real deployment (DB_PASSWORD, ADMIN_PASSWD,
+          # MinIO root creds). Postgres refuses to boot with an empty
+          # password, which is the intended fail-closed behavior — for CI
+          # we substitute throwaway test values so the smoke test can run.
+          # These values never leave the GitHub runner.
+          cat >> .env <<'EOF'
+
+          DB_PASSWORD=ci-postgres-test-pw
+          POSTGRES_PASSWORD=ci-postgres-test-pw
+          ADMIN_PASSWD=ci-admin-test-pw
+          AWS_ACCESS_KEY_ID=ci-test-access-key
+          AWS_SECRET_ACCESS_KEY=ci-test-secret-key-at-least-eight-chars
+          EOF
 
       # Same overlay rule as validate-compose: local needs grove for ghost
       # services to have an image. We skip --profile ghost to keep the test
