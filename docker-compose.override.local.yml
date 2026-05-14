@@ -48,9 +48,20 @@ services:
 
   redis:
     restart: 'no'
+    # Loopback-only — never bind 0.0.0.0 even in local dev. An OrbStack
+    # host shared on a coffee-shop LAN would otherwise expose a
+    # passwordless KeyDB to every device on the network.
+    ports:
+      - 127.0.0.1:${KEYDB_PORT}:${KEYDB_PORT}
 
   s3:
     restart: 'no'
+    # Same loopback-only rationale as redis. The MinIO console is also
+    # reachable via the nginx-proxy VIRTUAL_HOST entry in production —
+    # this port mapping is purely for direct local access (e.g. `mc alias`).
+    ports:
+      - 127.0.0.1:${MINIO_API_PORT}:${MINIO_API_PORT}
+      - 127.0.0.1:${MINIO_CONSOLE_PORT}:${MINIO_CONSOLE_PORT}
 
   pgadmin:
     restart: 'no'
