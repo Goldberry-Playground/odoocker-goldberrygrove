@@ -117,6 +117,13 @@ services:
     volumes:
       - ./nginx/nginx.conf:${NGINX_CONF}
       - ./nginx/default.conf:${NGINX_DEFAULT_CONF}
+      # Shared snippet library — CORS allowlist (prod origins only) and
+      # the security-header triplet. Both this inner nginx and the outer
+      # nginx-proxy mount the same path so map/header definitions live
+      # in ONE place. Dev-only origins are layered in via
+      # docker-compose.override.local.yml; the prod-shipped directory
+      # contains only files safe to load in production.
+      - ./nginx/snippets:/etc/nginx/snippets:ro
     environment:
       # VIRTUAL_HOST contains all domains (backend + client sites). nginx-proxy reads this
       # and routes every listed domain to this container. Inner nginx uses server_name _
@@ -138,6 +145,10 @@ services:
     volumes:
       - ./nginx-proxy/nginx.conf:${NGINX_CONF}
       - ./nginx-proxy/cors.conf:${NGINX_PROXY_CORS_CONF}
+      # Same shared snippet library as the inner nginx — single source
+      # of truth for the CORS allowlist and security-header triplet.
+      # See ./nginx/snippets/cors-allowlist.conf for the rationale.
+      - ./nginx/snippets:/etc/nginx/snippets:ro
       - html:${NGINX_HTML}
       - vhost:${NGINX_VHOST}
       - certs:${NGINX_CERTS}:ro

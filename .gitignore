@@ -18,3 +18,13 @@ __pycache__
 
 # macOS metadata
 .DS_Store
+
+# Docker bind-mount artifacts. The local-dev overlay binds
+# nginx/snippets-dev/cors-allowlist-dev.conf onto
+# /etc/nginx/snippets/cors-allowlist-dev.conf — when the parent dir is
+# itself a bind from ./nginx/snippets/, the runtime touches an empty
+# placeholder file inside ./nginx/snippets/ to create the mountpoint.
+# That placeholder should never be committed (it would also defeat the
+# whole dev/prod allowlist split because the empty file is then present
+# in prod containers).
+nginx/snippets/cors-allowlist-dev.conf
