@@ -22,14 +22,20 @@ RUN if [ -f ./pgadmin/private_key ]; then \
         chmod 600 /pgadmin4/private_key; \
     fi
 
-# Copy your script file into the Docker image
-COPY --chown=pgadmin:root ./.env /
+# Copy the start script. `.env` is NOT baked here — it's bind-mounted at
+# runtime by docker-compose (see /.env volume). Baking it would put every
+# secret into the image layer + every registry that mirrors it.
 COPY ./pgadmin/start_pgadmin.sh /var/lib/pgadmin/start_pgadmin.sh
 
-# Make the script executable
+# Make the script executable.
 RUN chmod +x /var/lib/pgadmin/start_pgadmin.sh
-# Run your script
-RUN /var/lib/pgadmin/start_pgadmin.sh
+
+# Defer `start_pgadmin.sh` to container start — at BUILD time .env isn't
+# available (intentionally), and running it at build also baked the
+# generated servers.json (including the SSH `private_key` path) into the
+# image layer. At runtime the env is present via the bind mount and the
+# generated files live in the writable container layer, not the image.
+ENTRYPOINT ["/var/lib/pgadmin/start_pgadmin.sh"]
 
 # Expose the necessary port
 EXPOSE 80
