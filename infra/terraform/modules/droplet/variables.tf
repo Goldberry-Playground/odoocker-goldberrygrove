@@ -46,3 +46,9 @@ variable "monitoring" {
   type        = bool
   default     = false
 }
+
+variable "admin_cidr" {
+  description = "CIDR block allowed to reach SSH (port 22). Defaults to 0.0.0.0/0 ONLY in example files — never accept that default in real terraform.tfvars."
+  type        = string
+  default     = "0.0.0.0/0"
+}

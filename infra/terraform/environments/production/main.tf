@@ -147,15 +147,16 @@ resource "digitalocean_firewall" "monitoring" {
 }
 
 # ── DNS A Records ─────────────────────────────────────────────────────────────
-# NOTE: These assume the domain zones already exist in your DigitalOcean account.
-# Import existing domains first if needed:
-#   terraform import digitalocean_domain.zone["goldberrygrove.farm"] goldberrygrove.farm
-resource "digitalocean_record" "app" {
-  for_each = local.dns_records
-
-  domain = each.value.domain
-  type   = "A"
-  name   = each.value.subdomain
-  value  = module.app.ipv4_address
-  ttl    = 300
-}
+# DNS is managed in Cloudflare, not DigitalOcean.
+# The following A records must exist in CF, pointing at the production Droplet's ipv4_address (output `production_droplet_ip`):
+#   - gatheringatthegrove.com         (and www)
+#   - goldberrygrove.farm             (and www)
+#   - woodworkingeorge.com            (and www)
+#   - atthegrovenursery.com           (and www)
+#   - erp.gatheringatthegrove.com
+#   - blog.goldberrygrove.farm
+#   - blog.woodworkingeorge.com
+#   - blog.atthegrovenursery.com
+# Plus monitoring on the monitoring Droplet (output `monitoring_droplet_ip`):
+#   - grafana.gatheringatthegrove.com
+#   - status.gatheringatthegrove.com

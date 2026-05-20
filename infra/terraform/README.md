@@ -66,6 +66,26 @@ Remote state is stored in DigitalOcean Spaces (`grove-tf-state` bucket, nyc3):
 
 Terraform >= 1.6. Provider: `digitalocean/digitalocean ~> 2.40`.
 
+## DNS
+
+DNS records are managed in **Cloudflare**, not DigitalOcean. Terraform code intentionally does NOT manage A records — they must be created and maintained manually in Cloudflare.
+
+**Production A records** (point at `production_droplet_ip` from Terraform output):
+
+- `gatheringatthegrove.com` (and `www.gatheringatthegrove.com`)
+- `goldberrygrove.farm` (and `www.goldberrygrove.farm`)
+- `woodworkingeorge.com` (and `www.woodworkingeorge.com`)
+- `atthegrovenursery.com` (and `www.atthegrovenursery.com`)
+- `erp.gatheringatthegrove.com`
+- `blog.goldberrygrove.farm`
+- `blog.woodworkingeorge.com`
+- `blog.atthegrovenursery.com`
+
+**Monitoring A records** (point at `monitoring_droplet_ip` from Terraform output):
+
+- `grafana.gatheringatthegrove.com`
+- `status.gatheringatthegrove.com`
+
 ## Usage
 
 See `docs/DEPLOY.md` for the full walkthrough.

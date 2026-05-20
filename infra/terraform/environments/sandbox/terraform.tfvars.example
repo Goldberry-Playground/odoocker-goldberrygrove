@@ -15,3 +15,7 @@ ssh_key_ids = [
 
 # Repo URL (default is the Goldberry Playground org repo — override for forks)
 # repo_url = "https://github.com/Goldberry-Playground/odoocker-goldberrygrove.git"
+
+# ⚠️  SECURITY — If you uncomment admin_cidr below, replace with your real CIDR (e.g., "203.0.113.42/32").
+# The 0.0.0.0/0 default is ONLY appropriate for ephemeral sandbox Droplets.
+# admin_cidr = "0.0.0.0/0"

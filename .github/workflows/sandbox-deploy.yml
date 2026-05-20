@@ -176,6 +176,12 @@ jobs:
             sleep 5
           done
 
+      # FOLLOW-UP (Sprint 4 W1.5 or W2):
+      # This is a placeholder. The actual seeders to run after cloud-init completes are:
+      #   - grove-odoo-modules/scripts/seed_payment_journals.py
+      #   - grove-odoo-modules/scripts/seed_sales_teams.py
+      # These are idempotent and were committed in Sprint 2 (May 1).
+      # When wiring up, scp them onto the Droplet first, then run via `docker exec`.
       - name: Run database seeders
         timeout-minutes: 5
         env:

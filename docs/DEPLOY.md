@@ -2,15 +2,60 @@
 
 > This document supersedes `docs/DEPLOYMENT.md` (now deprecated — see note at top of that file).
 
+## ⚠️ Before You Apply
+
+1. **admin_cidr — SSH access control**: The example `terraform.tfvars` files contain `admin_cidr = "0.0.0.0/0"` (open to the entire internet). Before running `terraform apply` for **production**, replace this with your real office/VPN CIDR (e.g., `"203.0.113.42/32"`). Sandbox Droplets can use `0.0.0.0/0` since they self-destruct in 24 hours, but prod requires a restricted CIDR.
+
+2. **DNS is in Cloudflare** (not DigitalOcean): After Terraform creates the Droplets, you must manually create A records in Cloudflare pointing to the Droplet IPs. See the "DNS" section below.
+
 ## Table of Contents
 
-1. [One-time Setup](#one-time-setup)
-2. [Sandbox Deploy](#sandbox-deploy)
-3. [Smoke Test](#smoke-test)
-4. [Teardown](#teardown)
-5. [Rollback](#rollback)
-6. [Production Deploy](#production-deploy)
-7. [Cost Estimate](#cost-estimate)
+1. [DNS](#dns)
+2. [One-time Setup](#one-time-setup)
+3. [Sandbox Deploy](#sandbox-deploy)
+4. [Smoke Test](#smoke-test)
+5. [Teardown](#teardown)
+6. [Rollback](#rollback)
+7. [Production Deploy](#production-deploy)
+8. [Follow-ups](#follow-ups)
+9. [Cost Estimate](#cost-estimate)
+
+---
+
+## DNS
+
+DNS records are **not** managed by Terraform — they live in **Cloudflare**.
+
+After `terraform apply` completes for production, retrieve the Droplet IPs from outputs:
+
+```bash
+terraform -chdir=infra/terraform/environments/production output
+# Outputs:
+#   production_droplet_ip = "203.0.113.10"
+#   monitoring_droplet_ip = "203.0.113.11"
+```
+
+Then log into Cloudflare and create the following **A records** (use the IPs above):
+
+**Main app Droplet** (`203.0.113.10`):
+
+- `gatheringatthegrove.com` → `203.0.113.10`
+- `www.gatheringatthegrove.com` → `203.0.113.10`
+- `goldberrygrove.farm` → `203.0.113.10`
+- `www.goldberrygrove.farm` → `203.0.113.10`
+- `woodworkingeorge.com` → `203.0.113.10`
+- `www.woodworkingeorge.com` → `203.0.113.10`
+- `atthegrovenursery.com` → `203.0.113.10`
+- `www.atthegrovenursery.com` → `203.0.113.10`
+- `erp.gatheringatthegrove.com` → `203.0.113.10`
+- `blog.goldberrygrove.farm` → `203.0.113.10`
+- `blog.woodworkingeorge.com` → `203.0.113.10`
+- `blog.atthegrovenursery.com` → `203.0.113.10`
+
+**Monitoring Droplet** (`203.0.113.11`):
+
+- `grafana.gatheringatthegrove.com` → `203.0.113.11`
+- `status.gatheringatthegrove.com` → `203.0.113.11`
 
 ---
 
@@ -178,6 +223,22 @@ docker compose \
   --profile nginx --profile proxy --profile acme --profile git-sync \
   up -d
 ```
+
+---
+
+## Follow-ups
+
+### Sandbox Seeders (Sprint 4 W1.5 or W2)
+
+The `.github/workflows/sandbox-deploy.yml` currently runs a placeholder seeder step. The actual seeders to run after cloud-init completes are:
+
+- `grove-odoo-modules/scripts/seed_payment_journals.py`
+- `grove-odoo-modules/scripts/seed_sales_teams.py`
+
+Both scripts are idempotent and were committed in Sprint 2 (May 1). Integration will involve:
+
+1. SCP the seeder scripts to the Droplet
+2. Run via `docker exec` against the running Odoo container
 
 ---
 
