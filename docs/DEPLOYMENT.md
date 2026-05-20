@@ -1,3 +1,5 @@
+> **DEPRECATED** — This file is superseded by [`docs/DEPLOY.md`](./DEPLOY.md). Do not update this file.
+
 # Production Deployment Checklist
 
 ## Prerequisites

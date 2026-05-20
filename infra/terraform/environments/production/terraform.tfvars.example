@@ -1,0 +1,17 @@
+# Production environment — example variable values.
+# Copy to terraform.tfvars (git-ignored).
+# NEVER apply to production without code review + human approval.
+
+# DigitalOcean region slug
+region = "nyc3"
+
+# SSH key fingerprints or numeric IDs
+ssh_key_ids = [
+  "12:34:56:78:9a:bc:de:f0:12:34:56:78:9a:bc:de:f0",
+]
+
+# Restrict SSH access — CHANGE THIS to your office/VPN CIDR
+admin_cidr = "203.0.113.0/24"
+
+# Root domain zone already created in your DO account
+domain_zone = "gatheringatthegrove.com"

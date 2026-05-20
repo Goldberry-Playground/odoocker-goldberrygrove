@@ -28,3 +28,14 @@ __pycache__
 # whole dev/prod allowlist split because the empty file is then present
 # in prod containers).
 nginx/snippets/cors-allowlist-dev.conf
+
+# Terraform — local state, provider cache, real backend + var files
+**/.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfstate.lock.info
+infra/terraform/environments/**/backend.hcl
+infra/terraform/environments/**/terraform.tfvars
+infra/terraform/environments/**/.terraform.lock.hcl
+*.tfplan
+tfplan.binary

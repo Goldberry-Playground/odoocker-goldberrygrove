@@ -1,0 +1,16 @@
+# DigitalOcean Spaces — S3-compatible Terraform remote state backend (production)
+# Copy to backend.hcl (git-ignored) and fill in real values.
+
+endpoint = "https://nyc3.digitaloceanspaces.com"
+bucket   = "grove-tf-state"
+key      = "production/terraform.tfstate"
+region   = "us-east-1"
+
+skip_credentials_validation = true
+skip_metadata_api_check     = true
+skip_region_validation      = true
+force_path_style            = true
+
+# Credentials via env vars:
+#   AWS_ACCESS_KEY_ID     = DO Spaces access key
+#   AWS_SECRET_ACCESS_KEY = DO Spaces secret key

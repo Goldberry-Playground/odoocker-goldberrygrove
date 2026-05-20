@@ -1,0 +1,103 @@
+name: Sandbox Reaper
+
+# Destroy Droplets tagged "auto-destroy" that are older than 24 hours.
+# Runs every 6 hours to keep costs contained.
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  reap:
+    name: Reap expired sandbox Droplets
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Install doctl
+        uses: digitalocean/action-doctl@135a4ef8c9e79ca24c1e2e3caeb9dd7b6e1e9ae3 # v2.5.1
+        timeout-minutes: 2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_TOKEN }}
+
+      - name: List and destroy expired sandbox Droplets
+        id: reap
+        timeout-minutes: 5
+        run: |
+          CUTOFF=$(date -d '24 hours ago' +%s 2>/dev/null || date -v -24H +%s)
+          DESTROYED=""
+          SKIPPED=""
+
+          echo "Fetching Droplets tagged auto-destroy..."
+          DROPLETS=$(doctl compute droplet list \
+            --tag-name auto-destroy \
+            --format ID,Name,Created \
+            --no-header \
+            --output json)
+
+          COUNT=$(echo "$DROPLETS" | jq length)
+          echo "Found $COUNT Droplet(s) tagged auto-destroy"
+
+          for row in $(echo "$DROPLETS" | jq -r '.[] | @base64'); do
+            _jq() { echo "$row" | base64 --decode | jq -r "$1"; }
+            ID=$(_jq '.id')
+            NAME=$(_jq '.name')
+            CREATED=$(_jq '.created_at')
+            CREATED_EPOCH=$(date -d "$CREATED" +%s 2>/dev/null || \
+                            date -j -f "%Y-%m-%dT%H:%M:%SZ" "$CREATED" +%s)
+
+            if [ "$CREATED_EPOCH" -lt "$CUTOFF" ]; then
+              echo "Destroying Droplet $ID ($NAME) -- created $CREATED"
+              doctl compute droplet delete "$ID" --force
+              DESTROYED="$DESTROYED\n- \`$NAME\` (id: $ID, created: $CREATED)"
+            else
+              echo "Skipping Droplet $ID ($NAME) -- not yet 24h old"
+              SKIPPED="$SKIPPED\n- \`$NAME\` (id: $ID)"
+            fi
+          done
+
+          {
+            echo "destroyed<<EOF"
+            printf '%b' "$DESTROYED"
+            echo "EOF"
+            echo "skipped<<EOF"
+            printf '%b' "$SKIPPED"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Post Slack summary
+        uses: slackapi/slack-github-action@485a9d42d3a73031f12ec201c457e2162c45d02d # v2.0.0
+        timeout-minutes: 1
+        if: always()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          REAPER_DESTROYED: ${{ steps.reap.outputs.destroyed }}
+          REAPER_SKIPPED: ${{ steps.reap.outputs.skipped }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": "Sandbox Reaper finished",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Sandbox Reaper* — <${{ env.RUN_URL }}|Run ${{ github.run_id }}>"
+                  }
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Destroyed:*\n${{ env.REAPER_DESTROYED || 'none' }}\n\n*Still alive (< 24h):*\n${{ env.REAPER_SKIPPED || 'none' }}"
+                  }
+                }
+              ]
+            }

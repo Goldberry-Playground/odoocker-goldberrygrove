@@ -1,0 +1,98 @@
+name: Terraform Drift Detection
+
+# Detect configuration drift in production daily at 2 pm UTC.
+on:
+  schedule:
+    - cron: "0 14 * * *"
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  drift-detect:
+    name: Detect production drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    permissions:
+      contents: read
+
+    env:
+      TF_DIR: infra/terraform/environments/production
+      AWS_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.SPACES_SECRET_ACCESS_KEY }}
+      DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        timeout-minutes: 2
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@b9cd54531c595ded9dea2dcb6f4f77ce7638ac33 # v3.1.2
+        timeout-minutes: 3
+        with:
+          terraform_version: "~1.9"
+
+      - name: Write backend config
+        timeout-minutes: 1
+        run: |
+          cat > "$TF_DIR/backend.hcl" <<'EOF'
+          endpoint                    = "https://nyc3.digitaloceanspaces.com"
+          bucket                      = "grove-tf-state"
+          key                         = "production/terraform.tfstate"
+          region                      = "us-east-1"
+          skip_credentials_validation = true
+          skip_metadata_api_check     = true
+          skip_region_validation      = true
+          force_path_style            = true
+          EOF
+
+      - name: Terraform init
+        timeout-minutes: 5
+        run: |
+          terraform -chdir="$TF_DIR" init \
+            -backend-config=backend.hcl \
+            -input=false
+
+      - name: Terraform plan (drift check)
+        id: plan
+        timeout-minutes: 10
+        # Exit codes: 0 = no changes, 1 = error, 2 = changes detected (drift)
+        run: |
+          set +e
+          terraform -chdir="$TF_DIR" plan \
+            -detailed-exitcode \
+            -input=false \
+            -out=tfplan.binary 2>&1 | tee plan.txt
+          EXIT_CODE=$?
+          echo "exitcode=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+          set -e
+          # Fail hard on real errors; exit 2 (drift) is handled below
+          if [ "$EXIT_CODE" -eq 1 ]; then
+            echo "::error::terraform plan failed with an error"
+            exit 1
+          fi
+
+      - name: Alert Slack on drift
+        uses: slackapi/slack-github-action@485a9d42d3a73031f12ec201c457e2162c45d02d # v2.0.0
+        timeout-minutes: 1
+        if: steps.plan.outputs.exitcode == '2'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": "DRIFT detected in production Terraform state",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": ":warning: *Production Drift Detected*\n\n`terraform plan` returned exit code 2 — real infrastructure differs from state.\n\n<${{ env.RUN_URL }}|View plan output>"
+                  }
+                }
+              ]
+            }
