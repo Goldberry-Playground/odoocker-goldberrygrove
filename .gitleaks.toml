@@ -55,7 +55,16 @@ useDefault = true
 
   # Commit allow list (add commit SHAs here if a historical commit contains
   # a known-safe false positive that cannot be rewritten)
-  commits = []
+  commits = [
+    # Inherited from upstream yhaelopez/odoocker fork.
+    # odoo/Dockerfile:35 contained ARG GITHUB_ACCESS_TOKEN=ghp_... as a real
+    # PAT belonging to the upstream author (committed 2023-04-19). The token
+    # has been public in the upstream repo for 2+ years and must be presumed
+    # compromised/revoked; rewriting history here would force re-clones across
+    # every fork without changing the public exposure. The current Dockerfile
+    # has already been refactored to use a build-arg with no default value.
+    "6b2571d8051b3fe8eed6f29cb87e0a13fa805456",
+  ]
 
 # ── Rule-level overrides ─────────────────────────────────────────────────────
 # Add per-rule overrides below if a specific rule fires on a specific file
