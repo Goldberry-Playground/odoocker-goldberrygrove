@@ -1,0 +1,64 @@
+# gitleaks configuration for odoocker-goldberrygrove
+# Uses the default built-in ruleset with project-specific allowlists.
+#
+# Rules here suppress *known-safe* false positives only.
+# Never blanket-ignore a rule class — scope allowlists as tightly as possible.
+# Justify each allowlist entry in a commit message when adding or modifying.
+#
+# Reference: https://github.com/gitleaks/gitleaks/blob/master/config/gitleaks.toml
+
+title = "gitleaks config — odoocker-goldberrygrove"
+
+# ── Extend the default ruleset ──────────────────────────────────────────────
+[extend]
+useDefault = true
+
+# ── Global allowlist ─────────────────────────────────────────────────────────
+[allowlist]
+  description = "Project-level allowlist for known-safe placeholder values"
+
+  # File-level path allowlist
+  # These files intentionally contain secrets-shaped placeholder strings
+  # (e.g. CHANGE_ME, your-password-here) to guide operators during setup.
+  paths = [
+    # Environment variable template files — all values are placeholders
+    '''\\.env\\.example$''',
+    '''\\.env\\.grove\\.example$''',
+    # Any .env.*.example pattern added in future
+    '''\\.env\\.[^/]+\\.example$''',
+    # Test fixtures directory (mock API keys, dummy credentials for unit tests)
+    '''tests/fixtures/''',
+    '''test/fixtures/''',
+  ]
+
+  # Regex-based allowlist for specific placeholder patterns that appear
+  # across all files (e.g., in documentation code blocks).
+  # These patterns match only obviously non-secret placeholder strings.
+  regexes = [
+    # Explicit placeholder markers used throughout example files
+    '''CHANGE_ME''',
+    '''CHANGE[-_]THIS''',
+    '''your[-_]password[-_]here''',
+    '''your[-_]secret[-_]here''',
+    '''your[-_]key[-_]here''',
+    '''replace[-_]with[-_]your''',
+    '''<YOUR[-_][A-Z_]+>''',
+    # 32-char hex string used as default placeholder in .env.example
+    # (pattern: all same character repeated, clearly not a real key)
+    '''([a-f0-9])\1{15,}''',
+  ]
+
+  # Commit allow list (add commit SHAs here if a historical commit contains
+  # a known-safe false positive that cannot be rewritten)
+  commits = []
+
+# ── Rule-level overrides ─────────────────────────────────────────────────────
+# Add per-rule overrides below if a specific rule fires on a specific file
+# that is not covered by the global allowlist above.
+#
+# Example (uncomment and adapt if needed):
+# [[rules]]
+# id = "generic-api-key"
+# [rules.allowlist]
+#   paths = ['''docs/examples/''']
+#   description = "Example API keys in documentation are intentional placeholders"
