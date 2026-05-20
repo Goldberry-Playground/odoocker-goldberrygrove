@@ -1,8 +1,13 @@
-# Security scanning suite — runs on every PR and push to main.
+# Security scanning suite.
 # Three parallel jobs:
 #   trivy-fs    — filesystem CVE scan (Dockerfiles, requirements, lockfiles)
 #   trivy-image — build and scan each custom Docker image for CVEs
 #   gitleaks    — full-history secret detection
+#
+# Trigger strategy:
+#   * PR + push:main  → trivy-fs + gitleaks (fast, no docker build)
+#   * push:main + cron + manual → trivy-image (heavy; OOMs on PR-trigger
+#     runners when building the full Odoo stack)
 #
 # SARIF results from Trivy upload to GitHub Security → Code Scanning tab.
 # gitleaks fails the build immediately on any secret match.
@@ -14,6 +19,9 @@ on:
   push:
     branches:
       - main
+  schedule:
+    # Weekly Monday 06:00 UTC — re-scan main against the latest CVE feed
+    - cron: "0 6 * * 1"
   workflow_dispatch:
 
 # Deny all permissions at the top level; each job grants only what it needs.
@@ -69,6 +77,9 @@ jobs:
   # ---------------------------------------------------------------------------
   trivy-image:
     name: Trivy — Image Scan
+    # Skipped on PRs: building the Odoo image OOMs the default runner
+    # (buildx dial-stdio SIGKILL). Runs post-merge, on schedule, and manually.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -155,6 +166,9 @@ jobs:
   # Job 3: gitleaks — secret detection
   # Full-history scan; fails the build immediately on any leak.
   # Allowlist is in .gitleaks.toml (example files with placeholder values).
+  #
+  # Uses the OSS gitleaks CLI directly. gitleaks-action v2+ requires a
+  # paid GITLEAKS_LICENSE on organization accounts, but the binary stays MIT.
   # ---------------------------------------------------------------------------
   gitleaks:
     name: gitleaks — Secret Detection
@@ -162,6 +176,10 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+      security-events: write   # required for SARIF upload
+
+    env:
+      GITLEAKS_VERSION: "8.21.2"
 
     steps:
       - name: Checkout repository (full history)
@@ -170,10 +188,37 @@ jobs:
         with:
           fetch-depth: 0   # full history required for accurate secret scanning
 
+      - name: Install gitleaks (verify checksum)
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          curl -fsSL -o /tmp/gitleaks.tar.gz \
+            "${base}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL -o /tmp/checksums.txt \
+            "${base}/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          cd /tmp
+          grep "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" checksums.txt | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
+          sudo install gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
       - name: Run gitleaks full-history scan
-        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
         timeout-minutes: 8
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_CONFIG: .gitleaks.toml
-          GITLEAKS_ENABLE_COMMENTS: "false"   # no PR comments — rely on check status
+        run: |
+          gitleaks detect \
+            --source . \
+            --config .gitleaks.toml \
+            --redact \
+            --verbose \
+            --exit-code 1 \
+            --report-format sarif \
+            --report-path gitleaks-results.sarif
+
+      - name: Upload gitleaks SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@ff0a06e83cb2de871e5a09832bc6a81e7276941f # v3.28.18
+        timeout-minutes: 5
+        if: always()   # upload findings even when scan fails the build
+        with:
+          sarif_file: gitleaks-results.sarif
+          category: gitleaks
