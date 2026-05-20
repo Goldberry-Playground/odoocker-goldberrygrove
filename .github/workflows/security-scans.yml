@@ -193,13 +193,14 @@ jobs:
         run: |
           set -euo pipefail
           base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
-          curl -fsSL -o /tmp/gitleaks.tar.gz \
-            "${base}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-          curl -fsSL -o /tmp/checksums.txt \
-            "${base}/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
-          cd /tmp
-          grep "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" checksums.txt | sha256sum -c -
-          tar -xzf gitleaks.tar.gz gitleaks
+          tarball="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          workdir="$(mktemp -d)"
+          cd "$workdir"
+          # Keep the canonical filename so it matches the checksum line verbatim.
+          curl -fsSL -O "${base}/${tarball}"
+          curl -fsSL -O "${base}/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          grep " ${tarball}\$" "gitleaks_${GITLEAKS_VERSION}_checksums.txt" | sha256sum -c -
+          tar -xzf "$tarball" gitleaks
           sudo install gitleaks /usr/local/bin/gitleaks
           gitleaks version
 
