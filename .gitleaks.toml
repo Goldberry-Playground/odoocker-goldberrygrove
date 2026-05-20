@@ -20,12 +20,15 @@ useDefault = true
   # File-level path allowlist
   # These files intentionally contain secrets-shaped placeholder strings
   # (e.g. CHANGE_ME, your-password-here) to guide operators during setup.
+  #
+  # NB: these are TOML literal strings (triple single quotes), so backslashes
+  # are NOT escaped — a single `\.` produces the regex pattern `\.`.
   paths = [
     # Environment variable template files — all values are placeholders
-    '''\\.env\\.example$''',
-    '''\\.env\\.grove\\.example$''',
+    '''\.env\.example$''',
+    '''\.env\.grove\.example$''',
     # Any .env.*.example pattern added in future
-    '''\\.env\\.[^/]+\\.example$''',
+    '''\.env\.[^/]+\.example$''',
     # Test fixtures directory (mock API keys, dummy credentials for unit tests)
     '''tests/fixtures/''',
     '''test/fixtures/''',
@@ -43,9 +46,11 @@ useDefault = true
     '''your[-_]key[-_]here''',
     '''replace[-_]with[-_]your''',
     '''<YOUR[-_][A-Z_]+>''',
-    # 32-char hex string used as default placeholder in .env.example
-    # (pattern: all same character repeated, clearly not a real key)
-    '''([a-f0-9])\1{15,}''',
+    # Hex placeholder strings used as default values in .env.example
+    # (a single hex character repeated 16+ times — clearly not a real key).
+    # Backreferences aren't supported by Go's RE2 engine, so each char
+    # is enumerated explicitly.
+    '''0{16,}|1{16,}|2{16,}|3{16,}|4{16,}|5{16,}|6{16,}|7{16,}|8{16,}|9{16,}|a{16,}|b{16,}|c{16,}|d{16,}|e{16,}|f{16,}''',
   ]
 
   # Commit allow list (add commit SHAs here if a historical commit contains
