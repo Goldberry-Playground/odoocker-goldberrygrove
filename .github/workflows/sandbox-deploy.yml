@@ -1,0 +1,235 @@
+name: Sandbox Deploy
+
+# Triggers:
+#   - PR labeled "qa"  → spin up a sandbox Droplet for QA review
+#   - workflow_dispatch → manual sandbox on any branch
+on:
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      git_sha:
+        description: "Full Git SHA to deploy (defaults to HEAD of the calling branch)"
+        required: false
+        default: ""
+
+# Deny all permissions at the workflow level; jobs declare what they need.
+permissions: {}
+
+concurrency:
+  # One sandbox per PR at a time — cancel the in-flight deploy when a new
+  # commit is pushed while the label is still applied.
+  group: sandbox-deploy-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  sandbox-deploy:
+    # Only run when the "qa" label is applied (label event) or on dispatch.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.event.label.name == 'qa')
+
+    name: Deploy sandbox Droplet
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: read       # checkout
+      pull-requests: write # post PR comment with Droplet IP + URLs
+
+    env:
+      TF_DIR: infra/terraform/environments/sandbox
+      # DigitalOcean Spaces backend credentials (S3-compatible)
+      AWS_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.SPACES_SECRET_ACCESS_KEY }}
+      # DO provider token
+      DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        timeout-minutes: 2
+        with:
+          # Use the SHA being reviewed, not the merge commit
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Resolve deploy SHA
+        id: sha
+        timeout-minutes: 1
+        env:
+          INPUT_SHA: ${{ inputs.git_sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          SHA="$INPUT_SHA"
+          if [ -z "$SHA" ]; then
+            SHA="${PR_HEAD_SHA:-$GITHUB_SHA}"
+          fi
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Deploying SHA: $SHA"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@b9cd54531c595ded9dea2dcb6f4f77ce7638ac33 # v3.1.2
+        timeout-minutes: 3
+        with:
+          terraform_version: "~1.9"
+
+      - name: Write backend config
+        timeout-minutes: 1
+        run: |
+          cat > "$TF_DIR/backend.hcl" <<'EOF'
+          endpoint                    = "https://nyc3.digitaloceanspaces.com"
+          bucket                      = "grove-tf-state"
+          key                         = "sandbox/terraform.tfstate"
+          region                      = "us-east-1"
+          skip_credentials_validation = true
+          skip_metadata_api_check     = true
+          skip_region_validation      = true
+          force_path_style            = true
+          EOF
+
+      - name: Terraform init
+        timeout-minutes: 5
+        run: |
+          terraform -chdir="$TF_DIR" init \
+            -backend-config=backend.hcl \
+            -input=false
+
+      - name: Terraform apply
+        id: tf_apply
+        timeout-minutes: 10
+        env:
+          TF_VAR_git_sha: ${{ steps.sha.outputs.sha }}
+          TF_VAR_ssh_key_ids: '["${{ secrets.DO_SSH_KEY_ID }}"]'
+        run: |
+          terraform -chdir="$TF_DIR" apply \
+            -auto-approve \
+            -input=false
+
+      - name: Get Droplet IP
+        id: droplet
+        timeout-minutes: 1
+        run: |
+          IP=$(terraform -chdir="$TF_DIR" output -raw ipv4_address)
+          echo "ip=$IP" >> "$GITHUB_OUTPUT"
+          echo "Droplet IP: $IP"
+
+      - name: Write SSH deploy key
+        timeout-minutes: 1
+        run: |
+          mkdir -p "$HOME/.ssh"
+          echo "${{ secrets.SANDBOX_SSH_PRIVATE_KEY }}" > "$HOME/.ssh/deploy_key"
+          chmod 600 "$HOME/.ssh/deploy_key"
+
+      - name: Wait for cloud-init clone stage (10 min timeout)
+        timeout-minutes: 12
+        env:
+          DROPLET_IP: ${{ steps.droplet.outputs.ip }}
+        run: |
+          echo "Polling $DROPLET_IP for cloud-init clone-done sentinel..."
+          for i in $(seq 1 120); do
+            if ssh -o StrictHostKeyChecking=no \
+                   -o ConnectTimeout=5 \
+                   -i "$HOME/.ssh/deploy_key" \
+                   "root@$DROPLET_IP" \
+                   "test -f /var/lib/cloud/instance/clone-done" 2>/dev/null; then
+              echo "Clone stage complete after ~$((i * 5))s"
+              break
+            fi
+            if [ "$i" -eq 120 ]; then
+              echo "::error::cloud-init clone stage never completed within 10 minutes"
+              exit 1
+            fi
+            sleep 5
+          done
+
+      - name: SCP .env.sandbox to Droplet
+        timeout-minutes: 2
+        env:
+          DROPLET_IP: ${{ steps.droplet.outputs.ip }}
+        run: |
+          printf '%s' "${{ secrets.ENV_SANDBOX }}" > .env.sandbox
+          scp -o StrictHostKeyChecking=no \
+              -i "$HOME/.ssh/deploy_key" \
+              .env.sandbox "root@$DROPLET_IP:/opt/grove/.env.sandbox"
+          rm -f .env.sandbox
+
+      - name: Wait for stack-up sentinel (10 min timeout)
+        timeout-minutes: 12
+        env:
+          DROPLET_IP: ${{ steps.droplet.outputs.ip }}
+        run: |
+          echo "Polling $DROPLET_IP for stack-up sentinel..."
+          for i in $(seq 1 120); do
+            if ssh -o StrictHostKeyChecking=no \
+                   -o ConnectTimeout=5 \
+                   -i "$HOME/.ssh/deploy_key" \
+                   "root@$DROPLET_IP" \
+                   "test -f /var/lib/cloud/instance/stack-up" 2>/dev/null; then
+              echo "Stack up after ~$((i * 5))s"
+              break
+            fi
+            if [ "$i" -eq 120 ]; then
+              echo "::error::Stack never came up within 10 minutes"
+              exit 1
+            fi
+            sleep 5
+          done
+
+      # FOLLOW-UP (Sprint 4 W1.5 or W2):
+      # This is a placeholder. The actual seeders to run after cloud-init completes are:
+      #   - grove-odoo-modules/scripts/seed_payment_journals.py
+      #   - grove-odoo-modules/scripts/seed_sales_teams.py
+      # These are idempotent and were committed in Sprint 2 (May 1).
+      # When wiring up, scp them onto the Droplet first, then run via `docker exec`.
+      - name: Run database seeders
+        timeout-minutes: 5
+        env:
+          DROPLET_IP: ${{ steps.droplet.outputs.ip }}
+        run: |
+          ssh -o StrictHostKeyChecking=no \
+              -i "$HOME/.ssh/deploy_key" \
+              "root@$DROPLET_IP" \
+              'cd /opt/grove && docker compose -p grove-sandbox \
+                 -f docker-compose.yml \
+                 -f docker-compose.override.grove.yml \
+                 -f docker-compose.override.sandbox.yml \
+                 --env-file .env.sandbox \
+                 exec -T odoo /bin/bash -c \
+                 "odoo --stop-after-init --load-language=en_US \
+                   --init base 2>&1 | tail -5"' || true
+
+      - name: Post PR comment with sandbox URLs
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        timeout-minutes: 2
+        if: github.event_name == 'pull_request'
+        env:
+          DROPLET_IP: ${{ steps.droplet.outputs.ip }}
+          DEPLOY_SHA: ${{ steps.sha.outputs.sha }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const ip = process.env.DROPLET_IP;
+            const sha = process.env.DEPLOY_SHA.substring(0, 7);
+            const body = [
+              '## Sandbox deployed',
+              '',
+              `**Droplet IP:** \`${ip}\``,
+              `**SHA:** \`${sha}\``,
+              '',
+              '| Service | URL |',
+              '|---------|-----|',
+              `| Odoo ERP | http://${ip}:8069 |`,
+              `| Ghost — Goldberry Grove | http://${ip}:2368 |`,
+              `| Ghost — George GGG | http://${ip}:2369 |`,
+              `| Ghost — At The Grove Nursery | http://${ip}:2370 |`,
+              '',
+              '> Droplet is tagged `auto-destroy` and will be reaped within 24 hours.',
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });

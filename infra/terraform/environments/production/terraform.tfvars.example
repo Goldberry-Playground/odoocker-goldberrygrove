@@ -1,0 +1,17 @@
+# Production environment — example variable values.
+# Copy to terraform.tfvars (git-ignored).
+# NEVER apply to production without code review + human approval.
+
+# DigitalOcean region slug
+region = "nyc3"
+
+# SSH key fingerprints or numeric IDs
+ssh_key_ids = [
+  "12:34:56:78:9a:bc:de:f0:12:34:56:78:9a:bc:de:f0",
+]
+
+# ⚠️  SECURITY — admin_cidr controls who can SSH into the Droplet.
+# The 0.0.0.0/0 default below is for the EXAMPLE FILE ONLY.
+# Before any real terraform apply: replace with your real CIDR (e.g., "203.0.113.42/32").
+# Leaving 0.0.0.0/0 in a real terraform.tfvars exposes SSH to the entire internet.
+admin_cidr = "0.0.0.0/0"
