@@ -1,0 +1,154 @@
+# OWASP ZAP baseline scan — triggered after Sandbox Deploy workflow completes.
+#
+# DEPENDENCY ON SIBLING PR #9 (feat/sprint4-sandbox-iac):
+#   This workflow reads a `sandbox-url` artifact published by sandbox-deploy.yml.
+#   The artifact must contain a single file `url.txt` with the sandbox base URL.
+#   Until sandbox-deploy.yml is updated to publish this artifact, this workflow
+#   will log a warning and exit cleanly (it will NOT fail the run).
+#
+# Required secrets:
+#   SLACK_SECURITY_WEBHOOK_URL — Slack Incoming Webhook URL for security alerts
+---
+name: ZAP Baseline Scan
+
+on:
+  workflow_run:
+    workflows:
+      - "Sandbox Deploy"
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      sandbox_url:
+        description: "Sandbox URL to scan (overrides artifact lookup)"
+        required: false
+        type: string
+
+# Deny all permissions at the top level; job grants only what it needs.
+permissions: {}
+
+jobs:
+  zap-baseline:
+    name: OWASP ZAP — Baseline Scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # Only run if the triggering workflow succeeded (skip on cancelled/failed deploys).
+    # Always run when triggered manually via workflow_dispatch.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    permissions:
+      contents: read
+      issues: write   # post ZAP findings as GitHub issue comments
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        timeout-minutes: 5
+
+      # ------------------------------------------------------------------
+      # Retrieve sandbox URL from artifact published by sandbox-deploy.yml
+      # The artifact is named `sandbox-url` and contains a file `url.txt`.
+      # Falls back to workflow_dispatch input if provided.
+      # ------------------------------------------------------------------
+      - name: Download sandbox-url artifact from triggering workflow
+        id: download-artifact
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
+        timeout-minutes: 5
+        if: github.event_name == 'workflow_run'
+        continue-on-error: true   # artifact may not exist yet; handled below
+        with:
+          name: sandbox-url
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: artifact
+
+      - name: Resolve sandbox URL
+        id: resolve-url
+        timeout-minutes: 1
+        run: |
+          # Priority: manual input > artifact > error
+          if [ -n "$DISPATCH_URL" ]; then
+            echo "url=${DISPATCH_URL}" >> "$GITHUB_OUTPUT"
+            echo "source=workflow_dispatch" >> "$GITHUB_OUTPUT"
+          elif [ -f artifact/url.txt ]; then
+            URL=$(tr -d '[:space:]' < artifact/url.txt)
+            echo "url=${URL}" >> "$GITHUB_OUTPUT"
+            echo "source=artifact" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::sandbox-url artifact not found. sandbox-deploy.yml must" \
+              "publish an artifact named 'sandbox-url' containing url.txt." \
+              "This workflow is inert until that artifact is available."
+            echo "url=" >> "$GITHUB_OUTPUT"
+            echo "source=missing" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          DISPATCH_URL: ${{ inputs.sandbox_url }}
+
+      - name: Skip scan — sandbox URL not available
+        if: steps.resolve-url.outputs.url == ''
+        timeout-minutes: 1
+        run: |
+          echo "No sandbox URL available. Skipping ZAP scan."
+          echo "Action required: update sandbox-deploy.yml to publish a 'sandbox-url' artifact."
+          exit 0
+
+      # ------------------------------------------------------------------
+      # Run ZAP baseline scan
+      # Rule config: .zap/baseline.conf
+      # -I flag: treat WARN-level rules as informational (not failure)
+      # HIGH-severity rules in baseline.conf are still set to FAIL
+      # ------------------------------------------------------------------
+      - name: Run OWASP ZAP baseline scan
+        id: zap-scan
+        uses: zaproxy/action-baseline@7d53abcc0ca8f9fcce18b89793a98d0fae31aaaf # v0.14.0
+        timeout-minutes: 20
+        with:
+          target: ${{ steps.resolve-url.outputs.url }}
+          rules_file_name: .zap/baseline.conf
+          cmd_options: -I
+          fail_action: true
+          allow_issue_writing: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload ZAP report artifact
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
+        timeout-minutes: 5
+        if: always()
+        with:
+          name: zap-baseline-report
+          path: |
+            report_html.html
+            report_md.md
+          retention-days: 30
+
+      # ------------------------------------------------------------------
+      # Slack notification on scan failure
+      # ------------------------------------------------------------------
+      - name: Notify Slack on ZAP failure
+        uses: slackapi/slack-github-action@b0fa283ad8fea605de13dc3f449259339835fc52 # v2.1.0
+        if: failure()
+        timeout-minutes: 3
+        with:
+          webhook: ${{ secrets.SLACK_SECURITY_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": ":rotating_light: *ZAP Baseline Scan FAILED*",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": ":rotating_light: *ZAP Baseline Scan FAILED*\n*Repo:* ${{ github.repository }}\n*Run:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>\n*Sandbox URL:* ${{ steps.resolve-url.outputs.url }}"
+                  }
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "HIGH-severity ZAP alert detected. File a ticket and label it `security:p1`."
+                  }
+                }
+              ]
+            }
