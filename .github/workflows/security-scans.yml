@@ -130,6 +130,15 @@ jobs:
       - name: Build ${{ matrix.service }} image for scanning
         uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
         timeout-minutes: 20
+        env:
+          # Disable the v6 "build summary" post-step. It exports a .dockerbuild
+          # artifact via dial-stdio after the build succeeds, and the cleanup
+          # race-kills its docker socket connection with SIGKILL — which the
+          # action reports as a job failure even though the build + scan have
+          # already completed successfully. Disabling the summary makes the
+          # post-step a no-op.
+          DOCKER_BUILD_SUMMARY: "false"
+          DOCKER_BUILD_RECORD_UPLOAD: "false"
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
