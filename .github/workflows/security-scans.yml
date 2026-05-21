@@ -90,11 +90,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Scan tags must track what we actually deploy — see .env.example.
+          # When the production ODOO_TAG bumps, update here too.
           - service: odoo
             dockerfile: ./odoo/Dockerfile
             context: .
             build-args: |
-              ODOO_TAG=17.0
+              ODOO_TAG=19.0
               ODOO_RC=/etc/odoo/odoo.conf
               ROOT_PATH=/odoo
               ENTERPRISE_USER=

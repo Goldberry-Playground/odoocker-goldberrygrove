@@ -62,13 +62,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy & Install PIP requirements
 COPY --chown=odoo:odoo ./odoo/requirements.txt /tmp/requirements.txt
 
-# Upgrade pip first so newer-pip behaviors (resolver, error messages) are
-# available, then install. PIP_BREAK_SYSTEM_PACKAGES is honored by pip 23.0.1+
-# (Debian Bookworm bases enforce PEP 668) and silently ignored by older pip,
-# so this works against any base the upstream `odoo:${ODOO_TAG}` image uses.
+# PIP_BREAK_SYSTEM_PACKAGES is honored by pip 23.0.1+ (Debian Bookworm and
+# newer enforce PEP 668) and silently ignored by older pip — so this works
+# against any base the upstream `odoo:${ODOO_TAG}` image happens to ship.
+# Don't `pip install --upgrade pip` here: Debian's apt-managed pip lacks a
+# RECORD file and pip refuses to uninstall it ("installed by debian").
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
-RUN python3 -m pip install --upgrade pip && \
-    python3 -m pip install -r /tmp/requirements.txt && \
+RUN python3 -m pip install -r /tmp/requirements.txt && \
     rm /tmp/requirements.txt
 
 #--------------------------------------------#
