@@ -51,14 +51,23 @@ clone_and_copy_modules() {
             fi
         fi
 
-        # Copy the modules if the condition is true
+        # Copy the modules if the condition is true.
+        # Guarded against missing /${repo_name} so a clone that fell through
+        # both --branch ${ODOO_TAG} and --branch main (and printed a WARN
+        # above) doesn't blow up the whole build via `cp` + `set -e`. The
+        # missing-module log is ERROR-level so production build logs make it
+        # easy to grep `^ERROR:` and verify every expected addon shipped.
         if [[ $should_clone == true ]]; then
             for (( i=0; i<${#modules_conditions[@]}; i+=2 )); do
                 local module=${modules_conditions[i]}
                 local condition=${modules_conditions[i+1]}
                 if [[ $condition == true ]]; then
-                    echo "Copying ${module} from ${repo_name} into ${THIRD_PARTY_ADDONS}"
-                    cp -r /${repo_name}/${module} ${THIRD_PARTY_ADDONS}/${module}
+                    if [ -d "/${repo_name}/${module}" ]; then
+                        echo "Copying ${module} from ${repo_name} into ${THIRD_PARTY_ADDONS}"
+                        cp -r "/${repo_name}/${module}" "${THIRD_PARTY_ADDONS}/${module}"
+                    else
+                        echo "ERROR: module ${module} not found at /${repo_name}/${module} — clone of ${repo_name} likely failed or branch lacks this module. Skipping." >&2
+                    fi
                 fi
             done
         fi
