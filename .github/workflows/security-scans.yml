@@ -118,7 +118,7 @@ jobs:
             dockerfile: ./postgres/Dockerfile
             context: .
             build-args: |
-              POSTGRES_TAG=17
+              POSTGRES_TAG=17-alpine
           # Track the deployed pgadmin major version from .env.example. When
           # bumping, also update the digest pin in .env.example.
           - service: pgadmin
