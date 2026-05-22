@@ -47,13 +47,20 @@ RUN touch ${LOG_PATH} && chown odoo:odoo ${LOG_PATH}
 #------------------------#
 #    APT Dependencies    #
 #------------------------#
-# Install Odoocker image dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    zip \
-    unzip \
-    git \
-    openssh-client \
-    patch \
+# `apt-get upgrade` pulls all Debian security patches that have shipped
+# since the upstream odoo:${ODOO_TAG} image was built — real fix for any
+# Debian package CVE Trivy flags whose patch is in upstream Debian but
+# the upstream odoo image hasn't been rebuilt to incorporate it yet.
+# Followed by our extra deps; one apt-get update covers both.
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        zip \
+        unzip \
+        git \
+        openssh-client \
+        patch \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 #---------------------#

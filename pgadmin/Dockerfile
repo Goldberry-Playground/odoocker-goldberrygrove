@@ -12,8 +12,28 @@ ENV PGADMIN_DEFAULT_EMAIL=${PGADMIN_DEFAULT_EMAIL}
 # Switch to root user
 USER root
 
-# Install bash
-RUN apk add --no-cache bash jq sqlite
+# Update Alpine OS packages to pull current security patches (clears
+# upstream alpine CVEs whose fix has shipped since the pgadmin image was
+# built), then install our extras. apk upgrade is the real fix for any
+# OS-package finding Trivy reports against the pgadmin Alpine layer.
+RUN apk update && apk upgrade --no-cache && \
+    apk add --no-cache bash jq sqlite
+
+# Force-upgrade urllib3 inside pgadmin's bundled Python venv. pgadmin
+# 9.15 ships urllib3 2.6.3; CVE-2026-44432 (HIGH) is fixed in 2.7.0.
+# Upstream pgadmin will ship 2.7.0 in a future release; until then we
+# pin a current version here. The venv was created with --without-pip
+# and --system-site-packages, so we install via the system pip targeting
+# the venv's site-packages directory. Old dist-info is removed first or
+# Trivy still flags the leftover 2.6.3 metadata.
+ARG PGADMIN_VENV_SITE_PACKAGES=/venv/lib/python3.14/site-packages
+RUN rm -rf "${PGADMIN_VENV_SITE_PACKAGES}/urllib3" \
+           "${PGADMIN_VENV_SITE_PACKAGES}/urllib3-2.6.3.dist-info" && \
+    /usr/local/bin/pip3 install \
+        --no-cache-dir \
+        --target="${PGADMIN_VENV_SITE_PACKAGES}" \
+        --root-user-action=ignore \
+        'urllib3>=2.7.0,<3.0'
 
 # Check if the private key exists, copy it and set permissions if it does
 RUN if [ -f ./pgadmin/private_key ]; then \
