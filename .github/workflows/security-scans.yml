@@ -114,11 +114,13 @@ jobs:
             context: .
             build-args: |
               POSTGRES_TAG=17
+          # Track the deployed pgadmin major version from .env.example. When
+          # bumping, also update the digest pin in .env.example.
           - service: pgadmin
             dockerfile: ./pgadmin/Dockerfile
             context: .
             build-args: |
-              PGADMIN_TAG=8
+              PGADMIN_TAG=9.15
 
     steps:
       - name: Checkout repository
