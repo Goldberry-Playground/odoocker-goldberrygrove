@@ -61,6 +61,13 @@ jobs:
           ignore-unfixed: false
           vuln-type: os,library
           trivyignores: .trivyignore
+          # Without this, trivy-action's "SARIF is special" code path drops
+          # the --severity filter when building the SARIF report but still
+          # passes --exit-code 1 — so ANY finding of ANY severity (including
+          # mediums and lows) makes the job fail. Setting this routes through
+          # the path that respects severity for both the report contents and
+          # the exit gate, so only HIGH/CRITICAL trigger a failure.
+          limit-severities-for-sarif: "true"
 
       - name: Upload Trivy filesystem SARIF to GitHub Security
         uses: github/codeql-action/upload-sarif@ff0a06e83cb2de871e5a09832bc6a81e7276941f # v3.28.18
@@ -171,6 +178,11 @@ jobs:
           ignore-unfixed: false
           vuln-type: os,library
           trivyignores: .trivyignore
+          # See companion comment on the trivy-fs step. Without this, ANY
+          # finding (mediums, lows, even informational) makes the job fail
+          # because trivy-action drops --severity in SARIF mode but keeps
+          # --exit-code. With this true, only HIGH/CRITICAL trigger failure.
+          limit-severities-for-sarif: "true"
 
       - name: Upload Trivy image SARIF — ${{ matrix.service }}
         uses: github/codeql-action/upload-sarif@ff0a06e83cb2de871e5a09832bc6a81e7276941f # v3.28.18
