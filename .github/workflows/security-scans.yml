@@ -92,6 +92,11 @@ jobs:
         include:
           # Scan tags must track what we actually deploy — see .env.example.
           # When the production ODOO_TAG bumps, update here too.
+          #
+          # ENTERPRISE_ADDONS / THIRD_PARTY_ADDONS must be non-empty for
+          # clone-addons.sh's `mkdir -p` to work under `set -e`. Production
+          # sets these via .env.example to subdirs of ROOT_PATH; here we use
+          # /tmp paths since the CI scan never publishes the resulting image.
           - service: odoo
             dockerfile: ./odoo/Dockerfile
             context: .
@@ -101,10 +106,10 @@ jobs:
               ROOT_PATH=/odoo
               ENTERPRISE_USER=
               ENTERPRISE_ACCESS_TOKEN=
-              ENTERPRISE_ADDONS=
+              ENTERPRISE_ADDONS=/tmp/enterprise-addons
               GITHUB_USER=
               GITHUB_ACCESS_TOKEN=
-              THIRD_PARTY_ADDONS=
+              THIRD_PARTY_ADDONS=/tmp/third-party-addons
               LOG_PATH=/var/log/odoo
               USE_REDIS=false
               USE_S3=false
