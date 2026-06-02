@@ -19,6 +19,8 @@ COPY_START_RE = re.compile(
 
 Rewriter = Callable[[list[str], dict[str, int]], list[str]]
 
+PREVIEW_BCRYPT = "$2b$12$aqLqsRzRYZlLYxlEFO6cJOEW9s84eiA/4IRSuQkw0ufC//2p.cTmi"
+
 
 def _rewrite_res_partner(row: list[str], col_idx: dict[str, int]) -> list[str]:
     partner_id = row[col_idx["id"]]
@@ -37,8 +39,47 @@ def _rewrite_res_partner(row: list[str], col_idx: dict[str, int]) -> list[str]:
     return out
 
 
+def _rewrite_res_users(row: list[str], col_idx: dict[str, int]) -> list[str]:
+    user_id = row[col_idx["id"]]
+    out = list(row)
+    if "login" in col_idx:
+        out[col_idx["login"]] = f"user{user_id}@preview.local"
+    if "password" in col_idx:
+        out[col_idx["password"]] = PREVIEW_BCRYPT
+    if "signature" in col_idx:
+        out[col_idx["signature"]] = r"\N"
+    return out
+
+
+def _rewrite_mail_message(row: list[str], col_idx: dict[str, int]) -> list[str]:
+    out = list(row)
+    author = row[col_idx["author_id"]] if "author_id" in col_idx else r"\N"
+    if author != r"\N":
+        if "body" in col_idx:
+            out[col_idx["body"]] = "[REDACTED preview content]"
+        if "subject" in col_idx:
+            out[col_idx["subject"]] = "[REDACTED]"
+    return out
+
+
+def _null_columns(*columns: str) -> Rewriter:
+    def _rw(row: list[str], col_idx: dict[str, int]) -> list[str]:
+        out = list(row)
+        for col in columns:
+            if col in col_idx:
+                out[col_idx[col]] = r"\N"
+        return out
+
+    return _rw
+
+
 REWRITERS: dict[str, Rewriter] = {
     "res_partner": _rewrite_res_partner,
+    "res_users": _rewrite_res_users,
+    "mail_message": _rewrite_mail_message,
+    "mail_tracking_value": _null_columns("old_value_text", "new_value_text"),
+    "audittrail_log_line": _null_columns("old_value", "new_value"),
+    "payment_transaction": _null_columns("provider_reference", "acquirer_reference"),
 }
 
 
