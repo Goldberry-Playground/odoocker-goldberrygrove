@@ -148,6 +148,102 @@ jobs:
       # The real syntax check — including upstream resolution — happens in
       # stack-smoke-test below, where nginx starts with its actual peers up.
 
+  validate-third-party-addons:
+    name: Validate third-party addon branches
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Always warns, never fails: clone-addons.sh falls back from the
+    # version branch to `main` silently. This job surfaces that fallback
+    # as a GitHub Annotation so reviewers see it on the PR. Failing the
+    # build here would block legitimate work just because an upstream
+    # addon repo hasn't published the new Odoo version branch yet.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve ODOO_TAG branch
+        id: tag
+        run: |
+          raw=$(grep '^ODOO_TAG=' .env.example | head -1 | cut -d= -f2 | tr -d '"' | tr -d "'" | xargs)
+          # ODOO_TAG is image-pinned like "19.0@sha256:abc..." — strip
+          # the digest to get the actual git branch name ("19.0").
+          branch="${raw%%@*}"
+          if [ -z "$branch" ]; then
+            echo "::error::Could not resolve ODOO_TAG from .env.example"
+            exit 1
+          fi
+          echo "raw=$raw" >> "$GITHUB_OUTPUT"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "Checking third-party addons against branch '$branch' (from ODOO_TAG=$raw)"
+
+      - name: Check each repo via git ls-remote
+        env:
+          ODOO_BRANCH: ${{ steps.tag.outputs.branch }}
+        run: |
+          set -u
+          # Validate the branch name resolved upstream is safe to pass as
+          # a git refname (digits, dots, dashes, underscores only). Defense
+          # against a hypothetical .env.example mutation that smuggles
+          # metacharacters into the value.
+          if [[ ! "$ODOO_BRANCH" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+            echo "::error::Refusing to ls-remote: ODOO_BRANCH '$ODOO_BRANCH' is not a safe ref name"
+            exit 1
+          fi
+
+          total=0; ok=0; fallback=0; missing=0
+          while IFS= read -r line; do
+            # Skip comments and blanks
+            [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+            # First two whitespace-separated fields: <type> <url>
+            read -r repo_type repo_url _ <<< "$line"
+            # Skip enterprise — ls-remote without creds returns nothing
+            # so we'd false-flag every build.
+            [[ "$repo_type" == "enterprise" ]] && continue
+            [[ -z "$repo_url" ]] && continue
+
+            # URL allow-list: must be an http(s) URL pointing at a known
+            # forge. Refuses anything starting with `-` (which git would
+            # interpret as a CLI flag — classic `--upload-pack=` RCE) or
+            # using a non-web scheme (file://, ssh://, ext::). This is
+            # defense-in-depth: the `git ls-remote -- "$repo_url"` form
+            # below ALSO blocks flag-injection, but allow-listing the
+            # forge bounds the blast radius of any future regression.
+            if [[ ! "$repo_url" =~ ^https://(github\.com|gitlab\.com|bitbucket\.org)/ ]]; then
+              echo "::warning file=odoo/third-party-addons.txt::Refusing to validate '$repo_url' — only https URLs to github/gitlab/bitbucket are checked. Add the forge to the allow-list in ci.yml if needed."
+              continue
+            fi
+            total=$((total + 1))
+
+            # `git ls-remote -- <url> <ref>` — the `--` end-of-options
+            # marker is critical: without it, a malicious URL starting
+            # with `-` would be parsed as a flag by git itself.
+            tag_present=$(git ls-remote --heads -- "$repo_url" "$ODOO_BRANCH" 2>/dev/null | wc -l | tr -d ' ')
+            if [ "$tag_present" -gt 0 ]; then
+              echo "  ok    $repo_url has branch $ODOO_BRANCH"
+              ok=$((ok + 1))
+              continue
+            fi
+
+            main_present=$(git ls-remote --heads -- "$repo_url" main 2>/dev/null | wc -l | tr -d ' ')
+            master_present=$(git ls-remote --heads -- "$repo_url" master 2>/dev/null | wc -l | tr -d ' ')
+            if [ "$main_present" -gt 0 ] || [ "$master_present" -gt 0 ]; then
+              fallback_branch="main"
+              [ "$main_present" -eq 0 ] && fallback_branch="master"
+              echo "::warning file=odoo/third-party-addons.txt::$repo_url is missing branch $ODOO_BRANCH. clone-addons.sh will silently fall back to $fallback_branch — modules may be incompatible with this Odoo version."
+              fallback=$((fallback + 1))
+            else
+              echo "::warning file=odoo/third-party-addons.txt::$repo_url has NEITHER $ODOO_BRANCH NOR main/master. clone-addons.sh will skip this repo entirely; any modules expected from it WILL be missing from the built image."
+              missing=$((missing + 1))
+            fi
+          done < odoo/third-party-addons.txt
+
+          echo ""
+          echo "Summary: $total public repos checked"
+          echo "  $ok have the expected branch ($ODOO_BRANCH)"
+          echo "  $fallback will fall back to main/master"
+          echo "  $missing have no compatible branch"
+          # Always exit 0 — warnings only, never fail the build.
+
   stack-smoke-test:
     name: Backend stack smoke test
     runs-on: ubuntu-latest
