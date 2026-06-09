@@ -57,5 +57,11 @@ RUN chmod +x /var/lib/pgadmin/start_pgadmin.sh
 # generated files live in the writable container layer, not the image.
 ENTRYPOINT ["/var/lib/pgadmin/start_pgadmin.sh"]
 
+# Drop back to the unprivileged upstream user (UID 5050) so the runtime
+# container doesn't execute as root — hadolint DL3002. The root steps
+# above (apk, pip into the venv site-packages, private-key chown) are
+# all build-time only; nothing in start_pgadmin.sh requires root.
+USER pgadmin
+
 # Expose the necessary port
 EXPOSE 80
