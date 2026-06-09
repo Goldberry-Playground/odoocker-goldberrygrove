@@ -1,0 +1,125 @@
+###############################################################################
+# Grove monitoring stack — OpenObserve + Keep
+#
+# OpenObserve handles detection (synthetic HTTP monitors, threshold alerts,
+# logs/metrics/traces ingestion, dashboards). Keep handles routing (alert
+# dedup, severity → Discord channel, runbook-link injection).
+#
+# Storage: OpenObserve writes Parquet to the existing odoocker MinIO `s3`
+# service (joined via the `gatheratthegrove_internal` external network).
+# Keep uses local SQLite for its workflow state (small footprint; swap to
+# Postgres if multi-user need arises).
+#
+# Notifications: Discord webhooks (warning + critical channels). PagerDuty
+# deferred until a production droplet exists (M2 milestone).
+#
+# Lifecycle: independent of the main grove stack. `make monitoring-up` brings
+# this up; `make all-up` does not (intentionally — observability has its own
+# cadence and shouldn't churn with backend restarts).
+#
+# Acceptance for GATH-44 verified by scripts/smoke-test-monitoring.sh which
+# kills gatheratthegrove-odoo-1 and polls for Discord alert <2 min.
+###############################################################################
+
+name: gatheratthegrove-monitoring
+
+networks:
+  internal:
+    # Reuse the network the main odoocker stack creates. `external: true` means
+    # this compose project doesn't try to create it — it joins the existing one.
+    # If you `make monitoring-up` before `make stack-up`, this fails with
+    # "network not found" — that's by design (monitoring has nothing useful to
+    # monitor without the main stack).
+    name: gatheratthegrove_internal
+    external: true
+
+services:
+  # ── OpenObserve — single-binary observability platform ────────────────────
+  # Replaces LGTM (Loki + Grafana + Tempo + Mimir) + Uptime Kuma in one process.
+  # Synthetic HTTP monitors, native alerting (built-in Slack/Discord/webhook
+  # outputs), dashboards, Parquet-on-S3 storage.
+  openobserve:
+    image: public.ecr.aws/zinclabs/openobserve:${OPENOBSERVE_TAG:-v0.17.2}
+    restart: unless-stopped
+    environment:
+      # Auth — root user provisioned on first boot.
+      ZO_ROOT_USER_EMAIL: ${OPENOBSERVE_ROOT_EMAIL}
+      ZO_ROOT_USER_PASSWORD: ${OPENOBSERVE_ROOT_PASSWORD}
+      # Storage — Parquet to MinIO via the shared internal network.
+      # Same config travels to prod by changing ZO_S3_SERVER_URL only
+      # (DO Spaces is S3-compatible). Endpoint is the odoocker `s3` service
+      # by DNS name; no host.docker.internal indirection.
+      ZO_S3_PROVIDER: s3
+      ZO_S3_SERVER_URL: http://s3:9000
+      ZO_S3_REGION_NAME: us-east-1
+      ZO_S3_BUCKET_NAME: openobserve-data
+      ZO_S3_ACCESS_KEY: ${MINIO_ROOT_USER}
+      ZO_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      ZO_S3_FORCE_PATH_STYLE: "true"  # MinIO needs path-style; DO Spaces supports both
+      # Behavior
+      ZO_TELEMETRY: "false"  # don't phone home
+      ZO_PROMETHEUS_ENABLED: "true"
+      ZO_LOCAL_MODE: "true"  # single-node; flip to false + add etcd for HA in prod
+    ports:
+      - "${OPENOBSERVE_PORT:-5080}:5080"
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:5080/healthz", "||", "exit", "1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # ── Keep — alert routing + workflow engine ────────────────────────────────
+  # Receives alerts from OpenObserve via webhook, deduplicates, applies
+  # severity routing (warning → Discord warning channel; critical →
+  # Discord critical channel with @here), injects runbook links from
+  # docs/RUNBOOKS.md. Future GATH-23 additions (Prometheus alerts, Loki
+  # alerts) plug in here without rewiring downstream Discord channels.
+  keep-backend:
+    image: us-central1-docker.pkg.dev/keephq/keep/keep-api:${KEEP_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      # Storage — SQLite for the MVP (single-user, small footprint).
+      # Swap to Postgres when multi-user / multi-tenant is needed.
+      DATABASE_CONNECTION_STRING: sqlite:////app/data/keep.db
+      # API/Frontend wiring
+      AUTH_TYPE: NO_AUTH  # MVP: local-only, no UI auth. Tighten for any non-local deploy.
+      KEEP_API_URL: http://keep-backend:8080
+      PORT: 8080
+      # Webhook the OpenObserve→Keep bridge POSTs alerts to.
+      WEBHOOK_TOKEN: ${KEEP_WEBHOOK_TOKEN}
+      # Frontend URL (where runbook links resolve from)
+      FRONTEND_URL: http://localhost:${KEEP_PORT:-3034}
+    volumes:
+      - keep-data:/app/data
+    ports:
+      - "${KEEP_BACKEND_PORT:-8080}:8080"
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthcheck", "||", "exit", "1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  keep-frontend:
+    image: us-central1-docker.pkg.dev/keephq/keep/keep-ui:${KEEP_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      - keep-backend
+    environment:
+      API_URL: http://keep-backend:8080
+      NEXTAUTH_SECRET: ${KEEP_NEXTAUTH_SECRET}
+      NEXTAUTH_URL: http://localhost:${KEEP_PORT:-3034}
+      NEXT_PUBLIC_API_URL: http://localhost:${KEEP_BACKEND_PORT:-8080}
+      AUTH_TYPE: NO_AUTH
+    ports:
+      - "${KEEP_PORT:-3034}:3000"
+    networks:
+      - internal
+
+volumes:
+  keep-data:
