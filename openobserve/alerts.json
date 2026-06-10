@@ -1,0 +1,92 @@
+{
+  "_comment": "OpenObserve alert rules — bootstrap source of truth.",
+  "_lineage": "Consumed by scripts/setup-monitoring.py which POSTs each rule to OpenObserve's /api/{org}/alerts endpoint. Each rule references a monitor by name. Idempotent — re-runs upsert by 'name'.",
+  "_routing_strategy": "Every alert fires to a single Keep webhook with severity in the JSON payload. Keep's workflows.yml then routes warning → #grove-alerts-warning, critical → #grove-alerts-critical with @here. No Slack/PagerDuty wiring exists in OpenObserve — that's all Keep's job.",
+  "_destinations": [
+    {
+      "name": "keep-webhook",
+      "url": "http://keep-backend:8080/alerts/event/{webhook_token}",
+      "method": "POST",
+      "_secret_substitution": "{webhook_token} is replaced by setup-monitoring.py from KEEP_WEBHOOK_TOKEN env at bootstrap time."
+    }
+  ],
+  "alerts": [
+    {
+      "name": "frontend-down-warning",
+      "monitor_names": [
+        "hub-root", "hub-journal",
+        "goldberry-root", "goldberry-shop", "goldberry-blog",
+        "ggg-root", "ggg-shop", "ggg-blog",
+        "nursery-root", "nursery-shop", "nursery-blog"
+      ],
+      "trigger_condition": "status != 2xx for >60s OR response time >5s for >2 checks",
+      "severity": "warning",
+      "destination": "keep-webhook",
+      "runbook_key": "frontend-degraded",
+      "_message_template": "[{tenant}] {route} degraded — status={status_code} duration={duration_ms}ms. Runbook: docs/RUNBOOKS.md#frontend-degraded"
+    },
+    {
+      "name": "frontend-down-critical",
+      "monitor_names": [
+        "hub-root", "goldberry-root", "ggg-root", "nursery-root"
+      ],
+      "trigger_condition": "monitor unreachable (timeout or connection refused) for >30s",
+      "severity": "critical",
+      "destination": "keep-webhook",
+      "runbook_key": "frontend-down",
+      "_message_template": "[{tenant}] FRONTEND DOWN — root endpoint unreachable for {duration_s}s. Runbook: docs/RUNBOOKS.md#frontend-down"
+    },
+    {
+      "name": "odoo-down-critical",
+      "monitor_names": ["odoo-health"],
+      "trigger_condition": "monitor unreachable for >30s",
+      "severity": "critical",
+      "destination": "keep-webhook",
+      "runbook_key": "odoo-down",
+      "_message_template": "ODOO BACKEND DOWN — /web/login unreachable for {duration_s}s. All storefront cart + checkout flows will fail. Runbook: docs/RUNBOOKS.md#odoo-down"
+    },
+    {
+      "name": "odoo-degraded-warning",
+      "monitor_names": ["odoo-health"],
+      "trigger_condition": "status != 2xx,303 for >60s OR response time >10s for >3 checks",
+      "severity": "warning",
+      "destination": "keep-webhook",
+      "runbook_key": "odoo-degraded",
+      "_message_template": "Odoo degraded — status={status_code} duration={duration_ms}ms. Storefronts may show empty product lists. Runbook: docs/RUNBOOKS.md#odoo-degraded"
+    },
+    {
+      "name": "ghost-down-warning",
+      "monitor_names": ["ghost-goldberry-admin", "ghost-ggg-admin", "ghost-nursery-admin"],
+      "trigger_condition": "monitor unreachable for >60s",
+      "severity": "warning",
+      "destination": "keep-webhook",
+      "runbook_key": "ghost-down",
+      "_message_template": "[{tenant}] Ghost admin API unreachable — /blog page will fail. Runbook: docs/RUNBOOKS.md#ghost-down",
+      "_note": "Ghost is content-only; degraded Ghost doesn't break commerce, hence warning not critical."
+    },
+    {
+      "name": "postgres-down-critical",
+      "monitor_names": ["postgres-tcp"],
+      "trigger_condition": "TCP probe failed for >30s",
+      "severity": "critical",
+      "destination": "keep-webhook",
+      "runbook_key": "postgres-down",
+      "_message_template": "POSTGRES DOWN — TCP probe to postgres:5432 failed for {duration_s}s. Odoo will be unable to serve any request. Runbook: docs/RUNBOOKS.md#postgres-down"
+    },
+    {
+      "name": "ssl-expiring-warning",
+      "monitor_names": [
+        "ssl-goldberrygrove-farm",
+        "ssl-woodworkingeorge-com",
+        "ssl-atthegrovenursery-com",
+        "ssl-gatheringatthegrove-com"
+      ],
+      "trigger_condition": "days_until_expiry < 14",
+      "severity": "warning",
+      "destination": "keep-webhook",
+      "runbook_key": "ssl-expiring",
+      "_message_template": "[{host}] SSL cert expires in {days_remaining} days. Runbook: docs/RUNBOOKS.md#ssl-expiring",
+      "_deferred": "Local has no real certs. SSL monitors will fail-to-evaluate locally; alert is meaningful only once M2 droplet exists with real certs."
+    }
+  ]
+}

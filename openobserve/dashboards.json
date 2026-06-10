@@ -1,0 +1,96 @@
+{
+  "_comment": "OpenObserve dashboard for the Grove status page.",
+  "_lineage": "Consumed by scripts/setup-monitoring.py which POSTs to OpenObserve's /api/{org}/dashboards endpoint. Renders at http://localhost:5080/web/dashboards/<dashboard_id> once provisioned.",
+  "_public_access": "OpenObserve's built-in public-share feature is enabled per-panel. The 'Grove Status' dashboard is the canonical surface; eventual status.gatheringatthegrove.com (M2+) reverse-proxies to this dashboard's public-share URL. Branding deferred to a follow-up.",
+  "dashboards": [
+    {
+      "name": "Grove Status",
+      "description": "Public uptime + latency at-a-glance across all 4 frontends, Odoo backend, 3 Ghost CMS instances, and Postgres TCP. Read-only sharing enabled per-panel for the eventual public status page.",
+      "rows": [
+        {
+          "title": "Frontends",
+          "panels": [
+            {
+              "title": "Hub uptime (24h)",
+              "type": "stat",
+              "query": "SELECT (COUNT(*) FILTER (WHERE status_code BETWEEN 200 AND 299)) * 100.0 / COUNT(*) AS uptime_pct FROM synthetic_results WHERE monitor_name = 'hub-root' AND _timestamp > NOW() - INTERVAL '24 hours'",
+              "unit": "percent"
+            },
+            {
+              "title": "Goldberry uptime (24h)",
+              "type": "stat",
+              "query": "SELECT (COUNT(*) FILTER (WHERE status_code BETWEEN 200 AND 299)) * 100.0 / COUNT(*) AS uptime_pct FROM synthetic_results WHERE monitor_name = 'goldberry-root' AND _timestamp > NOW() - INTERVAL '24 hours'",
+              "unit": "percent"
+            },
+            {
+              "title": "GGG uptime (24h)",
+              "type": "stat",
+              "query": "SELECT (COUNT(*) FILTER (WHERE status_code BETWEEN 200 AND 299)) * 100.0 / COUNT(*) AS uptime_pct FROM synthetic_results WHERE monitor_name = 'ggg-root' AND _timestamp > NOW() - INTERVAL '24 hours'",
+              "unit": "percent"
+            },
+            {
+              "title": "Nursery uptime (24h)",
+              "type": "stat",
+              "query": "SELECT (COUNT(*) FILTER (WHERE status_code BETWEEN 200 AND 299)) * 100.0 / COUNT(*) AS uptime_pct FROM synthetic_results WHERE monitor_name = 'nursery-root' AND _timestamp > NOW() - INTERVAL '24 hours'",
+              "unit": "percent"
+            }
+          ]
+        },
+        {
+          "title": "Backend",
+          "panels": [
+            {
+              "title": "Odoo uptime (24h)",
+              "type": "stat",
+              "query": "SELECT (COUNT(*) FILTER (WHERE status_code IN (200, 303))) * 100.0 / COUNT(*) AS uptime_pct FROM synthetic_results WHERE monitor_name = 'odoo-health' AND _timestamp > NOW() - INTERVAL '24 hours'",
+              "unit": "percent"
+            },
+            {
+              "title": "Ghost (Goldberry) uptime (24h)",
+              "type": "stat",
+              "query": "SELECT (COUNT(*) FILTER (WHERE status_code IN (200, 401))) * 100.0 / COUNT(*) AS uptime_pct FROM synthetic_results WHERE monitor_name = 'ghost-goldberry-admin' AND _timestamp > NOW() - INTERVAL '24 hours'",
+              "unit": "percent"
+            },
+            {
+              "title": "Ghost (GGG) uptime (24h)",
+              "type": "stat",
+              "query": "SELECT (COUNT(*) FILTER (WHERE status_code IN (200, 401))) * 100.0 / COUNT(*) AS uptime_pct FROM synthetic_results WHERE monitor_name = 'ghost-ggg-admin' AND _timestamp > NOW() - INTERVAL '24 hours'",
+              "unit": "percent"
+            },
+            {
+              "title": "Ghost (Nursery) uptime (24h)",
+              "type": "stat",
+              "query": "SELECT (COUNT(*) FILTER (WHERE status_code IN (200, 401))) * 100.0 / COUNT(*) AS uptime_pct FROM synthetic_results WHERE monitor_name = 'ghost-nursery-admin' AND _timestamp > NOW() - INTERVAL '24 hours'",
+              "unit": "percent"
+            },
+            {
+              "title": "Postgres TCP uptime (24h)",
+              "type": "stat",
+              "query": "SELECT (COUNT(*) FILTER (WHERE tcp_connected)) * 100.0 / COUNT(*) AS uptime_pct FROM synthetic_results WHERE monitor_name = 'postgres-tcp' AND _timestamp > NOW() - INTERVAL '24 hours'",
+              "unit": "percent"
+            }
+          ]
+        },
+        {
+          "title": "Latency trend (last 1h)",
+          "panels": [
+            {
+              "title": "Frontend p95 response time (ms)",
+              "type": "timeseries",
+              "query": "SELECT percentile_cont(duration_ms, 0.95) AS p95, monitor_name FROM synthetic_results WHERE monitor_name IN ('hub-root', 'goldberry-root', 'ggg-root', 'nursery-root') AND _timestamp > NOW() - INTERVAL '1 hour' GROUP BY monitor_name, time_bucket('1 minute', _timestamp)",
+              "unit": "ms"
+            },
+            {
+              "title": "Odoo p95 response time (ms)",
+              "type": "timeseries",
+              "query": "SELECT percentile_cont(duration_ms, 0.95) AS p95 FROM synthetic_results WHERE monitor_name = 'odoo-health' AND _timestamp > NOW() - INTERVAL '1 hour' GROUP BY time_bucket('1 minute', _timestamp)",
+              "unit": "ms"
+            }
+          ]
+        }
+      ],
+      "public_share_enabled": true,
+      "refresh_interval_seconds": 60
+    }
+  ]
+}
