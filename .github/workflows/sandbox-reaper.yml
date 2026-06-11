@@ -20,7 +20,7 @@ jobs:
 
     steps:
       - name: Install doctl
-        uses: digitalocean/action-doctl@135a4ef8c9e79ca24c1e2e3caeb9dd7b6e1e9ae3 # v2.5.1
+        uses: digitalocean/action-doctl@135ac0aa0eed4437d547c6f12c364d3006b42824 # v2.5.1
         timeout-minutes: 2
         with:
           token: ${{ secrets.DIGITALOCEAN_TOKEN }}
