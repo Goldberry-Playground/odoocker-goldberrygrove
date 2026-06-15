@@ -29,7 +29,7 @@ jobs:
         timeout-minutes: 2
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@b9cd54531c595ded9dea2dcb6f4f77ce7638ac33 # v3.1.2
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
         timeout-minutes: 3
         with:
           terraform_version: "~1.9"
