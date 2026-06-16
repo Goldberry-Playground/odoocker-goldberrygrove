@@ -1,0 +1,11 @@
+# Local TF state — never committed; tracked only by this operator's machine
+terraform.tfstate
+terraform.tfstate.backup
+terraform.tfstate.*.backup
+.terraform/
+crash.log
+crash.*.log
+
+# Operator-specific tfvars (real values). The .example file IS committed.
+terraform.tfvars
+*.auto.tfvars

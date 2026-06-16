@@ -72,6 +72,47 @@ tf-fmt:
 tf-validate:
 	terraform -chdir=$(TF_DIR) init -backend=false && terraform -chdir=$(TF_DIR) validate
 
+# ── State-backend (special: bootstraps the grove-tf-state bucket itself) ─────
+# Uses LOCAL Terraform backend so it can run before any other env exists.
+# Provider credentials flow from 1Password via `op run --env-file=.env.op`
+# so they never enter shell scrollback. See README.md in the env dir.
+STATE_BACKEND_DIR := infra/terraform/environments/state-backend
+
+## state-backend-init  — Initialize the local TF backend for state-backend
+.PHONY: state-backend-init
+state-backend-init:
+	terraform -chdir=$(STATE_BACKEND_DIR) init
+
+## state-backend-validate  — Validate state-backend config without touching the backend
+.PHONY: state-backend-validate
+state-backend-validate:
+	terraform -chdir=$(STATE_BACKEND_DIR) init -backend=false && terraform -chdir=$(STATE_BACKEND_DIR) validate
+
+## state-backend-plan  — Show planned changes (creds from 1Password via op run)
+.PHONY: state-backend-plan
+state-backend-plan:
+	op run --env-file=$(STATE_BACKEND_DIR)/.env.op -- terraform -chdir=$(STATE_BACKEND_DIR) plan
+
+## state-backend-apply  — Provision grove-tf-state bucket + Spaces key + GH secrets
+.PHONY: state-backend-apply
+state-backend-apply:
+	op run --env-file=$(STATE_BACKEND_DIR)/.env.op -- terraform -chdir=$(STATE_BACKEND_DIR) apply -auto-approve
+
+## state-backend-output  — Show outputs (bucket name, endpoint, synced GH secret names)
+.PHONY: state-backend-output
+state-backend-output:
+	terraform -chdir=$(STATE_BACKEND_DIR) output
+
+## state-backend-destroy CONFIRM=yes  — Tear down. WARNING: wipes all envs' TF state.
+.PHONY: state-backend-destroy
+state-backend-destroy:
+	@if [ "$(CONFIRM)" != "yes" ]; then \
+		echo "Refusing to destroy state-backend without CONFIRM=yes"; \
+		echo "WARNING: destroying grove-tf-state invalidates the state of bootstrap, sandbox, and production envs."; \
+		echo "You will also need to remove the prevent_destroy lifecycle block first — see README."; \
+		exit 1; fi
+	op run --env-file=$(STATE_BACKEND_DIR)/.env.op -- terraform -chdir=$(STATE_BACKEND_DIR) destroy
+
 # ── Help ─────────────────────────────────────────────────────────────────────
 
 .PHONY: help
