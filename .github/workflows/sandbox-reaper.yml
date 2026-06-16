@@ -70,34 +70,35 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Post Slack summary
-        uses: slackapi/slack-github-action@485a9d42d3a73031f12ec201c457e2162c45d02d # v2.0.0
-        timeout-minutes: 1
+      # Discord webhook (consolidates with the GATH-44 monitoring stack's
+      # Discord alerting). Built with jq -n so droplet names containing
+      # backticks or other shell metacharacters can't inject into the payload.
+      - name: Post Discord summary
         if: always()
+        timeout-minutes: 1
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          DISCORD_OPS_WEBHOOK_URL: ${{ secrets.DISCORD_OPS_WEBHOOK_URL }}
           REAPER_DESTROYED: ${{ steps.reap.outputs.destroyed }}
           REAPER_SKIPPED: ${{ steps.reap.outputs.skipped }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        with:
-          webhook-type: incoming-webhook
-          payload: |
-            {
-              "text": "Sandbox Reaper finished",
-              "blocks": [
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": "*Sandbox Reaper* — <${{ env.RUN_URL }}|Run ${{ github.run_id }}>"
-                  }
-                },
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": "*Destroyed:*\n${{ env.REAPER_DESTROYED || 'none' }}\n\n*Still alive (< 24h):*\n${{ env.REAPER_SKIPPED || 'none' }}"
-                  }
-                }
-              ]
-            }
+        run: |
+          PAYLOAD=$(jq -n \
+            --arg run_url "$RUN_URL" \
+            --arg destroyed "${REAPER_DESTROYED:-none}" \
+            --arg skipped "${REAPER_SKIPPED:-none}" \
+            '{
+              username: "🪦 Sandbox Reaper",
+              embeds: [{
+                title: "Sandbox Reaper finished",
+                url: $run_url,
+                color: 5763719,
+                fields: [
+                  {name: "Destroyed", value: $destroyed, inline: false},
+                  {name: "Still alive (< 24h)", value: $skipped, inline: false}
+                ]
+              }]
+            }')
+          curl -fsS -X POST \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            "$DISCORD_OPS_WEBHOOK_URL"

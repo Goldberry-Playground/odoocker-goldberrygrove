@@ -74,25 +74,28 @@ jobs:
             exit 1
           fi
 
-      - name: Alert Slack on drift
-        uses: slackapi/slack-github-action@485a9d42d3a73031f12ec201c457e2162c45d02d # v2.0.0
-        timeout-minutes: 1
+      # Discord webhook (consolidates with the GATH-44 monitoring stack's
+      # Discord alerting). One webhook URL, distinct sender label per workflow
+      # via the embed's `username` field.
+      - name: Alert Discord on drift
         if: steps.plan.outputs.exitcode == '2'
+        timeout-minutes: 1
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          DISCORD_OPS_WEBHOOK_URL: ${{ secrets.DISCORD_OPS_WEBHOOK_URL }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        with:
-          webhook-type: incoming-webhook
-          payload: |
-            {
-              "text": "DRIFT detected in production Terraform state",
-              "blocks": [
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": ":warning: *Production Drift Detected*\n\n`terraform plan` returned exit code 2 — real infrastructure differs from state.\n\n<${{ env.RUN_URL }}|View plan output>"
-                  }
-                }
-              ]
-            }
+        run: |
+          PAYLOAD=$(jq -n \
+            --arg run_url "$RUN_URL" \
+            '{
+              username: "🌊 Terraform Drift",
+              embeds: [{
+                title: "⚠️ Production drift detected",
+                description: "`terraform plan` returned exit code 2 — real infrastructure differs from state.",
+                url: $run_url,
+                color: 15158332
+              }]
+            }')
+          curl -fsS -X POST \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            "$DISCORD_OPS_WEBHOOK_URL"
