@@ -23,10 +23,18 @@ clone_and_copy_modules() {
     shift 2
     local modules_conditions=("$@")
 
+    # ODOO_TAG is image-pinned in .env.example (`19.0@sha256:...`) for supply
+    # chain safety, but git can't accept a SHA-digest-suffixed string as a
+    # branch name. Strip the @sha256:... suffix to get the real branch.
+    # Without this strip every clone falls through to --branch main (or fails
+    # outright), silently shipping the image without 2 of 3 third-party
+    # addon sets — verified by P2.1's validate-third-party-addons CI job.
+    local odoo_branch="${ODOO_TAG%%@*}"
+
     # Clone and copy logic for enterprise repository
     if [[ $repo_type == "enterprise" ]]; then
         if [ -n "$GITHUB_USER" ] && [ -n "$GITHUB_ACCESS_TOKEN" ]; then
-            $clone_cmd --depth 1 --branch ${ODOO_TAG} --single-branch --no-tags
+            $clone_cmd --depth 1 --branch ${odoo_branch} --single-branch --no-tags
         fi
     else
         # Determine if any module has a true condition
@@ -42,10 +50,11 @@ clone_and_copy_modules() {
             done
         fi
 
-        # Clone the repo if should_clone is true and it's not already cloned
+        # Clone the repo if should_clone is true and it's not already cloned.
+        # Uses odoo_branch (with @sha256:... stripped above) instead of raw ODOO_TAG.
         if [[ $should_clone == true && ! -d "$repo_name" ]]; then
-            if ! $clone_cmd --depth 1 --branch ${ODOO_TAG} --single-branch --no-tags 2>/dev/null; then
-                echo "WARN: branch ${ODOO_TAG} not found for ${repo_name}, trying main..."
+            if ! $clone_cmd --depth 1 --branch ${odoo_branch} --single-branch --no-tags 2>/dev/null; then
+                echo "WARN: branch ${odoo_branch} not found for ${repo_name}, trying main..."
                 $clone_cmd --depth 1 --branch main --single-branch --no-tags 2>/dev/null || \
                 echo "WARN: skipping ${repo_name} — no compatible branch found"
             fi

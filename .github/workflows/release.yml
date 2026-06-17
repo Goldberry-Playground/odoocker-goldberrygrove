@@ -94,7 +94,9 @@ jobs:
             # Compose builds from Dockerfile — derive image name from repo + tag
             ODOO_TAG=$(grep '^ODOO_TAG=' .env.example | cut -d= -f2 | head -1)
             REPO_OWNER=$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
-            IMAGE="ghcr.io/${REPO_OWNER}/odoocker-odoo:${ODOO_TAG:-latest}"
+            # Image name aligned with docker-odoo.yml (which publishes here)
+            # and preview/ env's docker-compose.preview.yml (which consumes).
+            IMAGE="ghcr.io/${REPO_OWNER}/grove-odoo:${ODOO_TAG:-latest}"
           fi
           echo "odoo_image=${IMAGE}" >> "$GITHUB_OUTPUT"
           echo "Image to scan: ${IMAGE}"
