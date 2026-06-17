@@ -26,6 +26,7 @@ resource "digitalocean_droplet" "this" {
 }
 
 resource "digitalocean_volume" "this" {
+  count                    = var.volume_size_gb > 0 ? 1 : 0
   name                     = "${var.name}-data"
   region                   = var.region
   size                     = var.volume_size_gb
@@ -35,6 +36,7 @@ resource "digitalocean_volume" "this" {
 }
 
 resource "digitalocean_volume_attachment" "this" {
+  count      = var.volume_size_gb > 0 ? 1 : 0
   droplet_id = digitalocean_droplet.this.id
-  volume_id  = digitalocean_volume.this.id
+  volume_id  = digitalocean_volume.this[0].id
 }

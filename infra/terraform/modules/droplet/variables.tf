@@ -25,8 +25,14 @@ variable "ssh_key_ids" {
 }
 
 variable "volume_size_gb" {
-  description = "Size (GiB) of the block-storage volume to attach"
+  description = "Size of the attached block volume in GiB. Set to 0 to skip volume creation entirely (droplet uses local disk only)."
   type        = number
+  default     = 0
+
+  validation {
+    condition     = var.volume_size_gb >= 0
+    error_message = "volume_size_gb must be 0 or positive."
+  }
 }
 
 variable "tags" {
