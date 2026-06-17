@@ -11,25 +11,25 @@ Odoo 19 + PostgreSQL 17 + Nginx (reverse proxy + Let's Encrypt) + Ghost CMS (x3)
 
 ## Architecture
 
-3 custom React websites consume:
+4 custom Next.js sites (hub + 3 tenant storefronts) consume:
 - **Odoo** via `grove_headless` REST API (e-commerce, inventory, CRM)
 - **Ghost CMS** via Content API (headless blog at `/blog`)
 
-Ghost is NOT the website — it's a headless content source. React is the frontend.
+Ghost is NOT the website — it's a headless content source. Next.js is the frontend.
 
 ## Related Repos
 
 | Repo | Purpose |
 |------|---------|
 | `Goldberry-Playground/grove-odoo-modules` | Custom Odoo modules (deployed via git-sync) |
-| `Goldberry-Playground/grove-websites` | React frontends (planned) |
+| `Goldberry-Playground/grove-sites` | Next.js 15 monorepo (hub + 3 tenant storefronts) — built + published to ghcr.io by grove-sites CI, pulled here under the `frontends` profile |
 
 ## Environment Architecture
 
 | Environment | Compose Override | Key Differences |
 |-------------|-----------------|-----------------|
 | Local | `override.local.yml` | Ports exposed, `restart: no`, modules bind-mounted from `../grove-odoo-modules` |
-| Grove Local | `override.grove.yml` + `override.local.yml` | Adds Ghost CMS instances |
+| Grove Local | `override.grove.yml` + `override.local.yml` | Adds Ghost CMS instances + frontends (`--profile frontends`) |
 | Sandbox/QA | `override.grove.yml` + `override.sandbox.yml` | `APP_ENV=staging`, sandbox DB |
 | Production | `override.grove.yml` + `override.production.yml` | Memory limits, `restart: unless-stopped`, git-sync active |
 

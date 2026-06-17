@@ -60,6 +60,32 @@ services:
     ports:
       - 2370:2370
 
+  # ── Frontends — expose direct ports for local dev access ─────────────────
+  # In prod/preview, frontends are reached only via nginx-proxy (no `ports:`).
+  # In local, devs hit them directly at the host port for fast iteration
+  # without TLS / virtual hosts. Container-internal ports come from each
+  # Dockerfile's `ENV PORT=...` (storefronts: 3001, hub: 3000).
+
+  hub:
+    restart: 'no'
+    ports:
+      - ${HUB_PORT:-3000}:3000
+
+  goldberry:
+    restart: 'no'
+    ports:
+      - ${GOLDBERRY_PORT:-3001}:3001
+
+  ggg:
+    restart: 'no'
+    ports:
+      - ${GGG_PORT:-3002}:3001
+
+  nursery:
+    restart: 'no'
+    ports:
+      - ${NURSERY_PORT:-3003}:3001
+
   redis:
     restart: 'no'
     # Loopback-only — never bind 0.0.0.0 even in local dev. An OrbStack

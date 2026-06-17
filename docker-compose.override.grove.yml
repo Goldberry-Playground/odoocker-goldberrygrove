@@ -1,5 +1,5 @@
 ###############################################################################
-# Grove Multi-Tenant Ecosystem — Ghost CMS Services
+# Grove Multi-Tenant Ecosystem — Ghost CMS + Headless Frontends
 # Usage:
 #   docker compose -f docker-compose.yml -f docker-compose.override.grove.yml up
 ###############################################################################
@@ -57,6 +57,129 @@ services:
       - "2370"
     networks:
       - internal
+
+  # ── Grove frontends (Next.js storefronts + hub) ────────────────────────────
+  # Profile-gated: set FRONTENDS_PROFILES=frontends in .env to bring them up.
+  # Images come from ghcr.io/goldberry-playground/grove-{hub,goldberry,ggg,nursery},
+  # built and published by grove-sites CI on every push to main. Pull with
+  # `docker compose pull` before `up`; pin per-service tags via the
+  # *_IMAGE_TAG env vars in .env.grove for reproducible prod releases.
+  #
+  # Internal-only routing for now (`expose:`, no VIRTUAL_HOST). Public-domain
+  # routing through nginx-proxy is the M2/M3 preview-droplet's responsibility —
+  # adding VIRTUAL_HOST here would conflict with the existing Odoo apex-domain
+  # claim, which needs a separate refactor to drop down to `erp.*` only.
+  #
+  # Backend URLs default to Docker service-name DNS on the `internal` network
+  # (e.g. http://odoo:8069). For dev iteration against a backend running in a
+  # different compose project, override ODOO_URL / GHOST_URL_* to
+  # http://host.docker.internal:<port> in your .env.
+
+  hub:
+    image: ghcr.io/goldberry-playground/grove-hub:${HUB_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      GROVE_ODOO_URL: ${GROVE_ODOO_URL:-http://odoo:8069}
+      HUB_GHOST_URL: ${HUB_GHOST_URL:-http://ghost-goldberry:2368}
+      HUB_GHOST_CONTENT_API_KEY: ${HUB_GHOST_CONTENT_API_KEY:-}
+      GROVE_REVALIDATE_SECRET: ${GROVE_REVALIDATE_SECRET:-}
+    expose:
+      - "3000"
+    networks:
+      - internal
+    profiles: [$FRONTENDS_PROFILES]
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  goldberry:
+    image: ghcr.io/goldberry-playground/grove-goldberry:${GOLDBERRY_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      TENANT_ID: goldberry
+      NEXT_PUBLIC_TENANT_ID: goldberry
+      ODOO_URL: ${ODOO_URL:-http://odoo:8069}
+      ODOO_API_KEY: ${ODOO_API_KEY:-}
+      GHOST_URL: ${GHOST_URL_GOLDBERRY:-http://ghost-goldberry:2368}
+      GHOST_CONTENT_KEY: ${GHOST_CONTENT_KEY_GOLDBERRY:-}
+    expose:
+      - "3001"
+    networks:
+      - internal
+    profiles: [$FRONTENDS_PROFILES]
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3001/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  ggg:
+    image: ghcr.io/goldberry-playground/grove-ggg:${GGG_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      TENANT_ID: ggg
+      NEXT_PUBLIC_TENANT_ID: ggg
+      ODOO_URL: ${ODOO_URL:-http://odoo:8069}
+      ODOO_API_KEY: ${ODOO_API_KEY:-}
+      GHOST_URL: ${GHOST_URL_GGG:-http://ghost-ggg:2369}
+      GHOST_CONTENT_KEY: ${GHOST_CONTENT_KEY_GGG:-}
+    expose:
+      - "3001"
+    networks:
+      - internal
+    profiles: [$FRONTENDS_PROFILES]
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3001/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  nursery:
+    image: ghcr.io/goldberry-playground/grove-nursery:${NURSERY_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      TENANT_ID: nursery
+      NEXT_PUBLIC_TENANT_ID: nursery
+      ODOO_URL: ${ODOO_URL:-http://odoo:8069}
+      ODOO_API_KEY: ${ODOO_API_KEY:-}
+      GHOST_URL: ${GHOST_URL_NURSERY:-http://ghost-nursery:2370}
+      GHOST_CONTENT_KEY: ${GHOST_CONTENT_KEY_NURSERY:-}
+    expose:
+      - "3001"
+    networks:
+      - internal
+    profiles: [$FRONTENDS_PROFILES]
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3001/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
 volumes:
   ghost-goldberry-data:
