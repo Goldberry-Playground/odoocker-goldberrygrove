@@ -7,7 +7,7 @@ description: |
   managing domains/TLS, or when the user mentions "deploy", "test environment",
   "staging", "sandbox", "orbstack", "local test", "production", "CI/CD",
   "docker compose up", "ghost", "nginx", or "droplet".
-version: 1.0.0
+version: 1.1.0
 user-invocable: false
 allowed-tools: Bash, Read, Grep, Glob, Edit, Write, Agent
 ---
@@ -281,60 +281,59 @@ docker compose -f docker-compose.yml \
 
 ## CI/CD with GitHub Actions
 
-### Existing Pipeline (ci.yml)
+### Workflows on odoocker
 
-Already configured to run on push/PR to `main`:
-- **lint-python**: Ruff checks on `odoo/custom-addons/`
-- **validate-compose**: YAML syntax validation for grove/sandbox overlays
-- **validate-nginx**: Brace-balance check on `nginx/grove-ghost.conf`
+| Workflow | Trigger | What it does |
+|---|---|---|
+| `ci.yml` | push/PR to `main` | Lint Python (Ruff), validate compose YAML, validate nginx config, third-party-addon branch check, reject tracked `.env`, gitleaks (push only), backend-stack smoke test |
+| `docker-odoo.yml` | push/PR touching `odoo/**` or `.env.example` | Build `grove-odoo` image, smoke test (`odoo --stop-after-init`), Trivy scan (HIGH+CRITICAL blocking, `ignore-unfixed`), on main push to `ghcr.io/goldberry-playground/grove-odoo:{sha,latest}` |
+| `release.yml` | semver tag push OR manual dispatch | Build + smoke + Trivy → require-approval (GitHub Environment gate) → deploy → post-deploy verify. Uses the `grove-odoo` image from `docker-odoo.yml`. |
+| `sandbox-deploy.yml` | dispatch | Provision/refresh QA droplet via Terraform (`environments/sandbox/`), apply, smoke check. Posts `DISCORD_OPS_WEBHOOK_URL`. |
+| `sandbox-reaper.yml` | cron daily | Detect QA droplets older than N hours and destroy them. Posts to Discord on action taken. |
+| `terraform-drift.yml` | cron 6h | `terraform plan` against all envs, fail if non-zero diff. Posts to Discord. |
+| Security scans (Trivy fs + image, gitleaks, pgadmin scan) | push/PR | Cleared as of 2026-06-17; HIGH+CRITICAL blocking. |
 
-### Deploy Workflow (add when ready)
+### Workflows on grove-sites
 
-```yaml
-# .github/workflows/deploy.yml
-name: Deploy to Production
+| Workflow | Trigger | What it does |
+|---|---|---|
+| `ci.yml` | push/PR to `main` | Lint, type-check, build all 4 frontends |
+| `docker.yml` | push/PR touching `apps/**` | Matrix-build all 4 frontend images, smoke, Trivy, push to ghcr (main only) |
+| `preview-up.yml` | PR labeled `qa` OR synchronize-while-labeled | Build the 4 frontend images for the PR SHA → `terraform apply` in `odoocker/infra/terraform/environments/preview/` to spin up a per-PR droplet with the PR's stack. Posts the URL to the PR + Discord. |
+| `preview-down.yml` | PR closed/unlabeled | `terraform destroy` the per-PR droplet. |
+| `release.yml` | semver tag push | Cuts a release of the frontend images. |
 
-on:
-  push:
-    branches: [main]
-  workflow_dispatch:
+### Injection-safe pattern (enforced across all workflows)
 
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    environment: production
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Deploy to Droplet
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.DROPLET_IP }}
-          username: ${{ secrets.DROPLET_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            cd /opt/grove
-            git pull origin main
-            docker compose -f docker-compose.yml \
-              -f docker-compose.override.grove.yml \
-              -f docker-compose.override.production.yml \
-              build --pull odoo
-            docker compose -f docker-compose.yml \
-              -f docker-compose.override.grove.yml \
-              -f docker-compose.override.production.yml \
-              up -d
-            # Wait for health
-            sleep 10
-            curl -sf http://localhost:8069/web/login || exit 1
-```
+All `${{ … }}` interpolations live in `env:` blocks; `run:` bodies use `$VAR` shell references. JSON payloads (Discord notifications) are built via `jq -n --arg`, which JSON-escapes every interpolated value — PR titles with backticks/quotes can't break out of the payload. Comment scripts read from `process.env.*`, not direct interpolation. **Never put literal `${{` text inside a `run: |` block** — even inside a bash `#` comment. GH parses run-blocks for expressions before bash sees them; empty/malformed `${{ }}` is a syntax error that rejects the entire workflow with `conclusion=failure` + empty `jobs[]` and no annotations. See `actionlint` for local validation.
 
 ### Required GitHub Secrets
 
-| Secret | Description |
-|--------|-------------|
-| `DROPLET_IP` | DigitalOcean droplet public IP |
-| `DROPLET_USER` | SSH user (e.g., `root` or `deploy`) |
-| `SSH_PRIVATE_KEY` | SSH private key for droplet access |
+**odoocker repo** (set; do NOT clear):
+
+| Secret | Source | Used by |
+|---|---|---|
+| `DIGITALOCEAN_TOKEN` | 1Password `GoldberryGrove Infra → do_token` | sandbox-deploy, sandbox-reaper, terraform-drift |
+| `DISCORD_OPS_WEBHOOK_URL` | 1Password `GoldberryGrove Infra → discord_webhook_url` | sandbox-reaper, terraform-drift |
+| `SPACES_ACCESS_KEY_ID` | TF-managed by `environments/state-backend/` | TF backend auth for all envs |
+| `SPACES_SECRET_ACCESS_KEY` | TF-managed by `environments/state-backend/` | TF backend auth for all envs |
+
+**grove-sites repo** (set via `environments/bootstrap/` TF apply, 10 secrets total):
+
+| Secret | Source | Notes |
+|---|---|---|
+| `DIGITALOCEAN_TOKEN` | TF-pushed | Same value as odoocker's, scoped via `do_token` var |
+| `DISCORD_OPS_WEBHOOK_URL` | TF-pushed | Same Discord webhook |
+| `DO_SPACES_ACCESS_KEY` | TF-managed (`grove-preview-data-rw` key) | For preview's own TF state ops + data uploads |
+| `DO_SPACES_SECRET_KEY` | TF-managed | Pair of above |
+| `ADMIN_IP_CIDR` | Operator input (`curl ifconfig.me`/32) | Preview droplet firewall allowlist |
+| `PREVIEW_SSH_KEY_ID` | TF-managed (DO SSH key fingerprint) | Injected into preview droplet on create |
+| `PREVIEW_SSH_PRIVATE_KEY` | Operator input (local `ssh-keygen` file) | For future operator SSH-in; not currently consumed by workflows |
+| `GHOST_KEY_GOLDBERRY` | Operator input (Ghost Admin → Integrations) | Build-time |
+| `GHOST_KEY_GGG` | Operator input (Ghost Admin → Integrations) | Build-time |
+| `GHOST_KEY_NURSERY` | Operator input (Ghost Admin → Integrations) | Build-time |
+
+For prod/sandbox SSH deploy (not yet wired): `PROD_HOST`, `PROD_SSH_KEY`, `PROD_SSH_USER`, `SANDBOX_HOST`, `SANDBOX_SSH_KEY`, `SANDBOX_SSH_USER` — placeholders in `release.yml`.
 
 ---
 
@@ -476,12 +475,51 @@ When traffic outgrows the self-hosted PostgreSQL:
 3. Remove postgres from compose profiles
 4. Add managed DB firewall: `doctl databases firewalls append <db-id> --rule ip_addr:<droplet-ip>`
 
-### Spaces / S3 (Already Configured)
+### Spaces / S3
 
-MinIO is the local S3-compatible store. For production with DO Spaces:
-1. Create Space: `doctl compute cdn create --origin <space-name>.nyc3.digitaloceanspaces.com`
-2. Update `.env`: Set `AWS_HOST`, `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`
-3. Remove MinIO from compose profiles
+MinIO is the local S3-compatible store. DO Spaces is what's used in prod and for TF backend state.
+
+**Provisioned buckets** (TF-managed, do NOT create by hand):
+
+| Bucket | Managed by | Purpose |
+|---|---|---|
+| `grove-tf-state` | `environments/state-backend/` | Terraform state for ALL grove envs |
+| `grove-preview-data` | `environments/bootstrap/` | Sanitized snapshots + filestore archives for previews (7-day lifecycle) |
+
+**Two-keys pattern for DO Spaces TF management** — `digitalocean_spaces_bucket` talks S3 protocol (needs S3-style creds for the *provider*); `digitalocean_spaces_key` talks the DO REST API (uses `do_token`). To bootstrap a state bucket from scratch you need:
+- **Plumbing key** (manually generated, All Buckets, Full Access) — used only by the DO provider for bucket-level ops. Long-lived; stored only in 1Password as `spaces_bootstrap_*`.
+- **Workflow key** (TF-created, bucket-scoped, RW) — what CI actually consumes. Pushed to GH secrets by TF.
+
+S3-backend config for non-AWS Spaces requires `skip_requesting_account_id = true` (newer TF/AWS provider tries STS GetCallerIdentity which rejects DO creds — added in PR #28).
+
+For Odoo's app-level S3 (filestore), set `AWS_HOST=nyc3.digitaloceanspaces.com`, `AWS_REGION=us-east-1`, `AWS_ACCESS_KEY_ID/SECRET_ACCESS_KEY` from the bucket-scoped workflow key (not the plumbing key), and remove MinIO from the compose profile.
+
+### Terraform environments
+
+```
+infra/terraform/environments/
+├── state-backend/   # Provisions grove-tf-state bucket + RW key. Apply FIRST.
+├── bootstrap/       # Preview prerequisites: grove-preview-data bucket, DNS
+│                    # delegation, SSH key, 10 grove-sites GH secrets.
+├── preview/         # Per-PR droplet (called by grove-sites preview-up.yml)
+├── sandbox/         # QA droplet (called by odoocker sandbox-deploy.yml)
+└── production/      # Prod droplet
+```
+
+Each env has `make {env}-{init,apply,destroy,plan,output}` targets; credentials injected via `op run --env-file=.env.op --` from `GoldberryGrove Infra` in 1Password. All envs use the same `backend.hcl.example` template + the same `skip_requesting_account_id` pattern.
+
+### Secret-sync pattern (op → gh)
+
+The canonical flow for any new secret:
+
+1. Add a field to `GoldberryGrove Infra` in 1Password (`op item edit "GoldberryGrove Infra" --vault "Goldberry Grove - Admin" new_secret_name=...`).
+2. Reference it in the env's `.env.op` (the `op run --env-file` source).
+3. Wire it as a TF variable + `github_actions_secret` resource (or push directly via `op read | gh secret set <NAME> --repo <owner>/<repo>` for one-offs).
+4. `make {env}-apply`.
+
+No human-clicks-in-DO/GH-UI step. Length+prefix probe BEFORE syncing (caught a malformed DO token in PR #26 prep): `op read 'op://Goldberry Grove - Admin/GoldberryGrove Infra/do_token' | awk '{print length($0), substr($0,1,8)}'`.
+
+Fine-grained GH PATs need both `Actions: Read & write` AND `Secrets: Read & write` — these are distinct permissions; missing `Secrets` returns 403 with `x-accepted-github-permissions` header showing the missing scope name.
 
 ### Load Balancer (Future Scaling)
 
