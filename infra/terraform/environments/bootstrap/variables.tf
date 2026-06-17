@@ -29,8 +29,26 @@ variable "admin_ip_cidr" {
   }
 }
 
-variable "slack_ops_webhook" {
-  description = "Slack incoming-webhook URL for the #ops channel (P8a). Failures from the sanitize cron post here."
+variable "discord_ops_webhook" {
+  description = "Discord webhook URL for the #grove-ops channel. Same webhook used by odoocker sandbox-reaper + terraform-drift (PR #25). Failures from preview-up/down + sanitize cron post here."
+  type        = string
+  sensitive   = true
+}
+
+variable "ghost_key_goldberry" {
+  description = "Ghost Content API key for blog.goldberrygrove.farm. Generate in Ghost Admin → Integrations → Add custom integration. Consumed by apps/goldberry at build time to render the blog/recipes."
+  type        = string
+  sensitive   = true
+}
+
+variable "ghost_key_ggg" {
+  description = "Ghost Content API key for blog.woodworkingeorge.com (GGG storefront)."
+  type        = string
+  sensitive   = true
+}
+
+variable "ghost_key_nursery" {
+  description = "Ghost Content API key for blog.atthegrovenursery.com."
   type        = string
   sensitive   = true
 }
