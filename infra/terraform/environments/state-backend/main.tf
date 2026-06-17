@@ -27,6 +27,15 @@
 
 provider "digitalocean" {
   token = var.do_token
+
+  # Spaces creds are needed for bucket-level operations (create, refresh,
+  # lifecycle). The DO REST API token can manage Spaces *keys* (via
+  # digitalocean_spaces_key below) but NOT *buckets* — those go through the
+  # S3-compatible protocol and need S3-style creds. We supply a long-lived
+  # "plumbing" key here; the workflow-facing bucket-scoped key is created in
+  # this same apply and pushed to GH secrets. See README "Why two Spaces keys".
+  spaces_access_id  = var.spaces_bootstrap_access_key_id
+  spaces_secret_key = var.spaces_bootstrap_secret_key
 }
 
 provider "github" {
@@ -81,5 +90,7 @@ resource "github_actions_secret" "state_backend" {
 
   repository      = local.github_repo_name
   secret_name     = each.key
-  plaintext_value = each.value
+  # The github provider deprecated `plaintext_value` in 6.x — `value` is the
+  # new name; behavior is identical (encrypted at rest by GH, masked in logs).
+  value = each.value
 }

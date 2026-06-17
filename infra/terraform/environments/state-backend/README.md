@@ -22,16 +22,29 @@ Apply it **once**, rarely touch it again.
 
 ## Prerequisites (one-time setup)
 
-Two credentials need to exist in 1Password under
-**Private → GoldberryGrove Infra**:
+Four credentials need to exist in 1Password under
+**Goldberry Grove - Admin → GoldberryGrove Infra**:
 
 | Field | What it is | How to create |
 |---|---|---|
 | `do_token` (concealed) | DO API token with `spaces` (read, update) + `spaces_key` (create, create_credentials, read, update, delete) scopes | DO Cloud Panel → API → Tokens → Generate New Token → **Fully Scoped Access** → tick those 7 scopes |
 | `github_token` (concealed) | GitHub PAT — either classic with `repo` scope, OR fine-grained scoped to `Goldberry-Playground/odoocker-goldberrygrove` with **Actions: Secrets — Read and Write** + **Metadata: Read** | github.com/settings/personal-access-tokens/new → "Fine-grained" → repository access: only `odoocker-goldberrygrove` |
+| `spaces_bootstrap_access_key_id` (concealed) | "Plumbing" Spaces access key, used by the DO Terraform provider for bucket-level operations | DO Cloud Panel → API → Spaces Keys → Generate New Key → name `tf-provider-auth` → **All Buckets / Full Access** |
+| `spaces_bootstrap_secret_key` (concealed) | Companion secret to the above (DO shows it once at key generation) | Same flow as above; copy both fields from the one-time secret display before closing the dialog |
 
-The `do_token` likely already exists in your `GoldberryGrove Infra` item.
-The `github_token` is new — add it before applying.
+The `do_token` and `github_token` likely already exist in your `GoldberryGrove Infra` item.
+The two `spaces_bootstrap_*` fields are new — see "Why two Spaces keys" below.
+
+## Why two Spaces keys
+
+This env ends up managing **two** Spaces access keys with different lifecycles:
+
+| Key | Source | Used by | Why it has to exist separately |
+|---|---|---|---|
+| **Bootstrap / plumbing** (`spaces_bootstrap_*`) | Manually generated in DO Cloud Panel, stored in 1Password | The DO Terraform provider itself — for bucket-level operations (`digitalocean_spaces_bucket` create/refresh/lifecycle) | The DO provider's `digitalocean_spaces_bucket` resource talks the S3 protocol, not the DO REST API. It needs Spaces creds to even create the bucket — chicken-and-egg if you try to provision them in the same apply. So it's manually pre-created, long-lived, and account-wide. |
+| **Workflow-scoped** (`grove-tf-state-rw`) | Created BY this Terraform env (`digitalocean_spaces_key` resource, via the DO REST API + do_token) | GitHub Actions workflows on odoocker (`terraform-drift.yml`, `sandbox-deploy.yml`) as `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` env vars | Bucket-scoped, least-privilege, lifecycle managed by Terraform, rotates by re-applying. Workflow consumers never see the bootstrap key. |
+
+The bootstrap key is "Terraform's plumbing." The workflow key is "what GitHub Actions reads." Keeping them separate means rotating one never affects the other, and a workflow-secret leak doesn't compromise the provider's ability to manage the bucket.
 
 ## Apply
 
