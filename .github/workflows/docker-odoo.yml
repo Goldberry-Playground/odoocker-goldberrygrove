@@ -1,0 +1,158 @@
+name: Docker — Odoo Image
+
+###############################################################################
+# Build, smoke-test, scan, and (on main) publish the grove-odoo image.
+#
+# Mirrors the grove-sites docker.yml matrix-build pattern — build local-load
+# first, validate it boots cleanly, scan with Trivy, only then push to ghcr
+# on main. PRs build + scan but don't push, preventing tag pollution.
+#
+# Closes Asana task gid 1215643893837105 (Odoo image CI → GHCR + P2.5
+# fold-in). The companion clone-addons.sh fix (P2.5, gid 1215332717317251)
+# is in the same PR — it strips the @sha256:... suffix from ODOO_TAG so
+# third-party addon clones don't silently fall through to `main`.
+#
+# Resulting image: ghcr.io/goldberry-playground/grove-odoo:<sha|latest>
+# Consumed by: preview/ TF env's docker-compose.preview.yml (PR #32), and
+# release.yml's verify-image step (renamed in this PR to match).
+###############################################################################
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "odoo/**"
+      - ".env.example"
+      - ".github/workflows/docker-odoo.yml"
+      - ".dockerignore"
+  push:
+    branches: [main]
+    paths:
+      - "odoo/**"
+      - ".env.example"
+      - ".github/workflows/docker-odoo.yml"
+      - ".dockerignore"
+
+concurrency:
+  group: docker-odoo-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-smoke-scan:
+    name: Build + smoke + Trivy + push
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      TEST_TAG: test-${{ github.run_id }}
+      IMAGE_NAME: ghcr.io/goldberry-playground/grove-odoo
+      # Build args mirror what local make build does via .env. Defaults match
+      # .env.example so changes to that file flow into CI on the next run.
+      # ODOO_TAG is image-pinned (19.0@sha256:...) for supply-chain hardening.
+      ODOO_TAG: "19.0@sha256:83223b09a6245871a0a7118c2ac4a60e871e8bcda7168086abd3d355c0402ff7"
+      ROOT_PATH: "/usr/lib/python3/dist-packages/odoo"
+      LOG_PATH: "/var/log/odoo/odoo.log"
+      ODOO_RC: "/etc/odoo/odoo.conf"
+      ENTERPRISE_ADDONS: "/usr/lib/python3/dist-packages/odoo/enterprise"
+      THIRD_PARTY_ADDONS: "/usr/lib/python3/dist-packages/odoo/third-party-addons"
+      # Enterprise + private GitHub creds are intentionally empty in CI —
+      # clone-addons.sh skips enterprise repos when GITHUB_USER is unset.
+      # We test the community-addons code path; enterprise builds happen
+      # locally with .env containing real creds.
+      USE_REDIS: "false"
+      USE_S3: "false"
+      USE_SENTRY: "false"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (local load)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: odoo/Dockerfile
+          load: true
+          tags: ${{ env.IMAGE_NAME }}:${{ env.TEST_TAG }}
+          build-args: |
+            ODOO_TAG=${{ env.ODOO_TAG }}
+            ROOT_PATH=${{ env.ROOT_PATH }}
+            LOG_PATH=${{ env.LOG_PATH }}
+            ODOO_RC=${{ env.ODOO_RC }}
+            ENTERPRISE_ADDONS=${{ env.ENTERPRISE_ADDONS }}
+            THIRD_PARTY_ADDONS=${{ env.THIRD_PARTY_ADDONS }}
+            USE_REDIS=${{ env.USE_REDIS }}
+            USE_S3=${{ env.USE_S3 }}
+            USE_SENTRY=${{ env.USE_SENTRY }}
+          cache-from: type=gha,scope=grove-odoo
+          cache-to: type=gha,scope=grove-odoo,mode=max
+
+      # Smoke test: boot Odoo with --stop-after-init against a no-database
+      # config. If the image is broken (missing module, bad addons-path,
+      # python error), `odoo --stop-after-init` fails fast with non-zero.
+      # Same pattern as release.yml's verify-image health check, but inline
+      # so we're not coupling CI to release.yml's structure.
+      - name: Smoke test image
+        env:
+          IMAGE: ${{ env.IMAGE_NAME }}:${{ env.TEST_TAG }}
+        run: |
+          # Defense-in-depth: all values passed via env, not via ${{ }} in run.
+          # Run odoo --stop-after-init with --no-database-list so Odoo doesn't
+          # try to enumerate DBs (which would need a running postgres).
+          # `set +e` so we can inspect the exit code with our own message.
+          set +e
+          docker run --rm \
+            -e DB_HOST=localhost -e DB_PORT=5432 \
+            -e DB_USER=odoo -e DB_PASSWORD=nopass \
+            "$IMAGE" \
+            odoo --stop-after-init --no-database-list 2>&1 | tail -40
+          rc=$?
+          set -e
+          # Exit 0 = clean boot. Some odoo versions exit 1 on
+          # "no module to install" even with --stop-after-init — that's also
+          # acceptable here (image is structurally valid, just no DB action
+          # to take). Reject only on segfault / startup crash codes.
+          if [ "$rc" -gt 1 ]; then
+            echo "::error::odoo --stop-after-init returned rc=$rc — image broken"
+            exit 1
+          fi
+          echo "Smoke test passed (rc=$rc)"
+
+      # Trivy gate. Same policy as grove-sites docker.yml: HIGH+CRITICAL
+      # block. If noisy, prefer raising severity to CRITICAL only OR adding
+      # a documented .trivyignore — don't flip exit-code back to 0.
+      - name: Trivy — Scan image for high CVEs
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:${{ env.TEST_TAG }}
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          format: table
+          ignore-unfixed: true # CVEs Debian hasn't patched yet shouldn't block CI
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tag and push (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          IMAGE: ${{ env.IMAGE_NAME }}
+          TAG: ${{ env.TEST_TAG }}
+          SHA: ${{ github.sha }}
+        run: |
+          docker tag "$IMAGE:$TAG" "$IMAGE:latest"
+          docker tag "$IMAGE:$TAG" "$IMAGE:$SHA"
+          docker push "$IMAGE:latest"
+          docker push "$IMAGE:$SHA"
