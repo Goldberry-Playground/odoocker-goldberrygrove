@@ -2,6 +2,8 @@
 
 One-time Terraform module that replaces the manual pre-flight steps **P1–P8** from the `grove-preview-environments` implementation plan.
 
+> **Apply order**: this env stores its state in the `grove-tf-state` Spaces bucket. That bucket (and its access keys) are themselves Terraform-managed by [`../state-backend/`](../state-backend/README.md), which must be applied **first**, on a fresh setup. See `state-backend/README.md` for the one-time bootstrap there.
+
 ## What this manages
 
 | Step | What | Resource |
@@ -26,7 +28,7 @@ These are the irreducible trust roots — credentials this module itself depends
    ssh-keygen -t ed25519 -f ~/.ssh/grove-preview-deploy -C "grove-preview-deploy" -N ""
    ```
 
-You also need an existing `grove-tf-state` Spaces bucket and RW access key for it — that's the backend this state lives in. (If `infra/terraform/environments/sandbox` already works on your machine, you have everything.)
+You also need an existing `grove-tf-state` Spaces bucket and RW access key for it — that's the backend this state lives in. **The canonical way to satisfy this is to apply [`../state-backend/`](../state-backend/README.md) first** — it provisions the bucket, creates a bucket-scoped RW Spaces key, and pushes the key as `SPACES_ACCESS_KEY_ID` + `SPACES_SECRET_ACCESS_KEY` GitHub Secrets on odoocker. For local apply of this bootstrap module, fetch the same values into your shell via `op read` from the `GoldberryGrove Infra` 1Password item that state-backend documents.
 
 ## First apply
 
