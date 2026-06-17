@@ -19,21 +19,45 @@ USER root
 RUN apk update && apk upgrade --no-cache && \
     apk add --no-cache bash jq sqlite
 
-# Force-upgrade urllib3 inside pgadmin's bundled Python venv. pgadmin
-# 9.15 ships urllib3 2.6.3; CVE-2026-44432 (HIGH) is fixed in 2.7.0.
-# Upstream pgadmin will ship 2.7.0 in a future release; until then we
-# pin a current version here. The venv was created with --without-pip
-# and --system-site-packages, so we install via the system pip targeting
-# the venv's site-packages directory. Old dist-info is removed first or
-# Trivy still flags the leftover 2.6.3 metadata.
+# Force-upgrade bundled Python deps inside pgadmin's venv that ship with
+# HIGH CVEs. Pattern: rm the old package dir + dist-info, then pip-install
+# the patched range with --target into the venv site-packages. Trivy reads
+# .dist-info METADATA files, so leftover old metadata = continued findings.
+#
+# Three packages currently need this. As upstream pgadmin updates these,
+# the corresponding block here can shrink (or whole RUN can be deleted).
+#
+#   - urllib3 2.6.3 → 2.7.0+
+#     CVE-2026-44432 (HIGH) — fixed in 2.7.0
+#
+#   - cryptography 47.0.0 → 48.0.1+
+#     GHSA-537c-gmf6-5ccf (HIGH, "Vulnerable OpenSSL included in
+#     cryptography wheels") — the wheel bundles its own OpenSSL; pre-48.0.1
+#     wheels shipped a CVE-vulnerable version; 48.0.1+ ships current OpenSSL.
+#
+#   - PyJWT 2.12.1 → 2.13.0+
+#     GHSA-xgmm-8j9v-c9wx / CVE-2026-48526 (HIGH, "Public-key JWK accepted
+#     as HMAC secret enables forged HS256 tokens when mixed families are
+#     allowed"). Note: package dir on disk is `jwt/`, dist-info is
+#     `pyjwt-2.12.1.dist-info` — both must be removed.
+#
+# The venv was created with --without-pip and --system-site-packages, so
+# we install via the system pip targeting the venv's site-packages
+# directory directly.
 ARG PGADMIN_VENV_SITE_PACKAGES=/venv/lib/python3.14/site-packages
 RUN rm -rf "${PGADMIN_VENV_SITE_PACKAGES}/urllib3" \
-           "${PGADMIN_VENV_SITE_PACKAGES}/urllib3-2.6.3.dist-info" && \
+           "${PGADMIN_VENV_SITE_PACKAGES}/urllib3-2.6.3.dist-info" \
+           "${PGADMIN_VENV_SITE_PACKAGES}/cryptography" \
+           "${PGADMIN_VENV_SITE_PACKAGES}/cryptography-47.0.0.dist-info" \
+           "${PGADMIN_VENV_SITE_PACKAGES}/jwt" \
+           "${PGADMIN_VENV_SITE_PACKAGES}/pyjwt-2.12.1.dist-info" && \
     /usr/local/bin/pip3 install \
         --no-cache-dir \
         --target="${PGADMIN_VENV_SITE_PACKAGES}" \
         --root-user-action=ignore \
-        'urllib3>=2.7.0,<3.0'
+        'urllib3>=2.7.0,<3.0' \
+        'cryptography>=48.0.1,<50.0' \
+        'PyJWT>=2.13.0,<3.0'
 
 # Check if the private key exists, copy it and set permissions if it does
 RUN if [ -f ./pgadmin/private_key ]; then \
