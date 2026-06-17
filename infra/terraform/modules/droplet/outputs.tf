@@ -9,6 +9,6 @@ output "ipv4_address" {
 }
 
 output "volume_id" {
-  description = "DigitalOcean Block Storage volume ID"
-  value       = digitalocean_volume.this.id
+  description = "ID of the attached volume, or null if no volume was created (volume_size_gb = 0)."
+  value       = var.volume_size_gb > 0 ? digitalocean_volume.this[0].id : null
 }
