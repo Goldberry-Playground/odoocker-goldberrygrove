@@ -103,7 +103,7 @@ jobs:
         env:
           IMAGE: ${{ env.IMAGE_NAME }}:${{ env.TEST_TAG }}
         run: |
-          # Defense-in-depth: all values passed via env, not via ${{ }} in run.
+          # Defense-in-depth: all values passed via env, never interpolated in run.
           # Run odoo --stop-after-init with --no-database-list so Odoo doesn't
           # try to enumerate DBs (which would need a running postgres).
           # `set +e` so we can inspect the exit code with our own message.
