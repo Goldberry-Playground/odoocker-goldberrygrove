@@ -6,13 +6,14 @@
 #   - P3: 7-day lifecycle expiry on snapshots/ and filestore/ prefixes
 #   - P4: Cloudflare → DigitalOcean NS delegation for preview.<zone>
 #   - P5: SSH public key upload to DigitalOcean
-#   - P6: All seven GitHub Actions secrets on the grove-sites repo
+#   - P6: All ten GitHub Actions secrets on the grove-sites repo
 #
 # What stays manual (the irreducible trust roots):
 #   - P1: DigitalOcean API token (chicken-and-egg with this provider)
 #   - GitHub PAT (this module uses it to write secrets)
 #   - Cloudflare API token (this module uses it for DNS)
-#   - P8a: Slack incoming-webhook URL (Slack has no clean Terraform resource)
+#   - Discord ops webhook URL (Discord has no clean Terraform resource)
+#   - Ghost Content API keys × 3 (issued by each Ghost site's Admin UI)
 #   - SSH keypair generation (must be local — putting tls_private_key in tfstate
 #     leaks the private key into the state file)
 #
@@ -156,13 +157,16 @@ locals {
   # The map is the source of truth for "which secrets exist." Adding one here
   # automatically rotates / creates it in the next `terraform apply`.
   gh_secrets = {
-    DO_API_TOKEN            = var.do_token
+    DIGITALOCEAN_TOKEN      = var.do_token
     DO_SPACES_ACCESS_KEY    = digitalocean_spaces_key.preview_data_rw.access_key
     DO_SPACES_SECRET_KEY    = digitalocean_spaces_key.preview_data_rw.secret_key
     ADMIN_IP_CIDR           = var.admin_ip_cidr
-    SLACK_OPS_WEBHOOK       = var.slack_ops_webhook
+    DISCORD_OPS_WEBHOOK_URL = var.discord_ops_webhook
     PREVIEW_SSH_PRIVATE_KEY = file(pathexpand(var.ssh_private_key_path))
     PREVIEW_SSH_KEY_ID      = digitalocean_ssh_key.preview_deploy.fingerprint
+    GHOST_KEY_GOLDBERRY     = var.ghost_key_goldberry
+    GHOST_KEY_GGG           = var.ghost_key_ggg
+    GHOST_KEY_NURSERY       = var.ghost_key_nursery
   }
 
   github_repo_name = split("/", var.github_secrets_repo)[1]
