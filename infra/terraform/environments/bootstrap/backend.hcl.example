@@ -16,6 +16,7 @@ region   = "us-east-1" # DO Spaces always uses us-east-1 for the S3 API region f
 skip_credentials_validation = true
 skip_metadata_api_check     = true
 skip_region_validation      = true
+skip_requesting_account_id  = true
 force_path_style            = true
 
 # Credentials — set via environment variables (NOT here):
