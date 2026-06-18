@@ -39,3 +39,4 @@ infra/terraform/environments/**/terraform.tfvars
 infra/terraform/environments/**/.terraform.lock.hcl
 *.tfplan
 tfplan.binary
+.env.infisical-seed.op
