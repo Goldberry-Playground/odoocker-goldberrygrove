@@ -127,6 +127,13 @@ infisical-seed:
 	fi
 	op run --env-file=$(INFISICAL_SEED_ENV) -- ./scripts/infisical-seed.sh
 
+## infisical-admin-bootstrap  — One-shot: create the tf-infisical-admin
+##   machine identity + Universal Auth + Client Secret + store in 1Password.
+##   Required before applying the infisical-identities/ TF env.
+.PHONY: infisical-admin-bootstrap
+infisical-admin-bootstrap:
+	./scripts/infisical-admin-bootstrap.sh
+
 # ── Help ─────────────────────────────────────────────────────────────────────
 
 .PHONY: help
