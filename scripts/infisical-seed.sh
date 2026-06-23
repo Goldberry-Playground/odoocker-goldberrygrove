@@ -32,16 +32,47 @@ if ! command -v infisical >/dev/null 2>&1; then
   echo "ERROR: infisical CLI not found. Install: brew install infisical/get-cli/infisical" >&2
   exit 1
 fi
+if ! command -v curl >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
+  echo "ERROR: curl + python3 required for the Universal Auth REST exchange" >&2
+  exit 1
+fi
 
 : "${INFISICAL_UNIVERSAL_AUTH_CLIENT_ID:?must be set — typically via op run --env-file=.env.infisical-seed.op}"
 : "${INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET:?must be set — typically via op run --env-file=.env.infisical-seed.op}"
-: "${INFISICAL_PROJECT_ID:?must be set — the project slug (e.g. grove-odoocker)}"
+: "${INFISICAL_PROJECT_ID:?must be set — project UUID from the browser URL (NOT the slug — the API uses UUIDs)}"
 INFISICAL_ENV_SLUG="${INFISICAL_ENV_SLUG:-prod}"
+INFISICAL_API="${INFISICAL_API:-https://app.infisical.com/api}"
 
-# Sanity-check token works before doing anything destructive.
-if ! infisical secrets --projectId="$INFISICAL_PROJECT_ID" --env="$INFISICAL_ENV_SLUG" >/dev/null 2>&1; then
+# ── exchange Universal Auth client-id/secret for a short-lived access token ──
+# Per https://infisical.com/docs/api-reference/endpoints/universal-auth/login.
+# The CLI does NOT auto-exchange these env vars in v0.43.x (an `infisical
+# secrets` call with no cached session falls through to `infisical login`
+# interactive). Do the exchange ourselves via the REST API.
+#
+# Body is piped from printf via stdin, so neither value ever appears on a
+# command line (would otherwise be visible in ps aux for the curl process).
+echo "  authenticating to Infisical Cloud (Universal Auth)..." >&2
+INFISICAL_TOKEN=$(printf '{"clientId":"%s","clientSecret":"%s"}' \
+    "$INFISICAL_UNIVERSAL_AUTH_CLIENT_ID" \
+    "$INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET" \
+  | curl -sf -X POST "$INFISICAL_API/v1/auth/universal-auth/login" \
+      -H "Content-Type: application/json" \
+      --data @- \
+  | python3 -c "import json,sys; print(json.load(sys.stdin)['accessToken'])" \
+) || {
+  echo "ERROR: Universal Auth login failed. Check client-id + client-secret in 1Password." >&2
+  exit 1
+}
+export INFISICAL_TOKEN
+unset INFISICAL_UNIVERSAL_AUTH_CLIENT_ID INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET
+
+# Sanity-check the exchanged token works against the target project + env.
+if ! infisical secrets --projectId="$INFISICAL_PROJECT_ID" --env="$INFISICAL_ENV_SLUG" --silent >/dev/null 2>&1; then
   echo "ERROR: infisical CLI auth failed against project=$INFISICAL_PROJECT_ID env=$INFISICAL_ENV_SLUG" >&2
-  echo "  Check INFISICAL_TOKEN scope + project slug + env slug." >&2
+  echo "  Token exchange succeeded but project access denied. Either:" >&2
+  echo "    - project slug is wrong (UI: Org → Secret Manager → project list)" >&2
+  echo "    - env slug is wrong (default 'prod'; check project's Environments tab)" >&2
+  echo "    - identity wasn't granted access to this project (Project → Access Control → Machine Identities)" >&2
   exit 1
 fi
 
