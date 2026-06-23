@@ -134,6 +134,46 @@ infisical-seed:
 infisical-admin-bootstrap:
 	./scripts/infisical-admin-bootstrap.sh
 
+# ── infisical-identities TF env (per-workflow OIDC identities) ───────────────
+
+INFISICAL_IDENTITIES_DIR = infra/terraform/environments/infisical-identities
+
+## infisical-identities-init     — terraform init for the infisical-identities env
+.PHONY: infisical-identities-init
+infisical-identities-init:
+	op run --env-file=$(INFISICAL_IDENTITIES_DIR)/.env.op -- \
+		terraform -chdir=$(INFISICAL_IDENTITIES_DIR) init -backend-config=backend.hcl
+
+## infisical-identities-plan     — terraform plan for the infisical-identities env
+.PHONY: infisical-identities-plan
+infisical-identities-plan:
+	op run --env-file=$(INFISICAL_IDENTITIES_DIR)/.env.op -- \
+		terraform -chdir=$(INFISICAL_IDENTITIES_DIR) plan
+
+## infisical-identities-apply    — terraform apply for the infisical-identities env
+.PHONY: infisical-identities-apply
+infisical-identities-apply:
+	op run --env-file=$(INFISICAL_IDENTITIES_DIR)/.env.op -- \
+		terraform -chdir=$(INFISICAL_IDENTITIES_DIR) apply
+
+## infisical-identities-output   — show identity UUIDs to hardcode into workflow YAMLs
+.PHONY: infisical-identities-output
+infisical-identities-output:
+	op run --env-file=$(INFISICAL_IDENTITIES_DIR)/.env.op -- \
+		terraform -chdir=$(INFISICAL_IDENTITIES_DIR) output -json workflow_identity_ids
+
+## infisical-identities-destroy  — terraform destroy (requires CONFIRM=yes)
+.PHONY: infisical-identities-destroy
+infisical-identities-destroy:
+	@if [ "$(CONFIRM)" != "yes" ]; then \
+		echo "Refusing to destroy infisical-identities without CONFIRM=yes"; \
+		echo "WARNING: destroying these identities revokes OIDC access for all retrofitted workflows."; \
+		echo "  They'd fall back to GH Secrets if the Phase 2 sync is still live; otherwise they'd"; \
+		echo "  fail at the OIDC fetch step until re-applied."; \
+		exit 1; fi
+	op run --env-file=$(INFISICAL_IDENTITIES_DIR)/.env.op -- \
+		terraform -chdir=$(INFISICAL_IDENTITIES_DIR) destroy
+
 # ── Help ─────────────────────────────────────────────────────────────────────
 
 .PHONY: help
