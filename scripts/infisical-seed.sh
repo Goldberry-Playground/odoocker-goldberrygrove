@@ -6,13 +6,19 @@
 #   op run --env-file=.env.infisical-seed.op -- ./scripts/infisical-seed.sh
 #
 # Reads from environment (populated by op run):
-#   INFISICAL_TOKEN              — Infisical service token (Universal Auth output)
+#   INFISICAL_UNIVERSAL_AUTH_CLIENT_ID      — Universal Auth client ID (CLI auto-exchanges)
+#   INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET  — Universal Auth client secret
 #   INFISICAL_PROJECT_ID         — slug of the target project (e.g. "grove-odoocker")
 #   INFISICAL_ENV_SLUG           — environment slug (default: "prod")
 #   DIGITALOCEAN_TOKEN           — value to seed
 #   DISCORD_OPS_WEBHOOK_URL      — value to seed
 #   SPACES_ACCESS_KEY_ID         — value to seed (from state-backend TF output)
 #   SPACES_SECRET_ACCESS_KEY     — value to seed (from state-backend TF output)
+#
+# The CLI checks INFISICAL_UNIVERSAL_AUTH_CLIENT_ID + _SECRET and auto-exchanges
+# them for a fresh short-lived access token on each invocation. This is the right
+# pattern for a script that runs weeks apart — INFISICAL_TOKEN by contrast is a
+# pre-obtained 2-hour access token that would expire between seed runs.
 #
 # Idempotent: Infisical's `secrets set` upserts. Re-runs safely after rotation.
 #
@@ -27,7 +33,8 @@ if ! command -v infisical >/dev/null 2>&1; then
   exit 1
 fi
 
-: "${INFISICAL_TOKEN:?must be set — typically via op run --env-file=.env.infisical-seed.op}"
+: "${INFISICAL_UNIVERSAL_AUTH_CLIENT_ID:?must be set — typically via op run --env-file=.env.infisical-seed.op}"
+: "${INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET:?must be set — typically via op run --env-file=.env.infisical-seed.op}"
 : "${INFISICAL_PROJECT_ID:?must be set — the project slug (e.g. grove-odoocker)}"
 INFISICAL_ENV_SLUG="${INFISICAL_ENV_SLUG:-prod}"
 
