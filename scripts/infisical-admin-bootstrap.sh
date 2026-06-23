@@ -53,7 +53,13 @@ TMPFILE=""
 TOKEN=""
 cleanup() {
   unset TOKEN
-  [ -n "$TMPFILE" ] && rm -f "$TMPFILE"
+  if [ -n "$TMPFILE" ]; then
+    rm -f "$TMPFILE"
+  fi
+  # Explicit return 0 so the trap's exit status doesn't become the
+  # script's. Without this, `set -e` + a falsy [ -n "$TMPFILE" ] makes
+  # bash exit 1 on an otherwise-successful run.
+  return 0
 }
 trap cleanup EXIT INT TERM
 
@@ -106,8 +112,12 @@ api() {
 }
 
 # ── step 2: create identity (idempotent — skip if exists) ───────────────────
+# /v2/organization/{orgId}/identity-memberships is the LIST endpoint. The
+# more obvious-looking /v1/identities/{id} is GET-by-id, not list — using
+# the org id as the path parameter just 404s ("Failed to find identity with
+# id <orgId>") and the idempotency check silently fails. Bit me on first run.
 echo "→ Checking if '$IDENTITY_NAME' already exists in org $ORG_ID..."
-EXISTING_ID=$(api GET "/v1/identities/$ORG_ID" \
+EXISTING_ID=$(api GET "/v2/organization/$ORG_ID/identity-memberships" 2>/dev/null \
   | jq -r ".identityMemberships[]? | select(.identity.name == \"$IDENTITY_NAME\") | .identity.id // empty" \
   || true)
 
