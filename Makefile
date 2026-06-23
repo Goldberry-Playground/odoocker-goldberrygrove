@@ -113,6 +113,20 @@ state-backend-destroy:
 		exit 1; fi
 	op run --env-file=$(STATE_BACKEND_DIR)/.env.op -- terraform -chdir=$(STATE_BACKEND_DIR) destroy
 
+# ── Infisical (Phase 1 of OIDC retrofit) ─────────────────────────────────────
+
+INFISICAL_SEED_ENV ?= .env.infisical-seed.op
+
+## infisical-seed  — Seed Infisical Cloud project with current secrets (idempotent)
+.PHONY: infisical-seed
+infisical-seed:
+	@if [ ! -f $(INFISICAL_SEED_ENV) ]; then \
+		echo "ERROR: $(INFISICAL_SEED_ENV) not found."; \
+		echo "  Copy from .env.infisical-seed.op.example and fill in op:// refs."; \
+		exit 1; \
+	fi
+	op run --env-file=$(INFISICAL_SEED_ENV) -- ./scripts/infisical-seed.sh
+
 # ── Help ─────────────────────────────────────────────────────────────────────
 
 .PHONY: help
