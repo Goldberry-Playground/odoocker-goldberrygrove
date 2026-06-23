@@ -77,6 +77,7 @@ INFISICAL_API="${INFISICAL_DOMAIN}/api"
 WORKFLOW_NAME=""
 WORKFLOW_FILE=""
 EXPLICIT_IDENTITY_ID=""
+SHARED_READONLY="no"
 while [ $# -gt 0 ]; do
   case "$1" in
     --name) WORKFLOW_NAME="$2"; shift 2 ;;
@@ -89,6 +90,18 @@ while [ $# -gt 0 ]; do
       # by-name idempotency isn't possible — the operator owns the UUID for
       # known-already-exists cases.
       EXPLICIT_IDENTITY_ID="$2"; shift 2 ;;
+    --shared-readonly)
+      # SHARED-IDENTITY mode: omit the bound_claims.job_workflow_ref binding
+      # so the trust policy accepts ANY workflow in the configured repo+ref
+      # combination. Used to fit multiple low-risk workflows under a single
+      # Infisical identity (free tier caps at 5 identities total).
+      #
+      # Per memory/feedback_oidc_trust_policy_pattern.md (updated 2026-06-23):
+      # the per-workflow-binding pattern is the default; this flag is the
+      # explicit opt-out for shared-secret-set workflows where the blast
+      # radius is unchanged by sharing (all already read the same secrets).
+      # NEVER use this flag for an identity that touches prod credentials.
+      SHARED_READONLY="yes"; shift 1 ;;
     --help|-h)
       grep -E "^# " "$0" | head -40 | sed 's/^# \?//'
       exit 0
@@ -210,27 +223,52 @@ if [ "$HAS_OIDC_AUTH" = "yes" ]; then
   echo "[$WORKFLOW_NAME]   ⚠ OIDC auth already attached — skipping" >&2
 else
   echo "[$WORKFLOW_NAME]   POST /v1/auth/oidc-auth/identities/$IDENTITY_ID" >&2
-  # Trust policy: bound_subject + bound_claims.job_workflow_ref pin to
-  # LITERAL repo + workflow_ref + branch. Per [[feedback_oidc_trust_policy_pattern]].
+  # Trust policy:
+  #   - bound_subject pins to LITERAL repo + ref (always)
+  #   - bound_claims.job_workflow_ref pins to a SPECIFIC workflow file
+  #     UNLESS --shared-readonly was passed (in which case the trust policy
+  #     accepts ANY workflow on the configured repo+ref; used to fit multiple
+  #     low-risk workflows under one identity under the free-tier 5-identity cap)
+  # Per [[feedback_oidc_trust_policy_pattern]] (updated 2026-06-23).
   BOUND_SUBJECT="repo:${GITHUB_REPO}:ref:refs/heads/${GITHUB_BRANCH}"
   BOUND_WORKFLOW_REF="${GITHUB_REPO}/.github/workflows/${WORKFLOW_FILE}@refs/heads/${GITHUB_BRANCH}"
-  OIDC_BODY=$(jq -n \
-    --arg discovery "https://token.actions.githubusercontent.com" \
-    --arg issuer "https://token.actions.githubusercontent.com" \
-    --arg subject "$BOUND_SUBJECT" \
-    --arg wfref "$BOUND_WORKFLOW_REF" \
-    --argjson ttl "$ACCESS_TOKEN_TTL" \
-    --argjson maxttl "$ACCESS_TOKEN_MAX_TTL" \
-    '{
-      oidcDiscoveryUrl: $discovery,
-      boundIssuer: $issuer,
-      boundSubject: $subject,
-      boundClaims: { job_workflow_ref: $wfref },
-      accessTokenTTL: $ttl,
-      accessTokenMaxTTL: $maxttl,
-      accessTokenNumUsesLimit: 0,
-      accessTokenTrustedIps: [{ipAddress: "0.0.0.0/0"}]
-    }')
+  if [ "$SHARED_READONLY" = "yes" ]; then
+    echo "[$WORKFLOW_NAME]   (--shared-readonly: omitting bound_claims.job_workflow_ref — any workflow on $GITHUB_REPO:$GITHUB_BRANCH can use this identity)" >&2
+    OIDC_BODY=$(jq -n \
+      --arg discovery "https://token.actions.githubusercontent.com" \
+      --arg issuer "https://token.actions.githubusercontent.com" \
+      --arg subject "$BOUND_SUBJECT" \
+      --argjson ttl "$ACCESS_TOKEN_TTL" \
+      --argjson maxttl "$ACCESS_TOKEN_MAX_TTL" \
+      '{
+        oidcDiscoveryUrl: $discovery,
+        boundIssuer: $issuer,
+        boundSubject: $subject,
+        boundClaims: {},
+        accessTokenTTL: $ttl,
+        accessTokenMaxTTL: $maxttl,
+        accessTokenNumUsesLimit: 0,
+        accessTokenTrustedIps: [{ipAddress: "0.0.0.0/0"}]
+      }')
+  else
+    OIDC_BODY=$(jq -n \
+      --arg discovery "https://token.actions.githubusercontent.com" \
+      --arg issuer "https://token.actions.githubusercontent.com" \
+      --arg subject "$BOUND_SUBJECT" \
+      --arg wfref "$BOUND_WORKFLOW_REF" \
+      --argjson ttl "$ACCESS_TOKEN_TTL" \
+      --argjson maxttl "$ACCESS_TOKEN_MAX_TTL" \
+      '{
+        oidcDiscoveryUrl: $discovery,
+        boundIssuer: $issuer,
+        boundSubject: $subject,
+        boundClaims: { job_workflow_ref: $wfref },
+        accessTokenTTL: $ttl,
+        accessTokenMaxTTL: $maxttl,
+        accessTokenNumUsesLimit: 0,
+        accessTokenTrustedIps: [{ipAddress: "0.0.0.0/0"}]
+      }')
+  fi
   api POST "/v1/auth/oidc-auth/identities/$IDENTITY_ID" "$OIDC_BODY" >/dev/null
   if [ "$LAST_HTTP_CODE" -lt 200 ] || [ "$LAST_HTTP_CODE" -ge 300 ]; then
     echo "[$WORKFLOW_NAME]   ✗ OIDC auth attach failed (HTTP $LAST_HTTP_CODE)" >&2

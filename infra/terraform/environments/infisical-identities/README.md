@@ -1,25 +1,49 @@
 # Infisical Identities — Terraform
 
-Declaratively manages the per-workflow OIDC machine identities in Infisical Cloud that GitHub Actions workflows use to fetch secrets via workload identity federation (no long-lived secrets in GH Secrets).
+Declaratively manages the OIDC machine identities in Infisical Cloud that GitHub Actions workflows use to fetch secrets via workload identity federation (no long-lived secrets in GH Secrets).
 
 Lives alongside the other TF envs in `infra/terraform/environments/`. Same `op run --env-file=.env.op --` credential injection pattern; state in the shared `grove-tf-state` Spaces bucket.
 
-## What this manages
+## What this manages — two-tier identity model
 
-| Step | What | Resource |
+Imposed by the Infisical free-tier 5-identity cap (decision 2026-06-23). Two tiers of identity, deliberately:
+
+### Tier 1: per-workflow identities for prod-credential workflows (`var.odoocker_prod_credential_workflows`)
+
+| Resource | Per workflow | Trust policy |
 |---|---|---|
-| Per workflow | Identity at the Infisical org level | `infisical_identity` |
-| Per workflow | OIDC auth method bound to that workflow's literal `workflow_ref` + branch | `infisical_identity_oidc_auth` |
-| Per workflow | Project membership on `grove-odoocker` with `viewer` role (read-only secret access) | `infisical_project_identity` |
+| `infisical_identity.prod_workflow` | 1 | Org role `no-access` |
+| `infisical_identity_oidc_auth.prod_workflow` | 1 | STRICT — pins `repo+ref` AND `workflow_ref` to a specific file |
+| `infisical_project_identity.prod_workflow_viewer` | 1 | Viewer on grove-odoocker |
 
-Currently scoped to 3 odoocker workflows:
-- `sandbox-reaper.yml`
-- `sandbox-deploy.yml`
-- `release.yml`
+Today: `release.yml` only. A compromise of any non-release workflow CANNOT use this identity.
 
-The 4th odoocker workflow with OIDC (`terraform-drift.yml`) was created manually in the Infisical UI during Phase 3 of the OIDC retrofit (PR #40-42 timeline). It's intentionally left out of this initial TF apply — we'll migrate it into TF management in a follow-up PR via `terraform import` rather than re-creating it (which would change its UUID and force another workflow PR).
+### Tier 2: ONE shared-readonly identity for low-risk workflows (`var.odoocker_shared_readonly_workflows`)
 
-To add a new workflow: append one entry to the `odoocker_workflows` map in `variables.tf`, run `make infisical-identities-apply`, then commit the new identity UUID from `terraform output workflow_identity_ids` into the workflow's YAML.
+| Resource | Count | Trust policy |
+|---|---|---|
+| `infisical_identity.shared_readonly` | 1 | Org role `no-access` |
+| `infisical_identity_oidc_auth.shared_readonly` | 1 | LOOSE — pins `repo+ref` only, NO `workflow_ref` claim |
+| `infisical_project_identity.shared_readonly_viewer` | 1 | Viewer on grove-odoocker |
+
+Today's consumers: `terraform-drift.yml`, `sandbox-reaper.yml`, `sandbox-deploy.yml`. All hardcode the SAME `INFISICAL_IDENTITY_ID` (the shared identity's UUID).
+
+**Blast-radius justification:** all three already read the same secrets via per-workflow identities pre-compromise. Sharing doesn't expand exposure. The risk is "future workflow added to odoocker:main without explicit identity gets free access" — mitigated by code review + the workflow YAML pattern being well-documented.
+
+### Adding workflows
+
+- **New prod-credential workflow** (e.g. a future prod-CD): append to `odoocker_prod_credential_workflows` in `variables.tf`. Each entry consumes 1 identity slot.
+- **New low-risk workflow**: append to `odoocker_shared_readonly_workflows` (informational) and update the workflow YAML to reference the shared identity's UUID. Zero new identity slots consumed.
+
+## Pre-existing identities to delete before first apply
+
+Three identities created earlier in the day (during Phase 3 + the script-driven sandbox-reaper attempt) need to be deleted in the Infisical UI before `terraform apply`:
+
+1. **`gh-oidc-odoocker-terraform-drift`** (manually created in UI during PR #40-42) — replaced by `gh-oidc-odoocker-shared-readonly`
+2. **`gh-oidc-odoocker-sandbox-reaper`** (script-created during PR #47 testing) — replaced by `gh-oidc-odoocker-shared-readonly`
+3. **`seed-script-odoocker`** (Universal Auth, used by `make infisical-seed`) — drop and use `tf-infisical-admin` for one-time seed operations (it has Admin on grove-odoocker)
+
+Delete via: Infisical UI → Org → Access Control → Identities → click each → delete. Re-running `make infisical-seed` after dropping seed-script-odoocker: temporarily update `.env.infisical-seed.op.example` to point at `infisical_admin_client_id` / `infisical_admin_client_secret`, run, revert.
 
 ## Prerequisites — the irreducible trust roots
 
