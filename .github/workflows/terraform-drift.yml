@@ -34,7 +34,11 @@ jobs:
       # `project-slug` is accepted). The CLI is the opposite (--projectId
       # wants UUID). Different endpoints, different conventions. Don't try
       # to "fix" by passing the UUID here.
-      INFISICAL_PROJECT_SLUG: grove-odoocker
+      # Note: the actual slug is grove-odoocker-qu8p (Infisical auto-appends a
+      # short random suffix to project slugs on creation to ensure global
+      # uniqueness — the NAME stays `grove-odoocker`, but the SLUG is suffixed).
+      # Look up via `GET /api/v1/workspace/<uuid>` if you need to confirm.
+      INFISICAL_PROJECT_SLUG: grove-odoocker-qu8p
       INFISICAL_ENV_SLUG: prod
       INFISICAL_IDENTITY_ID: 382131cb-0056-4f1e-9019-e6e0b35c2324
 
