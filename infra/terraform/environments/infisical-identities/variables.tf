@@ -51,20 +51,39 @@ variable "github_branch" {
 # next apply creates the identity, attaches OIDC auth bound to that file +
 # ref, and grants project access.
 #
-# Excluded on purpose: `terraform-drift.yml`. That identity was created
-# manually in the Infisical UI on 2026-06-23 during Phase 3 of the OIDC
-# retrofit (id 382131cb-0056-4f1e-9019-e6e0b35c2324). It's working; we'll
-# migrate it under TF management in a follow-up PR via `terraform import`
-# rather than re-creating it (which would change its UUID and require a
-# workflow PR to update the hardcoded identity-id env var).
-variable "odoocker_workflows" {
-  description = "Map of workflow short-name → workflow filename for which to create OIDC identities."
+# Two-tier identity model imposed by the Infisical free-tier 5-identity cap
+# (decision recorded 2026-06-23 in [[feedback_oidc_trust_policy_pattern]]
+# and the doc/ADR/003 follow-up):
+#
+#   - PROD-CREDENTIAL workflows get a strict per-workflow identity. bound_subject
+#     pins repo+ref; bound_claims.job_workflow_ref pins the exact workflow file.
+#     A compromised non-prod workflow CANNOT use this identity.
+#
+#   - LOW-RISK workflows share ONE "shared-readonly" identity. bound_subject
+#     pins repo+ref; bound_claims.job_workflow_ref is OMITTED. Any workflow on
+#     the configured repo+ref can use it. Justified by blast-radius analysis:
+#     all sharing workflows already read the same secrets via their own
+#     per-workflow identities, so sharing doesn't expand exposure.
+#
+# Pre-existing identities (manual + script-created during Phase 3-4 today)
+# get deleted in Infisical UI before first apply of this env — see README.
+
+variable "odoocker_prod_credential_workflows" {
+  description = "Strict per-workflow identities for workflows that touch prod-credential paths (release.yml + any future prod-CD)."
   type        = map(string)
   default = {
-    "sandbox-reaper" = "sandbox-reaper.yml"
-    "sandbox-deploy" = "sandbox-deploy.yml"
-    "release"        = "release.yml"
+    "release" = "release.yml"
   }
+}
+
+variable "odoocker_shared_readonly_workflows" {
+  description = "Workflows allowed to use the shared-readonly identity. They all read the same grove-odoocker/prod secrets; bound_subject still pins repo+ref. This map is informational — the shared identity itself does NOT enforce per-workflow binding (that's the whole point), but listing here documents intent."
+  type        = list(string)
+  default = [
+    "terraform-drift.yml",
+    "sandbox-reaper.yml",
+    "sandbox-deploy.yml",
+  ]
 }
 
 variable "access_token_ttl_seconds" {
