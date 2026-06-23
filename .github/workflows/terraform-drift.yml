@@ -29,7 +29,12 @@ jobs:
       #   DIGITALOCEAN_TOKEN, DISCORD_OPS_WEBHOOK_URL,
       #   SPACES_ACCESS_KEY_ID, SPACES_SECRET_ACCESS_KEY
       # (DO not reference secrets.* here — that's the pre-OIDC pattern.)
-      INFISICAL_PROJECT_ID: 850603f8-e175-4c38-9038-97a1e69d72e6
+      # Infisical/secrets-action uses the project's human-readable SLUG (NOT
+      # the UUID — the action's `project-id` input doesn't exist, only
+      # `project-slug` is accepted). The CLI is the opposite (--projectId
+      # wants UUID). Different endpoints, different conventions. Don't try
+      # to "fix" by passing the UUID here.
+      INFISICAL_PROJECT_SLUG: grove-odoocker
       INFISICAL_ENV_SLUG: prod
       INFISICAL_IDENTITY_ID: 382131cb-0056-4f1e-9019-e6e0b35c2324
 
@@ -53,7 +58,7 @@ jobs:
         with:
           method: oidc
           identity-id: ${{ env.INFISICAL_IDENTITY_ID }}
-          project-id: ${{ env.INFISICAL_PROJECT_ID }}
+          project-slug: ${{ env.INFISICAL_PROJECT_SLUG }}
           env-slug: ${{ env.INFISICAL_ENV_SLUG }}
           secret-path: /
           export-type: env
