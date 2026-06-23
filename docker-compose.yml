@@ -269,7 +269,11 @@ services:
       - custom-modules-data:/workspace
     environment:
       - GITSYNC_REPO=${CUSTOM_MODULES_REPO}
-      - GITSYNC_BRANCH=${CUSTOM_MODULES_BRANCH:-main}
+      # GITSYNC_REF supersedes GITSYNC_BRANCH (deprecated in git-sync v4) and
+      # accepts a branch name, tag, or full commit SHA. Production should pin
+      # to a SHA via docker-compose.override.production.yml. CUSTOM_MODULES_BRANCH
+      # kept as fallback for compat with older .env files.
+      - GITSYNC_REF=${CUSTOM_MODULES_REF:-${CUSTOM_MODULES_BRANCH:-main}}
       - GITSYNC_ROOT=/workspace
       - GITSYNC_LINK=current
       - GITSYNC_DEPTH=1
