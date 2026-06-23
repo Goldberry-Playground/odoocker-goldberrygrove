@@ -108,14 +108,30 @@ docker compose ... build --pull odoo
 docker compose ... up -d --no-deps odoo nginx
 ```
 
-## Module Updates (No Rebuild Needed)
+## Module Updates
 
-Push to `grove-odoo-modules` repo → git-sync auto-pulls within 30 seconds.
+**Local / sandbox**: push to `grove-odoo-modules` → git-sync auto-pulls within 30 seconds (refs `main` by default).
 
-For immediate sync, configure GitHub webhook:
-- **URL**: `https://erp.gatheringatthegrove.com/modules-sync/`
+**Production**: pinned to a specific SHA in `docker-compose.override.production.yml`. A push to `main` will NOT auto-deploy. To bump, follow the workflow below.
+
+For immediate sync on local/sandbox, configure GitHub webhook:
+- **URL**: `https://<host>/modules-sync/`
 - **Content type**: `application/json`
 - **Events**: Push only
+
+### Bumping the prod modules SHA
+
+Supply-chain hardening — every production module update is an explicit, reviewed infra commit.
+
+1. **Confirm the new SHA in `grove-odoo-modules`**:
+   ```bash
+   gh api repos/Goldberry-Playground/grove-odoo-modules/commits/main --jq '.sha'
+   ```
+2. **Smoke-test the SHA in sandbox first** (sandbox stays on `main` by default; if you want to test the exact pin first, temporarily set `CUSTOM_MODULES_REF=<sha>` in the sandbox env).
+3. **Open an infra PR** in odoocker that updates the `GITSYNC_REF=<sha>` line in `docker-compose.override.production.yml`. Include in the PR description: which grove-odoo-modules PRs are included in the bump (`gh pr list --repo Goldberry-Playground/grove-odoo-modules --base main --state merged --search "merged:>=<old-pin-date>"`) and what behavior changes.
+4. **Merge + redeploy** — the prod droplet's compose pulls the new override, git-sync re-clones at the new SHA, Odoo restarts using `--no-deps custom-modules-sync odoo`.
+
+Never set `GITSYNC_REF=main` in the production override — it defeats the purpose of the pin and bypasses code review for prod module changes.
 
 ## Rollback
 
@@ -125,9 +141,13 @@ git log --oneline -5          # Find the commit to revert to
 git checkout <commit-hash>
 docker compose ... build odoo && docker compose ... up -d
 
-# Rollback modules
+# Rollback modules (production — pinned)
+# Edit docker-compose.override.production.yml to the previous SHA,
+# commit, redeploy. Faster than reverting in grove-odoo-modules.
+
+# Rollback modules (local/sandbox — branch-tracking)
 cd /tmp && git clone grove-odoo-modules
 git log --oneline -5
-git revert HEAD               # Or git checkout <hash>
+git revert HEAD
 git push origin main          # git-sync picks up the revert
 ```
