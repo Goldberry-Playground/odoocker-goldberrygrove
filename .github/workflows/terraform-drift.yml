@@ -1,9 +1,27 @@
 name: Terraform Drift Detection
 
-# Detect configuration drift in production daily at 2 pm UTC.
+# Detect configuration drift in production.
+#
+# DISABLED on cron until M4 ships (production droplet exists). The production/
+# TF env has resource declarations but nothing's been applied — so terraform
+# plan would correctly report "would create N resources" on every run, which
+# this workflow would interpret as drift and spam Discord. The honest answer
+# is to not run automatically until there's something real to drift against.
+#
+# workflow_dispatch stays enabled for manual testing — the OIDC retrofit was
+# verified end-to-end via this exact path on 2026-06-23 (run 28048255444:
+# secrets fetched via Infisical OIDC, terraform init succeeded, plan failed
+# only on the missing-prod-vars precondition which is the unrelated issue).
+#
+# Re-enable plan:
+#   1. M4 lands and production droplet is applied (with real ssh_key_ids)
+#   2. Uncomment the cron schedule line below
+#   3. Add `TF_VAR_ssh_key_ids` to the job env (sourced from Infisical or
+#      provided as a literal list — see infra/terraform/environments/
+#      production/variables.tf for the required shape)
 on:
-  schedule:
-    - cron: "0 14 * * *"
+  # schedule:
+  #   - cron: "0 14 * * *"  # re-enable when M4 ships — see header comment
   workflow_dispatch: {}
 
 # id-token: write is required for the Infisical OIDC fetch step to mint a
@@ -109,13 +127,20 @@ jobs:
         id: plan
         timeout-minutes: 10
         # Exit codes: 0 = no changes, 1 = error, 2 = changes detected (drift)
+        #
+        # Capture via PIPESTATUS[0] (not $?). $? would give tee's exit code
+        # (always 0), masking real terraform failures and never letting drift
+        # detection fire. This bug shipped on day one and went unnoticed
+        # until the OIDC retrofit forced a real test (2026-06-23, run
+        # 28048255444 showed terraform plan exiting 1 with no workflow
+        # failure annotation).
         run: |
           set +e
           terraform -chdir="$TF_DIR" plan \
             -detailed-exitcode \
             -input=false \
             -out=tfplan.binary 2>&1 | tee plan.txt
-          EXIT_CODE=$?
+          EXIT_CODE="${PIPESTATUS[0]}"
           echo "exitcode=$EXIT_CODE" >> "$GITHUB_OUTPUT"
           set -e
           # Fail hard on real errors; exit 2 (drift) is handled below
