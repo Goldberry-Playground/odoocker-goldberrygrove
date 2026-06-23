@@ -118,4 +118,4 @@ fi
 
 echo ""
 echo "Seed complete. Verify in UI:"
-echo "  https://app.infisical.com/organization/952236a8-4ed4-45c0-81e8-5157b48557a2/secret-manager/$INFISICAL_PROJECT_ID/secrets/$INFISICAL_ENV_SLUG"
+echo "  https://app.infisical.com/organizations/952236a8-4ed4-45c0-81e8-5157b48557a2/projects/secret-management/$INFISICAL_PROJECT_ID/secrets/$INFISICAL_ENV_SLUG"
