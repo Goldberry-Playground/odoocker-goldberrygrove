@@ -134,6 +134,23 @@ infisical-seed:
 infisical-admin-bootstrap:
 	./scripts/infisical-admin-bootstrap.sh
 
+## infisical-add-workflow-identity name=NAME workflow=FILE.yml
+##   Create a per-workflow OIDC machine identity in Infisical to spec
+##   (gh-oidc-odoocker-<name>, OIDC Auth bound to repo+workflow_ref+ref,
+##   Viewer role on grove-odoocker). Idempotent — re-run is safe.
+##
+##   Companion to the infisical-identities/ TF env. Use this for ad-hoc
+##   creation; use TF for fleet-managed identities. They DO NOT share
+##   state — see scripts/infisical-add-workflow-identity.sh header for
+##   the drift relationship + terraform import recipe.
+.PHONY: infisical-add-workflow-identity
+infisical-add-workflow-identity:
+	@if [ -z "$(name)" ] || [ -z "$(workflow)" ]; then \
+		echo "Usage: make infisical-add-workflow-identity name=NAME workflow=FILE.yml"; \
+		exit 1; \
+	fi
+	./scripts/infisical-add-workflow-identity.sh --name "$(name)" --workflow "$(workflow)"
+
 # ── infisical-identities TF env (per-workflow OIDC identities) ───────────────
 
 INFISICAL_IDENTITIES_DIR = infra/terraform/environments/infisical-identities
