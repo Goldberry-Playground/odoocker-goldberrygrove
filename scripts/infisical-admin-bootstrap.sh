@@ -186,6 +186,42 @@ op item edit "$OP_ITEM" --vault "$OP_VAULT" \
 echo "  ✓ $OP_FIELD_CLIENT_ID      (len=${#CLIENT_ID})"
 echo "  ✓ $OP_FIELD_CLIENT_SECRET  (len=${#CLIENT_SECRET})"
 
+# ── step 6: grant the admin identity Admin role on each managed project ────
+# Org-Admin role does NOT carry project-level permissions. Without this step,
+# tf-infisical-admin cannot create project memberships for other identities
+# (which is its entire job in the infisical-identities/ TF env and the
+# infisical-add-workflow-identity.sh script). Comma-separated list of project
+# UUIDs the admin should be granted Admin role on. Idempotent — skips if
+# already a member.
+INFISICAL_ADMIN_PROJECT_IDS="${INFISICAL_ADMIN_PROJECT_IDS:-850603f8-e175-4c38-9038-97a1e69d72e6}"
+echo "→ Granting $IDENTITY_NAME admin role on managed project(s): $INFISICAL_ADMIN_PROJECT_IDS"
+IFS=',' read -r -a PROJECT_IDS <<< "$INFISICAL_ADMIN_PROJECT_IDS"
+for PROJECT_ID in "${PROJECT_IDS[@]}"; do
+  PROJECT_ID="$(echo "$PROJECT_ID" | tr -d '[:space:]')"
+  [ -z "$PROJECT_ID" ] && continue
+
+  # Check if already a member by GET-listing project memberships
+  EXISTING_MEMBER=$(api GET "/v2/workspace/$PROJECT_ID/identity-memberships" 2>/dev/null \
+    | jq -r --arg id "$IDENTITY_ID" \
+        '.identityMemberships[]? | select(.identity.id == $id) | .identity.id // empty' \
+    | head -1)
+
+  if [ -n "$EXISTING_MEMBER" ]; then
+    echo "  ⚠ $PROJECT_ID — already member, skipping"
+    continue
+  fi
+
+  # POST /v2/workspace/{projectId}/identity-memberships/{identityId}
+  # Per the Infisical TF provider's project_identity.go. Identity ID is in
+  # both the URL path AND the request body.
+  MEMBERSHIP_BODY=$(jq -n \
+    --arg pid "$PROJECT_ID" \
+    --arg iid "$IDENTITY_ID" \
+    '{projectId: $pid, identityId: $iid, roles: [{role: "admin"}]}')
+  api POST "/v2/workspace/$PROJECT_ID/identity-memberships/$IDENTITY_ID" "$MEMBERSHIP_BODY" > /dev/null
+  echo "  ✓ $PROJECT_ID — admin role granted"
+done
+
 # Explicit unsets before the trap runs them — defense in depth
 unset CLIENT_ID CLIENT_SECRET SECRET_JSON TOKEN
 
