@@ -38,6 +38,23 @@ OP_FIELD_CLIENT_SECRET="${OP_FIELD_CLIENT_SECRET:-infisical_admin_client_secret}
 INFISICAL_DOMAIN="${INFISICAL_DOMAIN:-https://app.infisical.com}"
 INFISICAL_API="${INFISICAL_DOMAIN}/api"
 
+# ── arg parsing ─────────────────────────────────────────────────────────────
+# --identity-id <UUID>: skip the create step (use when the identity already
+# exists but the by-name idempotency lookup doesn't find it — e.g., the
+# user-login token's permissions don't include the org-identity-list
+# endpoint). Mint a fresh Client Secret + run the project-grant step.
+EXPLICIT_IDENTITY_ID=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --identity-id) EXPLICIT_IDENTITY_ID="$2"; shift 2 ;;
+    --help|-h)
+      grep -E "^# " "$0" | head -30 | sed 's/^# \?//'
+      exit 0
+      ;;
+    *) echo "ERROR: unknown arg '$1'. Use --help." >&2; exit 1 ;;
+  esac
+done
+
 # ── preflight ───────────────────────────────────────────────────────────────
 for bin in infisical op jq curl; do
   command -v "$bin" >/dev/null || { echo "ERROR: $bin not found in PATH" >&2; exit 1; }
@@ -112,10 +129,22 @@ api() {
 }
 
 # ── step 2: create identity (idempotent — skip if exists) ───────────────────
-# /v2/organization/{orgId}/identity-memberships is the LIST endpoint. The
-# more obvious-looking /v1/identities/{id} is GET-by-id, not list — using
-# the org id as the path parameter just 404s ("Failed to find identity with
-# id <orgId>") and the idempotency check silently fails. Bit me on first run.
+# Three paths to "got the IDENTITY_ID":
+#   a) --identity-id passed explicitly (recovery from a broken auto-lookup)
+#   b) Auto-lookup via /v2/organization/{orgId}/identity-memberships finds
+#      it by name (works when the user-login token has the right scope —
+#      does NOT work in all configurations, hence path (a))
+#   c) Doesn't exist → POST /v1/identities to create it
+#
+# Path (a) is the escape hatch for when (b) silently returns empty for an
+# identity that demonstrably exists (Infisical's tier/permission semantics
+# make the LIST endpoint return different results depending on auth scope).
+# Observed 2026-06-23: user-login token returned empty for an identity the
+# same token had just created successfully. Workaround: pass --identity-id.
+if [ -n "$EXPLICIT_IDENTITY_ID" ]; then
+  echo "→ Using --identity-id $EXPLICIT_IDENTITY_ID (recovery mode, skipping lookup + create)"
+  IDENTITY_ID="$EXPLICIT_IDENTITY_ID"
+else
 echo "→ Checking if '$IDENTITY_NAME' already exists in org $ORG_ID..."
 EXISTING_ID=$(api GET "/v2/organization/$ORG_ID/identity-memberships" 2>/dev/null \
   | jq -r ".identityMemberships[]? | select(.identity.name == \"$IDENTITY_NAME\") | .identity.id // empty" \
@@ -148,6 +177,7 @@ else
   }')" > /dev/null
   echo "  ✓ Universal Auth attached"
 fi
+fi  # close the EXPLICIT_IDENTITY_ID guard
 
 # ── step 3: fetch Client ID (separate from Client Secret, both halves needed) ─
 CLIENT_ID=$(api GET "/v1/auth/universal-auth/identities/$IDENTITY_ID" \
