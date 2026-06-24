@@ -17,13 +17,42 @@ jobs:
 
     permissions:
       contents: read
+      id-token: write    # OIDC token for Infisical exchange (read-only scope)
+
+    env:
+      # ── Infisical identity assignment ──────────────────────────────────
+      # Identity:   gh-oidc-odoocker-shared (UUID c502a60d-4b37-4e15-9fd7-8186c80c2ad0)
+      # Project:    grove-odoocker (slug grove-odoocker-qu8p)
+      # Trust:      bound_subject repo+ref; NO workflow_ref binding (shared)
+      # Co-tenants: terraform-drift.yml, sandbox-deploy.yml, docker-odoo.yml
+      #             — see infra/terraform/environments/infisical-identities/README.md
+      # Secrets fetched: DIGITALOCEAN_TOKEN, DISCORD_OPS_WEBHOOK_URL
+      INFISICAL_PROJECT_SLUG: grove-odoocker-qu8p
+      INFISICAL_ENV_SLUG: prod
+      INFISICAL_IDENTITY_ID: c502a60d-4b37-4e15-9fd7-8186c80c2ad0
 
     steps:
+      # Fetch secrets from Infisical Cloud using GitHub OIDC. The action mints
+      # an OIDC JWT (via permissions: id-token: write), POSTs to Infisical's
+      # /api/v1/auth/oidc-auth/login, gets back a short-lived access token,
+      # fetches secrets, and exports each as an env var for subsequent steps.
+      - name: Fetch secrets from Infisical (OIDC)
+        uses: Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995 # v1.0.16
+        timeout-minutes: 2
+        with:
+          method: oidc
+          identity-id: ${{ env.INFISICAL_IDENTITY_ID }}
+          project-slug: ${{ env.INFISICAL_PROJECT_SLUG }}
+          env-slug: ${{ env.INFISICAL_ENV_SLUG }}
+          secret-path: /
+          export-type: env
+
       - name: Install doctl
         uses: digitalocean/action-doctl@135ac0aa0eed4437d547c6f12c364d3006b42824 # v2.5.1
         timeout-minutes: 2
         with:
-          token: ${{ secrets.DIGITALOCEAN_TOKEN }}
+          # DIGITALOCEAN_TOKEN set by Infisical OIDC fetch step above.
+          token: ${{ env.DIGITALOCEAN_TOKEN }}
 
       - name: List and destroy expired sandbox Droplets
         id: reap
@@ -77,7 +106,7 @@ jobs:
         if: always()
         timeout-minutes: 1
         env:
-          DISCORD_OPS_WEBHOOK_URL: ${{ secrets.DISCORD_OPS_WEBHOOK_URL }}
+          # DISCORD_OPS_WEBHOOK_URL set by Infisical OIDC fetch step at job start.
           REAPER_DESTROYED: ${{ steps.reap.outputs.destroyed }}
           REAPER_SKIPPED: ${{ steps.reap.outputs.skipped }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
