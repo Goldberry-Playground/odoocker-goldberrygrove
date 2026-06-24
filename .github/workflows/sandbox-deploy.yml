@@ -36,14 +36,29 @@ jobs:
     permissions:
       contents: read       # checkout
       pull-requests: write # post PR comment with Droplet IP + URLs
+      id-token: write      # OIDC token for Infisical exchange (read-only scope)
 
     env:
       TF_DIR: infra/terraform/environments/sandbox
-      # DigitalOcean Spaces backend credentials (S3-compatible)
-      AWS_ACCESS_KEY_ID: ${{ secrets.SPACES_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.SPACES_SECRET_ACCESS_KEY }}
-      # DO provider token
-      DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
+      # ── Infisical identity assignment ──────────────────────────────────
+      # Identity:   gh-oidc-odoocker-shared (UUID c502a60d-4b37-4e15-9fd7-8186c80c2ad0)
+      # Project:    grove-odoocker (slug grove-odoocker-qu8p)
+      # Trust:      bound_subject repo+ref; NO workflow_ref binding (shared)
+      # Co-tenants: terraform-drift.yml, sandbox-reaper.yml, docker-odoo.yml
+      #             — see infra/terraform/environments/infisical-identities/README.md
+      #
+      # Fetched via Infisical OIDC (3 secrets):
+      #   - DIGITALOCEAN_TOKEN, SPACES_ACCESS_KEY_ID, SPACES_SECRET_ACCESS_KEY
+      # Still on GH Secrets (3 secrets — sandbox-specific, not yet seeded
+      # into Infisical; documented gap per Phase 4 retrofit PR):
+      #   - DO_SSH_KEY_ID (DO SSH key fingerprint for droplet auth)
+      #   - SANDBOX_SSH_PRIVATE_KEY (SSH private key for droplet shell-in)
+      #   - ENV_SANDBOX (the entire sandbox .env file contents)
+      # Follow-up: seed these into grove-odoocker/prod via `make infisical-seed`
+      # and migrate them off secrets.* refs.
+      INFISICAL_PROJECT_SLUG: grove-odoocker-qu8p
+      INFISICAL_ENV_SLUG: prod
+      INFISICAL_IDENTITY_ID: c502a60d-4b37-4e15-9fd7-8186c80c2ad0
 
     steps:
       - name: Checkout repository
@@ -52,6 +67,27 @@ jobs:
         with:
           # Use the SHA being reviewed, not the merge commit
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      # Fetch the 3 secrets currently in Infisical. See env block header for
+      # which secrets are intentionally still on GH Secrets pending seeding.
+      - name: Fetch secrets from Infisical (OIDC)
+        uses: Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995 # v1.0.16
+        timeout-minutes: 2
+        with:
+          method: oidc
+          identity-id: ${{ env.INFISICAL_IDENTITY_ID }}
+          project-slug: ${{ env.INFISICAL_PROJECT_SLUG }}
+          env-slug: ${{ env.INFISICAL_ENV_SLUG }}
+          secret-path: /
+          export-type: env
+
+      # The TF S3 backend reads AWS_* but Infisical holds them as SPACES_*
+      # (canonical name — they're DO Spaces, not AWS).
+      - name: Alias SPACES_* env vars to AWS_* for TF S3 backend
+        timeout-minutes: 1
+        run: |
+          echo "AWS_ACCESS_KEY_ID=$SPACES_ACCESS_KEY_ID" >> "$GITHUB_ENV"
+          echo "AWS_SECRET_ACCESS_KEY=$SPACES_SECRET_ACCESS_KEY" >> "$GITHUB_ENV"
 
       - name: Resolve deploy SHA
         id: sha
