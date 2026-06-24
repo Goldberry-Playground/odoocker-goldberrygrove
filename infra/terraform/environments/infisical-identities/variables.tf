@@ -93,14 +93,20 @@ variable "repos" {
       # TF env via the infisical_project resource. The actual UUID is computed
       # at apply time; main.tf wires it through local.repo_project_uuids.
       project_uuid = ""
-      prod_credential_workflows = {
-        "release" = "release.yml"
-      }
+      # grove-sites release.yml has no prod-credential exposure yet — M4
+      # (production droplet) doesn't exist, so the workflow just tags +
+      # pushes frontend images to GHCR. Folded into the shared identity
+      # until M4 lands, at which point we either upgrade Infisical (~$10/mo
+      # Pro tier) for the strict-isolation slot or rebalance by removing
+      # another identity. Decision recorded 2026-06-23 after the first
+      # apply hit the free-tier 5-identity cap.
+      prod_credential_workflows = {}
       shared_readonly_workflows = [
         "ci.yml",
         "docker.yml",
         "preview-up.yml",
         "preview-down.yml",
+        "release.yml",
       ]
     }
   }
