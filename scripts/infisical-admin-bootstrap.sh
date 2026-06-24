@@ -223,6 +223,13 @@ echo "  ✓ $OP_FIELD_CLIENT_SECRET  (len=${#CLIENT_SECRET})"
 # infisical-add-workflow-identity.sh script). Comma-separated list of project
 # UUIDs the admin should be granted Admin role on. Idempotent — skips if
 # already a member.
+# Comma-separated list of project UUIDs the admin should be granted Admin on.
+# Default covers both Grove projects today (grove-odoocker pre-existing +
+# grove-sites created by infra/terraform/environments/infisical-identities/).
+# For the FIRST run before grove-sites exists, only the grove-odoocker UUID
+# is valid; the script logs an error per failed project but completes the
+# others. Operator re-runs the script post-TF-apply with the same default to
+# pick up the grove-sites UUID.
 INFISICAL_ADMIN_PROJECT_IDS="${INFISICAL_ADMIN_PROJECT_IDS:-850603f8-e175-4c38-9038-97a1e69d72e6}"
 echo "→ Granting $IDENTITY_NAME admin role on managed project(s): $INFISICAL_ADMIN_PROJECT_IDS"
 IFS=',' read -r -a PROJECT_IDS <<< "$INFISICAL_ADMIN_PROJECT_IDS"

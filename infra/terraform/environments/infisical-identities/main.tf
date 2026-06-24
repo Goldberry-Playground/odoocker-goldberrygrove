@@ -1,25 +1,25 @@
 ###############################################################################
-# OIDC identities in Infisical for odoocker workflows.
+# OIDC identities in Infisical for ALL Goldberry-Playground workflows.
 #
-# Two-tier model (decision 2026-06-23, fits the free-tier 5-identity cap):
+# Designed to fit within Infisical's free-tier 5-identity cap (decision
+# 2026-06-23 — see memory/feedback_oidc_trust_policy_pattern.md).
 #
-#   - PROD-CREDENTIAL workflows (var.odoocker_prod_credential_workflows) each
-#     get a strict per-workflow identity. Trust policy pins repo+ref AND the
-#     specific workflow_ref. A compromised non-prod workflow CANNOT use this
-#     identity. Use for workflows that touch prod SSH keys, prod CD secrets.
+# Identity count at steady state: 5
+#   1. tf-infisical-admin              — Universal Auth, manages all other identities (created by bootstrap script, not this env)
+#   2. gh-oidc-odoocker-shared         — repo+ref binding only, no workflow_ref
+#   3. gh-oidc-odoocker-release        — strict workflow_ref binding to release.yml
+#   4. gh-oidc-grove-sites-shared      — same shape as #2 but for grove-sites
+#   5. gh-oidc-grove-sites-release     — same shape as #3 but for grove-sites
 #
-#   - LOW-RISK workflows share ONE "shared-readonly" identity. Trust policy
-#     pins repo+ref but OMITS the workflow_ref binding. Any workflow on the
-#     configured repo+ref can use it. Used by terraform-drift, sandbox-reaper,
-#     sandbox-deploy — all already read the same secrets via per-workflow
-#     identities pre-compromise, so sharing doesn't expand blast radius.
+# Security boundaries preserved:
+#   ✓ Cross-repo isolation       (odoocker workflows can't use grove-sites identities)
+#   ✓ Cross-tenant isolation     (different projects, different Viewer grants)
+#   ✓ Prod-credential isolation  (release identities have strict workflow_ref pinning)
 #
-# Outputs (see outputs.tf) expose each identity's UUID so the consuming
-# workflow YAML files can reference them as literal env vars.
-#
-# Pre-existing identities created during Phase 3-4 (terraform-drift via UI,
-# sandbox-reaper via script) get deleted in Infisical UI before first apply
-# of this env — see README's "Operator setup" section.
+# Security boundary deliberately collapsed (accepted trade-off for the 5-cap):
+#   ✗ Per-workflow isolation WITHIN a repo's low-risk workflows. Any workflow
+#     on a repo's main branch can use that repo's shared identity. Mitigated
+#     by code review + the workflow YAML pattern being well-documented.
 ###############################################################################
 
 provider "infisical" {
@@ -32,74 +32,48 @@ provider "infisical" {
   }
 }
 
-# ── Tier 1: per-workflow identities for prod-credential workflows ───────────
+# ── Projects (only those this env manages — grove-odoocker is pre-existing) ─
 
-resource "infisical_identity" "prod_workflow" {
-  for_each = var.odoocker_prod_credential_workflows
-
-  name   = "gh-oidc-odoocker-${each.key}"
-  org_id = var.infisical_org_id
-
-  # Org-level role is `no-access` — least privilege. Project membership
-  # (below) is the only thing that grants any capability.
-  role = "no-access"
+# grove-sites: created by this env. UUID computed at apply time; flows into
+# the identity grants below via `local.repo_project_uuids`.
+resource "infisical_project" "grove_sites" {
+  name        = "grove-sites"
+  slug        = "grove-sites"
+  description = "Secrets for Goldberry-Playground/grove-sites workflows (ci, docker, preview-up/down, release). Provisioned by infra/terraform/environments/infisical-identities/."
+  type        = "secret-manager"
 }
 
-resource "infisical_identity_oidc_auth" "prod_workflow" {
-  for_each = var.odoocker_prod_credential_workflows
-
-  identity_id = infisical_identity.prod_workflow[each.key].id
-
-  oidc_discovery_url = "https://token.actions.githubusercontent.com"
-  bound_issuer       = "https://token.actions.githubusercontent.com"
-
-  # STRICT binding: workflow_ref pinned to this specific file. A compromised
-  # different workflow on the same repo+ref CANNOT exchange tokens for this
-  # identity. Per [[feedback_oidc_trust_policy_pattern]].
-  bound_subject = "repo:${var.github_repo_full_name}:ref:refs/heads/${var.github_branch}"
-  bound_claims = {
-    job_workflow_ref = "${var.github_repo_full_name}/.github/workflows/${each.value}@refs/heads/${var.github_branch}"
+# Resolve per-repo project UUIDs at one place — for grove-sites, the resource
+# above provides it; for odoocker, the hardcoded value in var.repos["odoocker"]
+# is used (the project pre-existed this env's creation).
+locals {
+  repo_project_uuids = {
+    odoocker    = var.repos["odoocker"].project_uuid
+    grove-sites = infisical_project.grove_sites.id
   }
-
-  access_token_ttl            = var.access_token_ttl_seconds
-  access_token_max_ttl        = var.access_token_max_ttl_seconds
-  access_token_num_uses_limit = 0
-  access_token_trusted_ips    = [{ ip_address = "0.0.0.0/0" }]
 }
 
-resource "infisical_project_identity" "prod_workflow_viewer" {
-  for_each = var.odoocker_prod_credential_workflows
+# ── Tier 1: shared-readonly identity per repo ───────────────────────────────
 
-  identity_id = infisical_identity.prod_workflow[each.key].id
-  project_id  = var.grove_odoocker_project_uuid
+resource "infisical_identity" "shared" {
+  for_each = var.repos
 
-  roles = [{ role_slug = "viewer" }]
-}
-
-# ── Tier 2: single shared-readonly identity for low-risk workflows ──────────
-
-resource "infisical_identity" "shared_readonly" {
-  name   = "gh-oidc-odoocker-shared-readonly"
+  name   = "gh-oidc-${each.key}-shared"
   org_id = var.infisical_org_id
   role   = "no-access"
 }
 
-resource "infisical_identity_oidc_auth" "shared_readonly" {
-  identity_id = infisical_identity.shared_readonly.id
+resource "infisical_identity_oidc_auth" "shared" {
+  for_each = var.repos
 
+  identity_id        = infisical_identity.shared[each.key].id
   oidc_discovery_url = "https://token.actions.githubusercontent.com"
   bound_issuer       = "https://token.actions.githubusercontent.com"
 
-  # LOOSE binding: only repo+ref. NO workflow_ref claim. Any workflow on
-  # Goldberry-Playground/odoocker-goldberrygrove main can use this identity.
-  # Acceptable because the consumers (terraform-drift, sandbox-reaper,
-  # sandbox-deploy) all read the same grove-odoocker/prod secrets — sharing
-  # doesn't expand blast radius vs the prior per-workflow design.
-  #
-  # Workflows allowed under this identity are declared (informationally only)
-  # in var.odoocker_shared_readonly_workflows. The shared identity does NOT
-  # enforce per-workflow binding — listing is for docs + future audit only.
-  bound_subject = "repo:${var.github_repo_full_name}:ref:refs/heads/${var.github_branch}"
+  # LOOSE binding: only repo + ref. NO workflow_ref claim. Any workflow on
+  # the configured repo's branch can authenticate as this identity.
+  # See main.tf header for the blast-radius justification.
+  bound_subject = "repo:${each.value.github_repo_full_name}:ref:refs/heads/${each.value.github_branch}"
   bound_claims  = {}
 
   access_token_ttl            = var.access_token_ttl_seconds
@@ -108,9 +82,67 @@ resource "infisical_identity_oidc_auth" "shared_readonly" {
   access_token_trusted_ips    = [{ ip_address = "0.0.0.0/0" }]
 }
 
-resource "infisical_project_identity" "shared_readonly_viewer" {
-  identity_id = infisical_identity.shared_readonly.id
-  project_id  = var.grove_odoocker_project_uuid
+resource "infisical_project_identity" "shared_viewer" {
+  for_each = var.repos
+
+  identity_id = infisical_identity.shared[each.key].id
+  project_id  = local.repo_project_uuids[each.key]
+
+  roles = [{ role_slug = "viewer" }]
+}
+
+# ── Tier 2: strict per-workflow identities for prod-credential workflows ────
+
+# Flatten the nested map (repo → prod_credential_workflows) into a single
+# map keyed by "<repo>--<workflow>" so for_each can iterate it cleanly.
+locals {
+  prod_workflows_flat = merge([
+    for repo_key, repo in var.repos : {
+      for wf_name, wf_file in repo.prod_credential_workflows :
+      "${repo_key}--${wf_name}" => {
+        repo_key  = repo_key
+        wf_name   = wf_name
+        wf_file   = wf_file
+        repo_full = repo.github_repo_full_name
+        branch    = repo.github_branch
+      }
+    }
+  ]...)
+}
+
+resource "infisical_identity" "prod" {
+  for_each = local.prod_workflows_flat
+
+  name   = "gh-oidc-${each.value.repo_key}-${each.value.wf_name}"
+  org_id = var.infisical_org_id
+  role   = "no-access"
+}
+
+resource "infisical_identity_oidc_auth" "prod" {
+  for_each = local.prod_workflows_flat
+
+  identity_id        = infisical_identity.prod[each.key].id
+  oidc_discovery_url = "https://token.actions.githubusercontent.com"
+  bound_issuer       = "https://token.actions.githubusercontent.com"
+
+  # STRICT binding: pins repo + ref AND workflow_ref to a specific file. A
+  # compromised workflow that isn't this exact file CANNOT use this identity.
+  bound_subject = "repo:${each.value.repo_full}:ref:refs/heads/${each.value.branch}"
+  bound_claims = {
+    job_workflow_ref = "${each.value.repo_full}/.github/workflows/${each.value.wf_file}@refs/heads/${each.value.branch}"
+  }
+
+  access_token_ttl            = var.access_token_ttl_seconds
+  access_token_max_ttl        = var.access_token_max_ttl_seconds
+  access_token_num_uses_limit = 0
+  access_token_trusted_ips    = [{ ip_address = "0.0.0.0/0" }]
+}
+
+resource "infisical_project_identity" "prod_viewer" {
+  for_each = local.prod_workflows_flat
+
+  identity_id = infisical_identity.prod[each.key].id
+  project_id  = local.repo_project_uuids[each.value.repo_key]
 
   roles = [{ role_slug = "viewer" }]
 }
