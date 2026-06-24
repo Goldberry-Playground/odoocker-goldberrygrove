@@ -106,6 +106,15 @@ resource "digitalocean_droplet" "qa" {
   })
 
   monitoring = false
+
+  # DO API droplet delete can hang past the provider's default 60s context
+  # deadline (observed in qa-deploy run 28134739576 — destroy + create both
+  # tripped the deadline). Bumping both create and delete to 15m absorbs the
+  # transient DO API slowness without making the workflow appear stuck.
+  timeouts {
+    create = "15m"
+    delete = "15m"
+  }
 }
 
 # ── DNS records inside the delegated qa zone ────────────────────────────────
