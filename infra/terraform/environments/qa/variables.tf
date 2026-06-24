@@ -25,9 +25,15 @@ variable "admin_ip_cidr" {
 }
 
 variable "ssh_public_key_path" {
-  description = "Path to the SSH public key uploaded to DigitalOcean. Generated locally via `make qa-keygen` (which runs ssh-keygen if the file doesn't exist) — private key stays on operator's machine, public key uploaded here."
+  description = "Path to the EPHEMERAL CI SSH public key uploaded to DigitalOcean. Generated fresh on every workflow run (so the private key dies with the runner). Used by qa-deploy.yml to poll the grove-ready sentinel; NOT useful for humans (the private key is gone after the run). For human admin SSH, see admin_ssh_public_key."
   type        = string
   default     = "~/.ssh/grove-qa-deploy.pub"
+}
+
+variable "admin_ssh_public_key" {
+  description = "PERSISTENT admin SSH public key. Registered as a second DO SSH key alongside the ephemeral CI key, so Josh (or future ops) can SSH into the droplet after the workflow completes. Public keys aren't sensitive; the matching private key lives in 1Password ('GoldberryGrove Infra' → grove_qa_admin_ssh_private_key) and on Josh's laptop at ~/.ssh/grove-qa-admin. Override this if you want a different admin to have access — they paste their pub key as TF_VAR_admin_ssh_public_key."
+  type        = string
+  default     = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHPOKlhon+aKB8Y1qweRA7ifKcKRmSgXMrQAsuGpUo/3 grove-qa-admin@josh-Joshuas-MacBook-Pro-20260624"
 }
 
 # === Layout (have defaults; override only if migrating zones/regions) ===

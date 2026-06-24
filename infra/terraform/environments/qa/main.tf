@@ -73,11 +73,31 @@ resource "digitalocean_domain" "qa" {
   # No ip_address here — child records (below) handle individual hosts.
 }
 
-# ── SSH key (operator-generated via `make qa-keygen`; uploaded here) ────────
+# ── SSH keys ────────────────────────────────────────────────────────────────
+#
+# Two keys are registered with the droplet:
+#
+#   1. qa_deploy  — EPHEMERAL CI key. Generated fresh by qa-deploy.yml every
+#      run; private key dies with the runner. Used only by the workflow's
+#      grove-ready sentinel poll. Useless for humans.
+#
+#   2. qa_admin   — PERSISTENT admin key. Public key is hardcoded in
+#      var.admin_ssh_public_key (default = Josh's grove-qa-admin pubkey).
+#      Private key lives in 1Password and on Josh's laptop at
+#      ~/.ssh/grove-qa-admin. Survives droplet recreates because the public
+#      key string is stable. This is what humans use to SSH in for debugging
+#      cloud-init failures, inspecting compose logs, etc.
+#
+# See README.md > "SSH access" for usage.
 
 resource "digitalocean_ssh_key" "qa_deploy" {
   name       = "grove-qa-deploy"
   public_key = file(pathexpand(var.ssh_public_key_path))
+}
+
+resource "digitalocean_ssh_key" "qa_admin" {
+  name       = "grove-qa-admin"
+  public_key = var.admin_ssh_public_key
 }
 
 # ── Droplet ─────────────────────────────────────────────────────────────────
@@ -89,7 +109,10 @@ resource "digitalocean_droplet" "qa" {
   region = var.region
   tags   = local.tags
 
-  ssh_keys = [digitalocean_ssh_key.qa_deploy.fingerprint]
+  ssh_keys = [
+    digitalocean_ssh_key.qa_deploy.fingerprint, # ephemeral CI key
+    digitalocean_ssh_key.qa_admin.fingerprint,  # persistent admin key (Josh)
+  ]
 
   # Self-bootstrapping via cloud-init. See cloud-init.yaml.tpl for the
   # script — it installs docker, writes /etc/grove/{.env,docker-compose.yml,

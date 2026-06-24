@@ -12,7 +12,8 @@ local → orbstack → validate → push to qa branch → THIS auto-deploys → 
 |---|---|
 | `cloudflare_record.qa_ns` × 3 | Delegate `qa.gatheringatthegrove.com` from Cloudflare → DigitalOcean nameservers |
 | `digitalocean_domain.qa` | DO-managed zone for `qa.gatheringatthegrove.com` |
-| `digitalocean_ssh_key.qa_deploy` | Operator-generated keypair, public key uploaded |
+| `digitalocean_ssh_key.qa_deploy` | EPHEMERAL CI keypair (regenerated every workflow run; private key dies with the runner) |
+| `digitalocean_ssh_key.qa_admin` | PERSISTENT admin keypair (Josh's `~/.ssh/grove-qa-admin`; survives droplet recreates) |
 | `digitalocean_droplet.qa` | Single Ubuntu 24.04 droplet, `s-2vcpu-4gb`, cloud-init brings up the compose stack |
 | `digitalocean_record.qa_apex` | `qa.gatheringatthegrove.com` → droplet IPv4 (hub frontend) |
 | `digitalocean_record.tenant` × 4 | `{goldberry,ggg,nursery,odoo}.qa.gatheringatthegrove.com` → CNAME → apex |
@@ -71,6 +72,45 @@ Total time-to-live URLs: **~10-30 min from `make qa-apply` start**.
 - **Persistent data across teardowns**: Postgres data + Odoo filestore die on `qa-destroy`. By design — Josh's flow has QA tear down between cycles. Sample data seeding is a follow-up.
 - **Snapshot restore from `grove-preview-data` Spaces bucket**: that's the preview env's pattern. QA starts empty.
 - **Monitoring/observability**: cost optimization. Add OpenObserve later if needed.
+
+## SSH access
+
+The droplet has **two** SSH keys registered, for two distinct use cases:
+
+| Key | Use case | Where the private key lives |
+|---|---|---|
+| `grove-qa-deploy` | Workflow's grove-ready sentinel poll (during a qa-deploy run) | Generated on the GH runner per run; dies when the runner ends |
+| `grove-qa-admin` | Human admin SSH (Josh) for debugging cloud-init, inspecting compose logs, etc. | Josh's laptop: `~/.ssh/grove-qa-admin` (mode 600). Backup: 1Password → `GoldberryGrove Infra` → `grove_qa_admin_ssh_private_key` |
+
+### How to SSH in
+
+```bash
+# Get the droplet IP (assuming you're in this directory after `make qa-init`)
+DROPLET_IP=$(terraform output -raw droplet_ipv4)
+
+# SSH in
+ssh -i ~/.ssh/grove-qa-admin root@$DROPLET_IP
+```
+
+Or if you don't have the TF env initialized locally, grab the IP from Discord (qa-deploy posts it) or the DO console.
+
+### If you lose the private key
+
+Recover from 1Password:
+
+```bash
+op item get "GoldberryGrove Infra" --vault "Goldberry Grove - Admin" \
+  --fields label=grove_qa_admin_ssh_private_key --reveal > ~/.ssh/grove-qa-admin
+chmod 600 ~/.ssh/grove-qa-admin
+```
+
+### Adding another admin
+
+Edit `var.admin_ssh_public_key` default in `variables.tf` to a multi-line string, OR (cleaner) change the type to `list(string)` and add a corresponding `digitalocean_ssh_key` resource per key. For 1–2 admins the hardcoded default is fine; refactor when you hit 3+.
+
+### Why two keys instead of one persistent CI key?
+
+The CI keypair changes every run because (a) regenerating is cheap and (b) it forces a TF plan to show the change (good for visibility), but (c) it means humans can't reuse the CI key for SSH after the run ends. Hence the dedicated admin key.
 
 ## Caveats
 
