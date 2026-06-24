@@ -1,128 +1,133 @@
 # Infisical Identities — Terraform
 
-Declaratively manages the OIDC machine identities in Infisical Cloud that GitHub Actions workflows use to fetch secrets via workload identity federation (no long-lived secrets in GH Secrets).
+Declaratively manages the OIDC machine identities in Infisical Cloud that Goldberry-Playground's GitHub Actions workflows use to fetch secrets via workload identity federation (no long-lived secrets in GH Secrets).
+
+Scoped to fit Infisical's **free-tier 5-identity cap** (decision 2026-06-23 — see `memory/feedback_oidc_trust_policy_pattern.md`).
 
 Lives alongside the other TF envs in `infra/terraform/environments/`. Same `op run --env-file=.env.op --` credential injection pattern; state in the shared `grove-tf-state` Spaces bucket.
 
-## What this manages — two-tier identity model
+## The 5-identity allocation
 
-Imposed by the Infisical free-tier 5-identity cap (decision 2026-06-23). Two tiers of identity, deliberately:
+| # | Identity | Where it's created | Trust policy | Project access | Used by |
+|---|---|---|---|---|---|
+| 1 | `tf-infisical-admin` | `scripts/infisical-admin-bootstrap.sh` (out of scope here) | Universal Auth (admin) | Admin on grove-odoocker + grove-sites | TF env, scripts, one-time seeds |
+| 2 | `gh-oidc-odoocker-shared` | This env | `repo=odoocker:ref=main`, no `workflow_ref` | Viewer on grove-odoocker | terraform-drift, sandbox-reaper, sandbox-deploy, docker-odoo |
+| 3 | `gh-oidc-odoocker-release` | This env | `repo=odoocker:ref=main` + `workflow_ref=release.yml` | Viewer on grove-odoocker | release.yml (prod CD) |
+| 4 | `gh-oidc-grove-sites-shared` | This env | `repo=grove-sites:ref=main`, no `workflow_ref` | Viewer on grove-sites | ci, docker, preview-up, preview-down |
+| 5 | `gh-oidc-grove-sites-release` | This env | `repo=grove-sites:ref=main` + `workflow_ref=release.yml` | Viewer on grove-sites | release.yml (prod frontend deploys) |
 
-### Tier 1: per-workflow identities for prod-credential workflows (`var.odoocker_prod_credential_workflows`)
+**Exactly 5. Zero spare.** Adding a 3rd repo (e.g., grove-odoo-modules workflows that need secrets), or splitting any low-risk workflow into its own strict identity, requires an Infisical Pro upgrade (~$10-30/mo).
 
-| Resource | Per workflow | Trust policy |
+## Security boundaries preserved
+
+| Boundary | Preserved? | Mechanism |
 |---|---|---|
-| `infisical_identity.prod_workflow` | 1 | Org role `no-access` |
-| `infisical_identity_oidc_auth.prod_workflow` | 1 | STRICT — pins `repo+ref` AND `workflow_ref` to a specific file |
-| `infisical_project_identity.prod_workflow_viewer` | 1 | Viewer on grove-odoocker |
+| Cross-repo (odoocker ↔ grove-sites) | ✅ | Trust policies bind to specific repo |
+| Cross-tenant (grove-odoocker secrets ↔ grove-sites secrets) | ✅ | Separate projects + per-project Viewer grants |
+| Prod-credential isolation (release ↔ everything else) | ✅ | Strict `workflow_ref` binding on release identities |
+| Per-workflow isolation WITHIN a repo (low-risk workflows) | ❌ | Shared identity per repo — accepted trade-off for the 5-cap |
 
-Today: `release.yml` only. A compromise of any non-release workflow CANNOT use this identity.
+## What this env creates
 
-### Tier 2: ONE shared-readonly identity for low-risk workflows (`var.odoocker_shared_readonly_workflows`)
+- **`infisical_project.grove_sites`** — the grove-sites project itself (grove-odoocker is pre-existing, referenced by hardcoded UUID)
+- **Per repo (×2)**: one `infisical_identity` + one `infisical_identity_oidc_auth` + one `infisical_project_identity` for the shared-readonly identity
+- **Per (repo × prod workflow) (×2)**: same 3 resources, with strict workflow_ref binding
 
-| Resource | Count | Trust policy |
-|---|---|---|
-| `infisical_identity.shared_readonly` | 1 | Org role `no-access` |
-| `infisical_identity_oidc_auth.shared_readonly` | 1 | LOOSE — pins `repo+ref` only, NO `workflow_ref` claim |
-| `infisical_project_identity.shared_readonly_viewer` | 1 | Viewer on grove-odoocker |
+= 1 project resource + 6 shared resources + 6 prod resources = **13 resources** on first apply.
 
-Today's consumers: `terraform-drift.yml`, `sandbox-reaper.yml`, `sandbox-deploy.yml`. All hardcode the SAME `INFISICAL_IDENTITY_ID` (the shared identity's UUID).
+## Prerequisites
 
-**Blast-radius justification:** all three already read the same secrets via per-workflow identities pre-compromise. Sharing doesn't expand exposure. The risk is "future workflow added to odoocker:main without explicit identity gets free access" — mitigated by code review + the workflow YAML pattern being well-documented.
-
-### Adding workflows
-
-- **New prod-credential workflow** (e.g. a future prod-CD): append to `odoocker_prod_credential_workflows` in `variables.tf`. Each entry consumes 1 identity slot.
-- **New low-risk workflow**: append to `odoocker_shared_readonly_workflows` (informational) and update the workflow YAML to reference the shared identity's UUID. Zero new identity slots consumed.
-
-## Pre-existing identities to delete before first apply
-
-Three identities created earlier in the day (during Phase 3 + the script-driven sandbox-reaper attempt) need to be deleted in the Infisical UI before `terraform apply`:
-
-1. **`gh-oidc-odoocker-terraform-drift`** (manually created in UI during PR #40-42) — replaced by `gh-oidc-odoocker-shared-readonly`
-2. **`gh-oidc-odoocker-sandbox-reaper`** (script-created during PR #47 testing) — replaced by `gh-oidc-odoocker-shared-readonly`
-3. **`seed-script-odoocker`** (Universal Auth, used by `make infisical-seed`) — drop and use `tf-infisical-admin` for one-time seed operations (it has Admin on grove-odoocker)
-
-Delete via: Infisical UI → Org → Access Control → Identities → click each → delete. Re-running `make infisical-seed` after dropping seed-script-odoocker: temporarily update `.env.infisical-seed.op.example` to point at `infisical_admin_client_id` / `infisical_admin_client_secret`, run, revert.
-
-## Prerequisites — the irreducible trust roots
-
-These get done ONCE per Infisical org. After that this TF env handles everything else.
-
-1. **Infisical Cloud org exists** — created 2026-06-18 per `memory/reference_infisical_cloud_org.md` (id `952236a8-4ed4-45c0-81e8-5157b48557a2`)
-2. **`grove-odoocker` project exists** — created 2026-06-23, UUID `850603f8-e175-4c38-9038-97a1e69d72e6`
-3. **`tf-infisical-admin` identity + Universal Auth credentials exist** — created by `make infisical-admin-bootstrap` (PR #44/#45). Client ID + Secret live in 1Password `GoldberryGrove Infra`.
-4. **`grove-tf-state` Spaces bucket exists** — provisioned by `state-backend/` TF env. Same bucket that backs every other TF env's state.
-5. **Bootstrap Spaces keys in 1Password** — `spaces_bootstrap_access_key_id` + `spaces_bootstrap_secret_key`. The S3 backend uses these to read/write state. Same keys used by every other env.
+1. **Infisical Cloud org exists** — `952236a8-4ed4-45c0-81e8-5157b48557a2` (created 2026-06-18)
+2. **grove-odoocker project exists** — `850603f8-e175-4c38-9038-97a1e69d72e6` (created in UI 2026-06-23, has live Phase-1 seeded secrets that we don't want TF to manage)
+3. **`tf-infisical-admin` identity exists with Admin role on grove-odoocker** — created by `make infisical-admin-bootstrap`. Client ID + Secret in 1Password.
+4. **No other identities exist** — Josh deleted all stale identities on 2026-06-23 to start clean within the 5-cap.
+5. **`grove-tf-state` Spaces bucket exists** — provisioned by `state-backend/` TF env.
+6. **Bootstrap Spaces keys in 1Password** — `spaces_bootstrap_access_key_id` + `spaces_bootstrap_secret_key`.
 
 ## First apply
 
 ```bash
 cd infra/terraform/environments/infisical-identities
 
-# One-time: copy the backend template
 cp backend.hcl.example backend.hcl   # backend.hcl is git-ignored
 
-# Init + apply via op run (credentials never touch shell history / argv)
-op run --env-file=.env.op -- terraform init -backend-config=backend.hcl
-op run --env-file=.env.op -- terraform plan
-op run --env-file=.env.op -- terraform apply
-
-# Or, from the repo root, use the Makefile targets:
+# From repo root, via Makefile (recommended):
 make infisical-identities-init
-make infisical-identities-plan
+make infisical-identities-plan        # review: 13 new resources expected
 make infisical-identities-apply
+make infisical-identities-output      # prints all identity UUIDs as JSON
 ```
 
-Expected output: `Apply complete! Resources: 9 added, 0 changed, 0 destroyed.` (3 workflows × 3 resources each).
+Expected output: `Apply complete! Resources: 13 added, 0 changed, 0 destroyed.`
+
+## After first apply — what's still needed
+
+1. **Grant tf-infisical-admin Admin on grove-sites** (this env creates the project but the admin grant for tf-infisical-admin uses user-login auth via the bootstrap script). Re-run:
+   ```
+   make infisical-admin-bootstrap identity_id=<tf-infisical-admin-uuid> \
+     INFISICAL_ADMIN_PROJECT_IDS=850603f8-e175-4c38-9038-97a1e69d72e6,<grove-sites-uuid-from-output>
+   ```
+2. **Seed grove-sites/prod secrets** — `make infisical-seed` once `.env.infisical-seed.op` is pointed at the grove-sites project (currently pointed at grove-odoocker). The 10 secrets the preview-up workflow needs (DIGITALOCEAN_TOKEN, DO_SPACES_*, ADMIN_IP_CIDR, PREVIEW_SSH_*, GHOST_KEY_*, DISCORD_OPS_WEBHOOK_URL) per the bootstrap-secret-name-alignment PR.
+3. **Update each workflow YAML** to reference its identity UUID:
+   - odoocker workflows on the shared identity → `INFISICAL_IDENTITY_ID = shared_identity_ids.odoocker`
+   - odoocker release → `INFISICAL_IDENTITY_ID = prod_workflow_identity_ids["odoocker--release"]`
+   - grove-sites shared workflows → `shared_identity_ids["grove-sites"]`
+   - grove-sites release → `prod_workflow_identity_ids["grove-sites--release"]`
 
 ## Reading the outputs
 
-After apply, the per-workflow identity UUIDs are needed to update the workflow YAML files (as the `INFISICAL_IDENTITY_ID` env var that `Infisical/secrets-action` consumes).
-
 ```bash
 make infisical-identities-output
-# or:
-op run --env-file=.env.op -- terraform -chdir=infra/terraform/environments/infisical-identities \
-  output -json workflow_identity_ids
 ```
 
-Then update each workflow's `INFISICAL_IDENTITY_ID` env var to the UUID from the output. The UUIDs are non-sensitive routing values; commit them as literals.
+Yields:
+```json
+{
+  "shared_identity_ids": {
+    "odoocker":    "<uuid>",
+    "grove-sites": "<uuid>"
+  },
+  "prod_workflow_identity_ids": {
+    "odoocker--release":    "<uuid>",
+    "grove-sites--release": "<uuid>"
+  },
+  "shared_consumers": {
+    "odoocker":    ["terraform-drift.yml", "sandbox-reaper.yml", "sandbox-deploy.yml", "docker-odoo.yml"],
+    "grove-sites": ["ci.yml", "docker.yml", "preview-up.yml", "preview-down.yml"]
+  },
+  "grove_sites_project_uuid": "<uuid>",
+  "grove_sites_project_slug": "grove-sites"
+}
+```
 
-## Rotating credentials / changing trust policy
+## Adding a workflow
 
-To rotate a trust-policy literal (e.g., move a workflow from `main` to `release` branch):
-1. Update `variables.tf` (or pass `-var github_branch=...`)
-2. `make infisical-identities-apply`
-3. The OIDC resource updates in place; identity UUID unchanged
+| Adding... | Cost | How |
+|---|---|---|
+| A low-risk workflow to an existing repo | **0 identity slots** | Edit `var.repos[<repo>].shared_readonly_workflows` (informational only); update the workflow YAML to reference the existing shared identity's UUID |
+| A prod-credential workflow to an existing repo | **1 identity slot** (must have spare) | Edit `var.repos[<repo>].prod_credential_workflows`; `make infisical-identities-apply` |
+| A new repo entirely | **2 identity slots** (must have 2 spare) | Add an entry to `var.repos`; `make infisical-identities-apply` |
 
-To rotate the `tf-infisical-admin` Client Secret:
-1. Re-run `make infisical-admin-bootstrap` — script detects existing identity, skips creation, mints a fresh Client Secret, updates 1Password
-2. Next `terraform plan/apply` picks up the new secret from 1Password automatically
+Today: 0 spare slots. Any addition above triggers a Pro upgrade.
 
 ## Caveats
 
+### Trust policy literals matter
+
+Renaming a workflow file (e.g., `release.yml` → `cd.yml`) breaks the strict identity's `workflow_ref` binding until this TF env is updated. The shared identity isn't affected by workflow renames (no `workflow_ref` claim).
+
 ### Secrets in tfstate
 
-The Infisical provider's auth credentials, the access tokens it mints during apply, and the trust-policy literals all live in `terraform.tfstate`. State file is in `grove-tf-state` Spaces bucket — protect the bootstrap Spaces keys accordingly.
+The Infisical provider's auth credentials and the trust-policy literals live in `terraform.tfstate`. State file is in the `grove-tf-state` Spaces bucket.
 
-### Trust-policy literals matter
+### Drift relationship with the script
 
-The `bound_subject` + `bound_claims.job_workflow_ref` literals are what tie a workflow's OIDC token to a specific identity. Renaming a workflow file, moving it between branches, or moving it to a different repo will break the trust policy until this TF env is updated. There's no glob fallback by design — per `memory/feedback_oidc_trust_policy_pattern.md`, hardcoded literals only. The maintenance cost is the same as renaming a file in CI generally.
-
-### Adding new workflows
-
-Add to the `odoocker_workflows` map. The `for_each` creates all three resources for the new entry on next apply. No other code changes needed.
-
-## What's NOT here
-
-- **`terraform-drift.yml` identity** — manually created in UI during Phase 3, intentionally left out of this PR. Migration via `terraform import` is a follow-up.
-- **grove-sites workflow identities** — `preview-up.yml`, `preview-down.yml`, etc. Will be added in a separate TF env (or as a second `for_each` map in this one) when grove-sites OIDC retrofit kicks off. The pattern is identical; only `github_repo_full_name` + the workflow list differ.
+`scripts/infisical-add-workflow-identity.sh` can also create identities (companion to this TF env). They DO NOT share state — if you use the script to create an identity then later add the same workflow to this env's `var.repos`, `terraform apply` will fail at create-time (name collision). Pick one tool per identity.
 
 ## Related
 
-- `scripts/infisical-admin-bootstrap.sh` — one-shot creation of the admin identity this env uses for auth
-- `memory/project_infisical_decision_cloud.md` — the broader OIDC retrofit decision record
-- `memory/feedback_oidc_trust_policy_pattern.md` — trust-policy pattern (literals, no actor binding)
-- `memory/feedback_infisical_uuid_vs_slug.md` — when to use UUID vs slug across tools
-- `docs/ADR/003-infisical-secrets-broker.md` — full architecture decision record
+- `scripts/infisical-admin-bootstrap.sh` — creates tf-infisical-admin (the one identity this env doesn't manage)
+- `scripts/infisical-add-workflow-identity.sh` — ad-hoc identity creation (alternative to this env for one-offs)
+- `docs/ADR/003-infisical-secrets-broker.md` — broader architecture decision record
+- `memory/feedback_oidc_trust_policy_pattern.md` — trust-policy pattern + two-tier rationale
+- `memory/project_infisical_decision_cloud.md` — Cloud vs self-host decision
