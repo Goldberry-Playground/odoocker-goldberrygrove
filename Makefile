@@ -156,8 +156,13 @@ infisical-add-workflow-identity:
 INFISICAL_IDENTITIES_DIR = infra/terraform/environments/infisical-identities
 
 ## infisical-identities-init     — terraform init for the infisical-identities env
+##   Auto-copies backend.hcl.example → backend.hcl on first run (git-ignored).
 .PHONY: infisical-identities-init
 infisical-identities-init:
+	@if [ ! -f $(INFISICAL_IDENTITIES_DIR)/backend.hcl ]; then \
+		echo "  → copying $(INFISICAL_IDENTITIES_DIR)/backend.hcl.example → backend.hcl"; \
+		cp $(INFISICAL_IDENTITIES_DIR)/backend.hcl.example $(INFISICAL_IDENTITIES_DIR)/backend.hcl; \
+	fi
 	op run --env-file=$(INFISICAL_IDENTITIES_DIR)/.env.op -- \
 		terraform -chdir=$(INFISICAL_IDENTITIES_DIR) init -backend-config=backend.hcl
 
@@ -173,11 +178,15 @@ infisical-identities-apply:
 	op run --env-file=$(INFISICAL_IDENTITIES_DIR)/.env.op -- \
 		terraform -chdir=$(INFISICAL_IDENTITIES_DIR) apply
 
-## infisical-identities-output   — show identity UUIDs to hardcode into workflow YAMLs
+## infisical-identities-output   — show all outputs (identity UUIDs + project UUIDs)
+##   Dumps every output as JSON. Output names were renamed in PR #50 (was
+##   `workflow_identity_ids`, now `shared_identity_ids` + `prod_workflow_identity_ids`
+##   + others); using a name-less `output -json` so this target stays correct
+##   across future restructures.
 .PHONY: infisical-identities-output
 infisical-identities-output:
 	op run --env-file=$(INFISICAL_IDENTITIES_DIR)/.env.op -- \
-		terraform -chdir=$(INFISICAL_IDENTITIES_DIR) output -json workflow_identity_ids
+		terraform -chdir=$(INFISICAL_IDENTITIES_DIR) output -json
 
 ## infisical-identities-destroy  — terraform destroy (requires CONFIRM=yes)
 .PHONY: infisical-identities-destroy
