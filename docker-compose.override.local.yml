@@ -60,29 +60,44 @@ services:
     ports:
       - 2370:2370
 
-  # ── Frontends — expose direct ports for local dev access ─────────────────
-  # In prod/preview, frontends are reached only via nginx-proxy (no `ports:`).
-  # In local, devs hit them directly at the host port for fast iteration
-  # without TLS / virtual hosts. Container-internal ports come from each
-  # Dockerfile's `ENV PORT=...` (storefronts: 3001, hub: 3000).
+  # ── Frontends — direct ports + nginx-proxy vhosts for local dev ──────────
+  # Two ways to reach each frontend locally:
+  #   1. Direct host port (fast iteration, no TLS/vhost):
+  #        hub → :3000, goldberry → :3001, ggg → :3002, nursery → :3003
+  #   2. Behind nginx-proxy on :80 via a `<name>.localhost` vhost — this is
+  #      what GOL-5 ("serves all 4 frontends locally behind nginx") needs.
+  #      `*.localhost` resolves to 127.0.0.1 in modern browsers and curl, so
+  #      `curl http://hub.localhost` hits nginx-proxy → routed to hub:3000.
+  # The VIRTUAL_HOST values default here (override.grove.yml leaves them empty
+  # so prod/preview opt in explicitly); override per-host via .env if desired.
+  # Container-internal ports come from each Dockerfile's `ENV PORT=...`
+  # (storefronts: 3001, hub: 3000); VIRTUAL_PORT is set in the grove overlay.
 
   hub:
     restart: 'no'
+    environment:
+      VIRTUAL_HOST: ${HUB_VIRTUAL_HOST:-hub.localhost}
     ports:
       - ${HUB_PORT:-3000}:3000
 
   goldberry:
     restart: 'no'
+    environment:
+      VIRTUAL_HOST: ${GOLDBERRY_VIRTUAL_HOST:-goldberry.localhost}
     ports:
       - ${GOLDBERRY_PORT:-3001}:3001
 
   ggg:
     restart: 'no'
+    environment:
+      VIRTUAL_HOST: ${GGG_VIRTUAL_HOST:-ggg.localhost}
     ports:
       - ${GGG_PORT:-3002}:3001
 
   nursery:
     restart: 'no'
+    environment:
+      VIRTUAL_HOST: ${NURSERY_VIRTUAL_HOST:-nursery.localhost}
     ports:
       - ${NURSERY_PORT:-3003}:3001
 

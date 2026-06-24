@@ -19,7 +19,7 @@ allowed-tools: Bash, Read, Grep, Glob, Edit, Write, Agent
 Unified DevOps skill for the Gather at the Grove ecosystem — covers local testing
 with OrbStack, DigitalOcean droplet deployment, sandbox/QA environments, and CI/CD.
 
-**Stack**: Odoo 19 + PostgreSQL 17 + Nginx + Ghost CMS (x3) + KeyDB + MinIO
+**Stack**: Odoo 19 + PostgreSQL 17 + Nginx + Ghost CMS (x3) + 4 Next.js frontends (hub + 3 storefronts) + KeyDB + MinIO
 **Tenants**: Goldberry Grove Farm, George George George Woodworking LLC, At The Grove Nursery LLC
 **Infrastructure**: DigitalOcean Droplet (Docker Compose) + OrbStack (local dev)
 
@@ -56,7 +56,7 @@ What do you need?
 | Environment | Compose Files | .env Source | Domain |
 |-------------|--------------|-------------|--------|
 | **Local** | `base` + `override.local.yml` | `.env` (from `.env.example`) | `localhost:8069` |
-| **Grove Local** | `base` + `override.grove.yml` + `override.local.yml` | `.env` + `.env.grove` | `localhost:8069` + Ghost on 2368-2370 |
+| **Grove Local** | `base` + `override.grove.yml` + `override.local.yml` | `.env` + `.env.grove` | `localhost:8069` + Ghost 2368-2370 + frontends 3000-3003 (and `*.localhost` via nginx-proxy with `--profile proxy --profile frontends`) |
 | **Sandbox/QA** | `base` + `override.grove.yml` + `override.sandbox.yml` | `.env` + `.env.grove` (sandbox vars) | `erp-sandbox.goldberrygrove.farm` |
 | **Production** | `base` + `override.grove.yml` + `override.production.yml` | `.env` + `.env.grove` | `erp.gatheringatthegrove.com` |
 
@@ -94,7 +94,7 @@ docker compose -f docker-compose.yml \
 # Access: http://localhost:8069
 ```
 
-### Method 2: Full Grove Stack (with Ghost CMS)
+### Method 2: Full Grove Stack (Ghost CMS + frontends behind nginx)
 
 ```bash
 cp .env.example .env
@@ -105,17 +105,38 @@ cp .env.grove.example .env.grove
 # GHOST_GGG_URL=http://localhost:2369
 # GHOST_NURSERY_URL=http://localhost:2370
 
+# Pull the frontend images first (built + published by grove-sites CI):
+docker compose -f docker-compose.yml \
+  -f docker-compose.override.grove.yml \
+  -f docker-compose.override.local.yml \
+  --profile frontends pull
+
 docker compose -f docker-compose.yml \
   -f docker-compose.override.grove.yml \
   -f docker-compose.override.local.yml \
   --profile odoo --profile postgres --profile nginx \
+  --profile proxy --profile frontends \
   up -d
 
+# Backend / CMS (direct ports):
 # Odoo: http://localhost:8069
-# Ghost Goldberry: http://localhost:2368
-# Ghost GGG: http://localhost:2369
-# Ghost Nursery: http://localhost:2370
+# Ghost Goldberry/GGG/Nursery: http://localhost:2368 / :2369 / :2370
+
+# Frontends — direct dev ports:
+# Hub: http://localhost:3000   Goldberry: http://localhost:3001
+# GGG: http://localhost:3002   Nursery:   http://localhost:3003
+
+# Frontends — behind nginx-proxy on :80 (GOL-5 acceptance path).
+# `*.localhost` resolves to 127.0.0.1 in modern browsers/curl:
+for h in hub goldberry ggg nursery; do
+  echo "$h.localhost → $(curl -s -o /dev/null -w '%{http_code}' http://$h.localhost)"
+done
 ```
+
+> The `proxy` + `frontends` profiles are what put the 4 Next.js apps *behind
+> nginx*. Drop `--profile proxy` and you still get the direct dev ports, but the
+> `*.localhost` vhosts won't answer. VIRTUAL_HOST defaults to `<name>.localhost`
+> in `override.local.yml`; override per-host via `.env` for preview/prod domains.
 
 ### Method 3: Sandbox/QA Environment
 
@@ -180,28 +201,45 @@ docker compose config --services
 ### Architecture
 
 ```
-                    ┌─────────────────────────────────────────┐
-                    │         DigitalOcean Droplet             │
-                    │         (4 GB RAM / 2 vCPU min)         │
-                    │                                         │
-  HTTPS ──────────► │  nginx-proxy (:80/:443)                 │
-                    │    ├── acme-companion (Let's Encrypt)    │
-                    │    │                                     │
-                    │    ├── nginx (inner) ──► Odoo (:8069)    │
-                    │    │     catch-all → proxy_pass odoo     │
-                    │    │                                     │
-                    │    └── Ghost routing (grove-ghost.conf)  │
-                    │         ├── blog.goldberrygrove.farm     │
-                    │         │     → ghost-goldberry (:2368)  │
-                    │         ├── blog.woodworkingeorge.com    │
-                    │         │     → ghost-ggg (:2369)        │
-                    │         └── blog.atthegrovenursery.com   │
-                    │               → ghost-nursery (:2370)    │
-                    │                                         │
-                    │  PostgreSQL 17                           │
-                    │  KeyDB (Redis-compatible)                │
-                    │  MinIO (S3-compatible)                   │
-                    └─────────────────────────────────────────┘
+                    ┌─────────────────────────────────────────────┐
+                    │         DigitalOcean Droplet                 │
+                    │         (4 GB RAM / 2 vCPU min)             │
+                    │                                             │
+  HTTPS ──────────► │  nginx-proxy (:80/:443)  [profile: proxy]   │
+                    │    │  routes by container VIRTUAL_HOST       │
+                    │    ├── acme-companion (Let's Encrypt)        │
+                    │    │                                         │
+                    │    ├── nginx (inner) ──► Odoo (:8069)        │
+                    │    │     erp.* catch-all → proxy_pass odoo   │
+                    │    │                                         │
+                    │    ├── Ghost routing (grove-ghost.conf)      │
+                    │    │    ├── blog.goldberrygrove.farm         │
+                    │    │    │     → ghost-goldberry (:2368)      │
+                    │    │    ├── blog.woodworkingeorge.com        │
+                    │    │    │     → ghost-ggg (:2369)            │
+                    │    │    └── blog.atthegrovenursery.com       │
+                    │    │          → ghost-nursery (:2370)        │
+                    │    │                                         │
+                    │    └── Frontends (Next.js) [profile:         │
+                    │         frontends] — VIRTUAL_HOST per app    │
+                    │         ├── gatheringatthegrove.com          │
+                    │         │     → hub (:3000)                  │
+                    │         ├── goldberrygrove.farm              │
+                    │         │     → goldberry (:3001)            │
+                    │         ├── woodworkingeorge.com             │
+                    │         │     → ggg (:3001)                  │
+                    │         └── atthegrovenursery.com            │
+                    │               → nursery (:3001)              │
+                    │                                             │
+                    │  PostgreSQL 17                               │
+                    │  KeyDB (Redis-compatible)                    │
+                    │  MinIO (S3-compatible)                       │
+                    └─────────────────────────────────────────────┘
+
+  Frontend images: ghcr.io/goldberry-playground/grove-{hub,goldberry,ggg,nursery}
+  (built + published by grove-sites CI). Each carries VIRTUAL_HOST / VIRTUAL_PORT
+  / LETSENCRYPT_HOST, empty by default → nginx-proxy ignores them until a host is
+  set (local: `<name>.localhost`; preview/prod: real domains via .env).
 ```
 
 ### Domains & DNS
@@ -241,11 +279,14 @@ cp .env.grove.example .env.grove
 # 4. Switch Let's Encrypt to production
 # In .env: ACME_CA_URI=https://acme-v02.api.letsencrypt.org/directory
 
-# 5. Bring up the full stack
+# 5. Bring up the full stack (include --profile frontends once the per-app
+#    *_VIRTUAL_HOST / *_LETSENCRYPT_HOST values are set in .env.grove; without
+#    those the frontends start but nginx-proxy won't route a public vhost).
 docker compose -f docker-compose.yml \
   -f docker-compose.override.grove.yml \
   -f docker-compose.override.production.yml \
   --profile odoo --profile postgres --profile nginx --profile proxy --profile acme \
+  --profile frontends \
   up -d
 
 # 6. Verify TLS certificates (may take 1-2 minutes)
