@@ -1,0 +1,121 @@
+# Grove QA — full compose stack for the QA droplet.
+#
+# Inlined by Terraform's templatefile() into cloud-init at droplet provision
+# time. Image tags + secrets come from /etc/grove/.env (also written by cloud-init).
+#
+# Differences from preview:
+#   - No Ghost containers (frontends point at live blog.goldberrygrove.farm
+#     via GHOST_KEY_GOLDBERRY or gracefully degrade to empty)
+#   - No snapshot restore (fresh empty Postgres on every droplet creation)
+#   - Uses Caddy (not nginx-proxy+acme-companion) for routing + TLS
+#   - All volumes anonymous — QA is ephemeral, data lost on droplet teardown
+
+name: grove-qa
+
+services:
+  # ── Caddy — TLS + reverse proxy for all qa-* subdomains ───────────────────
+  # Uses DO DNS-01 ACME challenge so we don't need port 80 exposed publicly
+  # for HTTP-01 (still exposed for fallback, but DNS-01 is the primary path).
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /etc/grove/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    environment:
+      DO_API_TOKEN: ${DO_API_TOKEN}
+      QA_ZONE: ${QA_ZONE}
+    # Caddy with the DO DNS-01 module isn't in the default `caddy:2-alpine`
+    # image — we use `caddy/builder` at boot or `xcaddy` baked in. Simplest
+    # path: use the community `lucaslorentz/caddy-docker-proxy` OR build a
+    # custom Caddy with the DO plugin. For v1, use HTTP-01 (port 80 needs
+    # to be reachable, which it is via firewall). DO DNS-01 wildcard is a
+    # follow-up if we need to support more subdomains than firewall-pingable
+    # ones.
+
+  # ── Postgres — fresh on every QA droplet creation ─────────────────────────
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: odoo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: grove_qa
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U odoo -d grove_qa"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ── Odoo backend ─────────────────────────────────────────────────────────
+  odoo:
+    image: ghcr.io/goldberry-playground/grove-odoo:${ODOO_IMAGE_TAG}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: odoo
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      ADMIN_PASSWORD: ${ODOO_ADMIN_PASSWORD}
+      APP_ENV: qa
+      WORKERS: "2"
+      LIST_DB: "false"
+    volumes:
+      - odoo-filestore:/var/lib/odoo
+
+  # ── Frontends ─────────────────────────────────────────────────────────────
+  hub:
+    image: ghcr.io/goldberry-playground/grove-hub:${HUB_TAG}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_QA_BANNER: "QA Environment"
+      ODOO_API_URL: http://odoo:8069
+      # Hub frontend reads journal content from goldberry's live Ghost
+      GHOST_URL: https://goldberrygrove.farm
+      GHOST_CONTENT_API_KEY: ${GHOST_KEY_GOLDBERRY}
+
+  goldberry:
+    image: ghcr.io/goldberry-playground/grove-goldberry:${GOLDBERRY_TAG}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_QA_BANNER: "QA Environment"
+      ODOO_API_URL: http://odoo:8069
+      GHOST_URL: https://goldberrygrove.farm
+      GHOST_CONTENT_API_KEY: ${GHOST_KEY_GOLDBERRY}
+
+  ggg:
+    image: ghcr.io/goldberry-playground/grove-ggg:${GGG_TAG}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_QA_BANNER: "QA Environment"
+      ODOO_API_URL: http://odoo:8069
+      # No Ghost for GGG yet — frontend handles missing GHOST_CONTENT_API_KEY
+      # gracefully (renders /blog as empty state)
+      GHOST_CONTENT_API_KEY: ""
+
+  nursery:
+    image: ghcr.io/goldberry-playground/grove-nursery:${NURSERY_TAG}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_QA_BANNER: "QA Environment"
+      ODOO_API_URL: http://odoo:8069
+      GHOST_CONTENT_API_KEY: ""
+
+volumes:
+  caddy-data:
+  caddy-config:
+  postgres-data:
+  odoo-filestore:
