@@ -1,0 +1,17 @@
+terraform.tfstate
+terraform.tfstate.backup
+terraform.tfstate.*.backup
+.terraform/
+crash.log
+crash.*.log
+
+# Operator-specific tfvars (real values). The .example file IS committed.
+terraform.tfvars
+*.auto.tfvars
+
+# Backend config holds the bucket + key (non-secret) but is per-operator.
+backend.hcl
+
+# Override the root .gitignore exclusion of .env.* — .env.op IS committed
+# (contains op:// references, not secret values).
+!.env.op
