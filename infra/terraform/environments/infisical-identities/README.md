@@ -6,17 +6,20 @@ Scoped to fit Infisical's **free-tier 5-identity cap** (decision 2026-06-23 — 
 
 Lives alongside the other TF envs in `infra/terraform/environments/`. Same `op run --env-file=.env.op --` credential injection pattern; state in the shared `grove-tf-state` Spaces bucket.
 
-## The 5-identity allocation
+## The 5-identity allocation (1 admin + 4 OIDC)
+
+Infisical's free-tier cap is **5 identities total — admin counts toward the cap** (confirmed empirically 2026-06-23 by hitting the cap on the first apply). So 4 OIDC slots available.
 
 | # | Identity | Where it's created | Trust policy | Project access | Used by |
 |---|---|---|---|---|---|
-| 1 | `tf-infisical-admin` | `scripts/infisical-admin-bootstrap.sh` (out of scope here) | Universal Auth (admin) | Admin on grove-odoocker + grove-sites | TF env, scripts, one-time seeds |
+| 1 | `tf-infisical-admin` | `scripts/infisical-admin-bootstrap.sh` | Universal Auth (admin) | Admin on grove-odoocker + grove-sites | TF env, scripts, one-time seeds |
 | 2 | `gh-oidc-odoocker-shared` | This env | `repo=odoocker:ref=main`, no `workflow_ref` | Viewer on grove-odoocker | terraform-drift, sandbox-reaper, sandbox-deploy, docker-odoo |
-| 3 | `gh-oidc-odoocker-release` | This env | `repo=odoocker:ref=main` + `workflow_ref=release.yml` | Viewer on grove-odoocker | release.yml (prod CD) |
-| 4 | `gh-oidc-grove-sites-shared` | This env | `repo=grove-sites:ref=main`, no `workflow_ref` | Viewer on grove-sites | ci, docker, preview-up, preview-down |
-| 5 | `gh-oidc-grove-sites-release` | This env | `repo=grove-sites:ref=main` + `workflow_ref=release.yml` | Viewer on grove-sites | release.yml (prod frontend deploys) |
+| 3 | `gh-oidc-odoocker-release` | This env | `repo=odoocker:ref=main` + `workflow_ref=release.yml` | Viewer on grove-odoocker | release.yml (prod CD — actual prod SSH key access) |
+| 4 | `gh-oidc-grove-sites-shared` | This env | `repo=grove-sites:ref=main`, no `workflow_ref` | Viewer on grove-sites | ci, docker, preview-up, preview-down, **release.yml** |
 
-**Exactly 5. Zero spare.** Adding a 3rd repo (e.g., grove-odoo-modules workflows that need secrets), or splitting any low-risk workflow into its own strict identity, requires an Infisical Pro upgrade (~$10-30/mo).
+**Exactly 5 total. Zero spare.** Adding a 3rd repo OR splitting grove-sites release.yml off into its own strict identity (which becomes meaningful when M4 ships and grove-sites release actually deploys to a prod droplet) requires an Infisical Pro upgrade (~$10/mo).
+
+**Why grove-sites release.yml uses the shared identity:** M4 (production droplet) doesn't exist yet, so grove-sites release.yml just tags + pushes frontend images to GHCR. No prod SSH key, no actual production-deployment access. Strict isolation is theoretical today. When M4 lands, revisit (delete a different identity OR upgrade).
 
 ## Security boundaries preserved
 
@@ -33,7 +36,7 @@ Lives alongside the other TF envs in `infra/terraform/environments/`. Same `op r
 - **Per repo (×2)**: one `infisical_identity` + one `infisical_identity_oidc_auth` + one `infisical_project_identity` for the shared-readonly identity
 - **Per (repo × prod workflow) (×2)**: same 3 resources, with strict workflow_ref binding
 
-= 1 project resource + 6 shared resources + 6 prod resources = **13 resources** on first apply.
+= 1 project resource + 6 shared resources (2 repos × 3) + 3 prod resources (1 prod workflow × 3) = **10 resources** on first apply.
 
 ## Prerequisites
 
