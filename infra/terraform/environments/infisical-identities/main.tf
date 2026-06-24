@@ -70,11 +70,23 @@ resource "infisical_identity_oidc_auth" "shared" {
   oidc_discovery_url = "https://token.actions.githubusercontent.com"
   bound_issuer       = "https://token.actions.githubusercontent.com"
 
-  # LOOSE binding: only repo + ref. NO workflow_ref claim. Any workflow on
-  # the configured repo's branch can authenticate as this identity.
-  # See main.tf header for the blast-radius justification.
-  bound_subject = "repo:${each.value.github_repo_full_name}:ref:refs/heads/${each.value.github_branch}"
-  bound_claims  = {}
+  # LOOSE binding: only `repository` claim, NO ref or workflow_ref pinning.
+  # ANY workflow on the configured repo (any branch — main, qa, feature
+  # branches) can authenticate as this identity. Required for Josh's dev
+  # cycle: push to `qa` branch must work, push to `main` must also work,
+  # both use this shared identity.
+  #
+  # Loosened from the original "only main branch" pattern (2026-06-24) to
+  # enable qa-deploy.yml. Cross-repo isolation preserved — grove-sites
+  # workflows still can't use this identity because their `repository`
+  # claim doesn't match.
+  #
+  # `bound_subject` deliberately empty — relying on bound_claims.repository
+  # alone. Infisical accepts empty subject + claims-only binding.
+  bound_subject = ""
+  bound_claims = {
+    repository = each.value.github_repo_full_name
+  }
 
   access_token_ttl            = var.access_token_ttl_seconds
   access_token_max_ttl        = var.access_token_max_ttl_seconds
