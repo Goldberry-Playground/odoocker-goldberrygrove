@@ -116,21 +116,23 @@ jobs:
           cp backend.hcl.example backend.hcl
           terraform init -backend-config=backend.hcl -input=false
 
-      - name: Terraform plan
-        timeout-minutes: 5
-        working-directory: infra/terraform/environments/qa
-        run: terraform plan -input=false -out=tfplan.binary
-
+      # Taint runs BEFORE plan/apply so the plan reflects the recreate.
+      # The old "plan → taint → apply tfplan.binary" sequence failed with
+      # "Saved plan is stale" because taint modifies state between the plan
+      # snapshot and the apply.
       - name: Optionally taint droplet (workflow_dispatch input)
         if: github.event.inputs.taint_droplet == 'true'
         timeout-minutes: 1
         working-directory: infra/terraform/environments/qa
         run: terraform taint digitalocean_droplet.qa || true
 
+      # Plan + apply in one shot — no saved plan file. Slightly slower
+      # than plan-then-apply-binary, but eliminates the stale-plan failure
+      # mode and works regardless of whether taint ran.
       - name: Terraform apply
         timeout-minutes: 10
         working-directory: infra/terraform/environments/qa
-        run: terraform apply -input=false -auto-approve tfplan.binary
+        run: terraform apply -input=false -auto-approve
 
       - name: Capture outputs
         id: tf_outputs
@@ -177,8 +179,15 @@ jobs:
           COMMIT_SHA: ${{ github.sha }}
           ACTOR: ${{ github.actor }}
         run: |
-          # Build the per-URL field list dynamically from the qa_urls map
-          FIELDS=$(echo "$QA_URLS" | jq '[to_entries[] | {name: .key, value: .value, inline: false}]')
+          # Build the per-URL field list. When TF apply failed earlier, QA_URLS
+          # is empty — fall back to an empty array so jq --argjson doesn't choke
+          # on invalid JSON. The embed still posts (with no URL fields), making
+          # failures visible in Discord instead of cascading to a workflow crash.
+          if [ -z "$QA_URLS" ]; then
+            FIELDS='[]'
+          else
+            FIELDS=$(echo "$QA_URLS" | jq '[to_entries[] | {name: .key, value: .value, inline: false}]')
+          fi
           if [ "$STATUS" = "success" ]; then COLOR=5763719; ICON="🧪"; else COLOR=15158332; ICON="🚨"; fi
 
           PAYLOAD=$(jq -n \
