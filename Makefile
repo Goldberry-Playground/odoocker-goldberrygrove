@@ -200,6 +200,63 @@ infisical-identities-destroy:
 	op run --env-file=$(INFISICAL_IDENTITIES_DIR)/.env.op -- \
 		terraform -chdir=$(INFISICAL_IDENTITIES_DIR) destroy
 
+# ── QA TF env (full QA droplet stack on push to `qa` branch) ────────────────
+
+QA_DIR = infra/terraform/environments/qa
+QA_SSH_KEY_PATH ?= $(HOME)/.ssh/grove-qa-deploy
+
+## qa-keygen                     — Generate the SSH keypair for the QA droplet
+##   if it doesn't exist yet. Public key uploaded to DO by terraform; private
+##   key stays on this machine (the workflow fetches it via Infisical for
+##   SSH-deploy of incremental updates — wired in a follow-up PR).
+.PHONY: qa-keygen
+qa-keygen:
+	@if [ ! -f $(QA_SSH_KEY_PATH) ]; then \
+		echo "  → generating $(QA_SSH_KEY_PATH)"; \
+		ssh-keygen -t ed25519 -f $(QA_SSH_KEY_PATH) -N "" -C "grove-qa-deploy"; \
+	else \
+		echo "  → $(QA_SSH_KEY_PATH) exists, skipping"; \
+	fi
+
+## qa-init                       — terraform init for the qa env (auto-copies backend.hcl)
+.PHONY: qa-init
+qa-init: qa-keygen
+	@if [ ! -f $(QA_DIR)/backend.hcl ]; then \
+		echo "  → copying $(QA_DIR)/backend.hcl.example → backend.hcl"; \
+		cp $(QA_DIR)/backend.hcl.example $(QA_DIR)/backend.hcl; \
+	fi
+	op run --env-file=$(QA_DIR)/.env.op -- \
+		terraform -chdir=$(QA_DIR) init -backend-config=backend.hcl
+
+## qa-plan                       — terraform plan for the qa env
+.PHONY: qa-plan
+qa-plan:
+	op run --env-file=$(QA_DIR)/.env.op -- \
+		terraform -chdir=$(QA_DIR) plan
+
+## qa-apply                      — terraform apply for the qa env
+.PHONY: qa-apply
+qa-apply:
+	op run --env-file=$(QA_DIR)/.env.op -- \
+		terraform -chdir=$(QA_DIR) apply
+
+## qa-output                     — show qa URLs + droplet IP as JSON
+.PHONY: qa-output
+qa-output:
+	op run --env-file=$(QA_DIR)/.env.op -- \
+		terraform -chdir=$(QA_DIR) output -json
+
+## qa-destroy                    — terraform destroy (requires CONFIRM=yes)
+.PHONY: qa-destroy
+qa-destroy:
+	@if [ "$(CONFIRM)" != "yes" ]; then \
+		echo "Refusing to destroy QA env without CONFIRM=yes"; \
+		echo "WARNING: destroys the QA droplet (tester data lost) AND removes the"; \
+		echo "Cloudflare → DO NS delegation for qa.gatheringatthegrove.com."; \
+		exit 1; fi
+	op run --env-file=$(QA_DIR)/.env.op -- \
+		terraform -chdir=$(QA_DIR) destroy
+
 # ── Help ─────────────────────────────────────────────────────────────────────
 
 .PHONY: help
