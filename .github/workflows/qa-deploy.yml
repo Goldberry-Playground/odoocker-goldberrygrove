@@ -1,0 +1,203 @@
+name: QA Deploy
+
+###############################################################################
+# Drives Josh's dev cycle: push to `qa` branch → auto-provision QA env →
+# post URLs to Discord. Real humans then test at the URLs.
+#
+# Calls `make qa-apply` which runs the TF env at
+# infra/terraform/environments/qa/. The TF env is self-contained — Cloudflare
+# delegation + DO droplet + DNS records + firewall, all in one apply.
+#
+# First-push behavior: ~10-30 min from workflow start to live TLS URLs
+# (Cloudflare NS propagation is the long pole).
+# Subsequent pushes: ~30 sec if only droplet image tag changed; ~5 min if
+# droplet needs recreation (taint).
+#
+# Tied off by qa-teardown.yml on push to `main` (prod cutover).
+###############################################################################
+
+on:
+  push:
+    branches: [qa]
+  workflow_dispatch:
+    inputs:
+      taint_droplet:
+        description: "Recreate the droplet (force cloud-init re-run). Use when image tags changed or droplet got into a bad state."
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  # One QA deploy at a time per branch — cancel previous if a new push comes
+  # in while the prior one is still applying.
+  group: qa-deploy
+  cancel-in-progress: true
+
+jobs:
+  qa-deploy:
+    name: Provision QA env + post URLs
+    runs-on: ubuntu-latest
+    timeout-minutes: 40   # generous: first apply with cloud-init can take 30+ min
+
+    permissions:
+      contents: read       # checkout
+      id-token: write      # OIDC token for Infisical exchange
+
+    env:
+      # ── Infisical identity assignment ──────────────────────────────────
+      # Identity:   gh-oidc-odoocker-shared (UUID c502a60d-4b37-4e15-9fd7-8186c80c2ad0)
+      # Project:    grove-odoocker (slug grove-odoocker-qu8p)
+      # Trust:      repository claim only (any branch on odoocker repo)
+      # Co-tenants: terraform-drift, sandbox-reaper, sandbox-deploy, docker-odoo
+      #             — see infra/terraform/environments/infisical-identities/README.md
+      #
+      # Fetched via Infisical OIDC:
+      #   DIGITALOCEAN_TOKEN          — for the qa TF apply
+      #   DISCORD_OPS_WEBHOOK_URL     — for posting the URL list
+      #   SPACES_ACCESS_KEY_ID + SPACES_SECRET_ACCESS_KEY  — for the S3 backend
+      # CLOUDFLARE_API_TOKEN is fetched separately from Infisical too (added in
+      # this PR; was previously not seeded — see Phase-4-like migration step
+      # for the operator after merge).
+      INFISICAL_PROJECT_SLUG: grove-odoocker-qu8p
+      INFISICAL_ENV_SLUG: prod
+      INFISICAL_IDENTITY_ID: c502a60d-4b37-4e15-9fd7-8186c80c2ad0
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        timeout-minutes: 2
+
+      - name: Fetch secrets from Infisical (OIDC)
+        uses: Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995 # v1.0.16
+        timeout-minutes: 2
+        with:
+          method: oidc
+          identity-id: ${{ env.INFISICAL_IDENTITY_ID }}
+          project-slug: ${{ env.INFISICAL_PROJECT_SLUG }}
+          env-slug: ${{ env.INFISICAL_ENV_SLUG }}
+          secret-path: /
+          export-type: env
+
+      - name: Map Infisical-fetched secrets to TF / S3 envs
+        timeout-minutes: 1
+        run: |
+          {
+            echo "TF_VAR_do_token=$DIGITALOCEAN_TOKEN"
+            echo "TF_VAR_cloudflare_api_token=$CLOUDFLARE_API_TOKEN"
+            echo "AWS_ACCESS_KEY_ID=$SPACES_ACCESS_KEY_ID"
+            echo "AWS_SECRET_ACCESS_KEY=$SPACES_SECRET_ACCESS_KEY"
+          } >> "$GITHUB_ENV"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        timeout-minutes: 3
+        with:
+          terraform_version: "~1.9"
+
+      - name: Generate SSH keypair for QA droplet
+        timeout-minutes: 1
+        # The TF env reads ~/.ssh/grove-qa-deploy.pub. Generate it ephemerally
+        # on the runner — the keypair is recreated on every CI run, which is
+        # fine because the droplet is recreated alongside it.
+        # In a follow-up, fetch from Infisical so persistent SSH access from
+        # the operator's local machine works. For v1, recreating per run is
+        # acceptable since the workflow doesn't actually SSH in.
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keygen -t ed25519 -f ~/.ssh/grove-qa-deploy -N "" -C "grove-qa-deploy-ci"
+          chmod 600 ~/.ssh/grove-qa-deploy
+          chmod 644 ~/.ssh/grove-qa-deploy.pub
+
+      - name: Terraform init
+        timeout-minutes: 5
+        working-directory: infra/terraform/environments/qa
+        run: |
+          cp backend.hcl.example backend.hcl
+          terraform init -backend-config=backend.hcl -input=false
+
+      - name: Terraform plan
+        timeout-minutes: 5
+        working-directory: infra/terraform/environments/qa
+        run: terraform plan -input=false -out=tfplan.binary
+
+      - name: Optionally taint droplet (workflow_dispatch input)
+        if: github.event.inputs.taint_droplet == 'true'
+        timeout-minutes: 1
+        working-directory: infra/terraform/environments/qa
+        run: terraform taint digitalocean_droplet.qa || true
+
+      - name: Terraform apply
+        timeout-minutes: 10
+        working-directory: infra/terraform/environments/qa
+        run: terraform apply -input=false -auto-approve tfplan.binary
+
+      - name: Capture outputs
+        id: tf_outputs
+        timeout-minutes: 1
+        working-directory: infra/terraform/environments/qa
+        run: |
+          DROPLET_IP=$(terraform output -raw droplet_ipv4)
+          QA_URLS_JSON=$(terraform output -json qa_urls)
+          echo "droplet_ip=$DROPLET_IP" >> "$GITHUB_OUTPUT"
+          echo "qa_urls=$QA_URLS_JSON" >> "$GITHUB_OUTPUT"
+
+      # Poll the droplet for the cloud-init grove-ready sentinel via SSH.
+      # Generous deadline: first-time cloud-init + Caddy cert provisioning can
+      # take 10+ min.
+      - name: Wait for stack ready (cloud-init grove-ready sentinel)
+        timeout-minutes: 20
+        env:
+          DROPLET_IP: ${{ steps.tf_outputs.outputs.droplet_ip }}
+        run: |
+          NOW=$(date +%s)
+          DEADLINE=$(( NOW + 1200 ))   # 20 min
+          while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+            if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
+                   -i ~/.ssh/grove-qa-deploy \
+                   "root@$DROPLET_IP" \
+                   "test -f /var/lib/cloud/instance/grove-ready" 2>/dev/null; then
+              echo "  ✓ stack ready"
+              exit 0
+            fi
+            echo "  waiting for grove-ready sentinel..."
+            sleep 30
+          done
+          echo "::warning::droplet didn't signal ready within 20 min; URL list may not be live yet"
+
+      - name: Post URL list to Discord
+        if: always()
+        timeout-minutes: 1
+        env:
+          # DISCORD_OPS_WEBHOOK_URL set by Infisical fetch step at job start
+          QA_URLS: ${{ steps.tf_outputs.outputs.qa_urls }}
+          DROPLET_IP: ${{ steps.tf_outputs.outputs.droplet_ip }}
+          STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT_SHA: ${{ github.sha }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          # Build the per-URL field list dynamically from the qa_urls map
+          FIELDS=$(echo "$QA_URLS" | jq '[to_entries[] | {name: .key, value: .value, inline: false}]')
+          if [ "$STATUS" = "success" ]; then COLOR=5763719; ICON="🧪"; else COLOR=15158332; ICON="🚨"; fi
+
+          PAYLOAD=$(jq -n \
+            --arg title "$ICON QA Deploy — $STATUS" \
+            --arg description "Commit \`$COMMIT_SHA\` by @$ACTOR. Droplet IP: $DROPLET_IP" \
+            --arg run_url "$RUN_URL" \
+            --argjson color "$COLOR" \
+            --argjson fields "$FIELDS" \
+            '{
+              username: "🧪 Grove QA",
+              embeds: [{
+                title: $title,
+                description: $description,
+                url: $run_url,
+                color: $color,
+                fields: $fields
+              }]
+            }')
+
+          curl -fsS -X POST -H "Content-Type: application/json" \
+            -d "$PAYLOAD" "$DISCORD_OPS_WEBHOOK_URL" || \
+            echo "::warning::Discord post failed — QA env is up regardless, URLs are in workflow logs"

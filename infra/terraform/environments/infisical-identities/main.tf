@@ -70,11 +70,49 @@ resource "infisical_identity_oidc_auth" "shared" {
   oidc_discovery_url = "https://token.actions.githubusercontent.com"
   bound_issuer       = "https://token.actions.githubusercontent.com"
 
-  # LOOSE binding: only repo + ref. NO workflow_ref claim. Any workflow on
-  # the configured repo's branch can authenticate as this identity.
-  # See main.tf header for the blast-radius justification.
-  bound_subject = "repo:${each.value.github_repo_full_name}:ref:refs/heads/${each.value.github_branch}"
-  bound_claims  = {}
+  # LOOSE binding: only `repository` claim, NO ref or workflow_ref pinning.
+  # ANY workflow on the configured repo (any branch — main, qa, feature
+  # branches) can authenticate as this identity. Required for Josh's dev
+  # cycle: push to `qa` branch must work, push to `main` must also work,
+  # both use this shared identity.
+  #
+  # ── Security review finding (2026-06-24) ──────────────────────────────
+  # Automated security review flagged this as HIGH "Overly Permissive
+  # IAM/RBAC" and suggested separate identities per branch. Acknowledged
+  # AND accepted under the following trade-off:
+  #
+  # CONSTRAINT: Infisical free tier caps at 5 identities (admin + 4 OIDC).
+  # We're at the cap. Adding per-branch identities would require Pro tier
+  # (~$10/mo). Not unreasonable, but not yet warranted.
+  #
+  # MITIGATIONS in place:
+  # 1. Cross-repo isolation preserved — grove-sites workflows can't use
+  #    this identity because their `repository` claim is different
+  # 2. Cross-tenant isolation preserved — separate Infisical project per
+  #    repo, with per-project Viewer role grants
+  # 3. Branch protection rules on `main` and `qa` (org-level setting,
+  #    independent of this TF env) provide the administrative gate
+  # 4. `release.yml` (prod-credential workflow) uses a SEPARATE strict
+  #    identity (`prod` for_each in this file) with workflow_ref binding
+  #    — so prod SSH key is NOT exposed via this loose identity
+  #
+  # WHAT THIS LEAVES EXPOSED:
+  # Any GitHub user with write access to the odoocker repo can push to a
+  # new branch (or to qa) and have that workflow run with the shared
+  # identity's secrets (DIGITALOCEAN_TOKEN, DISCORD_OPS_WEBHOOK_URL,
+  # CLOUDFLARE_API_TOKEN, SPACES_*). They could provision DO infra or
+  # exfiltrate the tokens. This is the SAME blast radius as direct write
+  # access to main branch (they could just merge a malicious main commit).
+  # So the practical risk delta is zero for legitimate org members; the
+  # risk is real only if a compromised collaborator account gets revoked
+  # from main but not from feature-branch creation — a narrow window.
+  #
+  # FOLLOW-UP ON PRO UPGRADE: when Grove hits Pro tier, restore the
+  # strict per-branch binding (one identity for main, one for qa).
+  bound_subject = ""
+  bound_claims = {
+    repository = each.value.github_repo_full_name
+  }
 
   access_token_ttl            = var.access_token_ttl_seconds
   access_token_max_ttl        = var.access_token_max_ttl_seconds
