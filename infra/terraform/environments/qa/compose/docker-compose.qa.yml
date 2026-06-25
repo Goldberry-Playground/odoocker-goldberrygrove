@@ -71,7 +71,11 @@ services:
       DB_PORT: "5432"
       DB_USER: odoo
       DB_PASSWORD: ${POSTGRES_PASSWORD}
-      ADMIN_PASSWORD: ${ODOO_ADMIN_PASSWORD}
+      # Name must match the placeholder in the grove-odoo image's /odoo.conf
+      # template -- it expects ADMIN_PASSWD (no "OR"). odoorc.sh runs `set -e`
+      # so a missing var aborts the WHOLE substitution mid-flight, leaving
+      # other placeholders un-substituted and Odoo crashing on literal DB_PORT.
+      ADMIN_PASSWD: ${ODOO_ADMIN_PASSWORD}
       APP_ENV: qa
       WORKERS: "2"
       LIST_DB: "false"
@@ -93,10 +97,12 @@ services:
     environment:
       NODE_ENV: production
       NEXT_PUBLIC_QA_BANNER: "QA Environment"
-      ODOO_API_URL: http://odoo:8069
+      # Hub's marketplace.ts reads process.env.GROVE_ODOO_URL (not ODOO_URL
+      # like tenants do; not ODOO_API_URL which doesn't exist in grove-sites).
+      GROVE_ODOO_URL: http://odoo:8069
       # Hub frontend reads journal content from goldberry's live Ghost
       GHOST_URL: https://goldberrygrove.farm
-      GHOST_CONTENT_API_KEY: ${GHOST_KEY_GOLDBERRY}
+      GHOST_CONTENT_KEY: ${GHOST_KEY_GOLDBERRY}
 
   goldberry:
     image: ghcr.io/goldberry-playground/grove-goldberry:${GOLDBERRY_TAG}
@@ -104,9 +110,11 @@ services:
     environment:
       NODE_ENV: production
       NEXT_PUBLIC_QA_BANNER: "QA Environment"
-      ODOO_API_URL: http://odoo:8069
+      # Tenants' tenant.secrets.ts reads process.env.ODOO_URL (not the hub's
+      # GROVE_ODOO_URL, not ODOO_API_URL which doesn't exist in grove-sites).
+      ODOO_URL: http://odoo:8069
       GHOST_URL: https://goldberrygrove.farm
-      GHOST_CONTENT_API_KEY: ${GHOST_KEY_GOLDBERRY}
+      GHOST_CONTENT_KEY: ${GHOST_KEY_GOLDBERRY}
 
   ggg:
     image: ghcr.io/goldberry-playground/grove-ggg:${GGG_TAG}
@@ -114,10 +122,10 @@ services:
     environment:
       NODE_ENV: production
       NEXT_PUBLIC_QA_BANNER: "QA Environment"
-      ODOO_API_URL: http://odoo:8069
-      # No Ghost for GGG yet -- frontend handles missing GHOST_CONTENT_API_KEY
+      ODOO_URL: http://odoo:8069
+      # No Ghost for GGG yet -- frontend handles missing GHOST_CONTENT_KEY
       # gracefully (renders /blog as empty state)
-      GHOST_CONTENT_API_KEY: ""
+      GHOST_CONTENT_KEY: ""
 
   nursery:
     image: ghcr.io/goldberry-playground/grove-nursery:${NURSERY_TAG}
@@ -125,8 +133,8 @@ services:
     environment:
       NODE_ENV: production
       NEXT_PUBLIC_QA_BANNER: "QA Environment"
-      ODOO_API_URL: http://odoo:8069
-      GHOST_CONTENT_API_KEY: ""
+      ODOO_URL: http://odoo:8069
+      GHOST_CONTENT_KEY: ""
 
 volumes:
   caddy-data:
