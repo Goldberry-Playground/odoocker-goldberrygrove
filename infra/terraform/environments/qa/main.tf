@@ -75,24 +75,41 @@ resource "digitalocean_domain" "qa" {
 
 # ── SSH keys ────────────────────────────────────────────────────────────────
 #
-# Two keys are registered with the droplet:
+# Two keys are registered with the droplet, both LONG-LIVED:
 #
-#   1. qa_deploy  — EPHEMERAL CI key. Generated fresh by qa-deploy.yml every
-#      run; private key dies with the runner. Used only by the workflow's
-#      grove-ready sentinel poll. Useless for humans.
+#   1. qa_deploy  — CI key. Public key hardcoded in var.ci_ssh_public_key.
+#      Private key in 1Password (grove_qa_ci_ssh_private_key) and Infisical
+#      (GROVE_QA_CI_SSH_PRIVATE_KEY); qa-deploy.yml fetches the private half
+#      via OIDC each run and writes it to ~/.ssh/grove-qa-deploy on the
+#      runner. Used by the workflow's grove-ready sentinel poll.
 #
-#   2. qa_admin   — PERSISTENT admin key. Public key is hardcoded in
+#      WHY LONG-LIVED: an earlier design generated this key fresh per run.
+#      That meant every workflow run's TF plan included a REPLACE on this
+#      resource (because the public_key string differed), and the deploy-
+#      scoped DO token lacks `ssh_key:delete`. Result: every redeploy after
+#      the first hit 403 and needed a manual web-UI delete of the orphan
+#      key. Switching to a long-lived key eliminates that friction
+#      permanently.
+#
+#      ONE-TIME TRANSITION: existing TF state references this resource with
+#      the OLD random public_key. After applying this change, TF would plan
+#      a REPLACE (destroy old in DO + create new in DO) which still hits
+#      the 403. The transition is therefore:
+#        1. Delete the orphan in DO web UI (or via teardown token if scoped)
+#        2. terraform state rm digitalocean_ssh_key.qa_deploy
+#        3. terraform apply (plans CREATE only, no destroy)
+#
+#   2. qa_admin   — Human admin key. Public key hardcoded in
 #      var.admin_ssh_public_key (default = Josh's grove-qa-admin pubkey).
-#      Private key lives in 1Password and on Josh's laptop at
-#      ~/.ssh/grove-qa-admin. Survives droplet recreates because the public
-#      key string is stable. This is what humans use to SSH in for debugging
-#      cloud-init failures, inspecting compose logs, etc.
+#      Private key on Josh's laptop at ~/.ssh/grove-qa-admin AND backed up
+#      in 1Password (grove_qa_admin_ssh_private_key) for recovery. Used by
+#      humans to SSH in for debugging.
 #
 # See README.md > "SSH access" for usage.
 
 resource "digitalocean_ssh_key" "qa_deploy" {
   name       = "grove-qa-deploy"
-  public_key = file(pathexpand(var.ssh_public_key_path))
+  public_key = var.ci_ssh_public_key
 }
 
 resource "digitalocean_ssh_key" "qa_admin" {

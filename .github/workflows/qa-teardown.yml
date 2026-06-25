@@ -76,12 +76,9 @@ jobs:
         with:
           terraform_version: "~1.9"
 
-      - name: Stub SSH key for TF (destroy still needs the var to evaluate)
-        # The TF env reads ssh_public_key_path even on destroy. Stub a key
-        # so file() doesn't fail. The droplet is being destroyed anyway.
-        run: |
-          mkdir -p ~/.ssh
-          ssh-keygen -t ed25519 -f ~/.ssh/grove-qa-deploy -N "" -C "grove-qa-teardown"
+      # The CI SSH key is now LONG-LIVED (see qa-deploy.yml comment); the TF
+      # var has a hardcoded default and is no longer read from a file path.
+      # No stub needed.
 
       - name: Terraform init
         working-directory: infra/terraform/environments/qa
