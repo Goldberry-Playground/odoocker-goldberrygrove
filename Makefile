@@ -298,8 +298,12 @@ qa-teardown-all:
 ## qa-teardown-all-full          — Like qa-teardown-all PLUS Cloudflare NS delegation (slower next deploy)
 .PHONY: qa-teardown-all-full
 qa-teardown-all-full:
+	# `op run` exposes TF_VAR_cloudflare_api_token (for TF). The teardown script
+	# expects CLOUDFLARE_API_TOKEN -- alias it before invoking. Same for the DO
+	# token (we override TF_VAR_do_token with the teardown-scoped one and also
+	# expose it under DIGITALOCEAN_TOKEN, which the script reads).
 	op run --env-file=$(QA_DIR)/.env.op -- \
-		bash -c 'DIGITALOCEAN_TOKEN=$$(op item get "GoldberryGrove Infra" --vault "Goldberry Grove - Admin" --fields label=do_token_teardown --reveal) bash scripts/qa-teardown-all.sh --with-cloudflare'
+		bash -c 'CLOUDFLARE_API_TOKEN="$$TF_VAR_cloudflare_api_token" DIGITALOCEAN_TOKEN=$$(op item get "GoldberryGrove Infra" --vault "Goldberry Grove - Admin" --fields label=do_token_teardown --reveal) bash scripts/qa-teardown-all.sh --with-cloudflare'
 
 # ── Help ─────────────────────────────────────────────────────────────────────
 

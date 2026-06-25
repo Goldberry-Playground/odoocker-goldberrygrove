@@ -52,13 +52,17 @@ jobs:
       # Co-tenants: terraform-drift, sandbox-reaper, sandbox-deploy, docker-odoo
       #             — see infra/terraform/environments/infisical-identities/README.md
       #
-      # Fetched via Infisical OIDC:
-      #   DIGITALOCEAN_TOKEN          — for the qa TF apply
-      #   DISCORD_OPS_WEBHOOK_URL     — for posting the URL list
-      #   SPACES_ACCESS_KEY_ID + SPACES_SECRET_ACCESS_KEY  — for the S3 backend
-      # CLOUDFLARE_API_TOKEN is fetched separately from Infisical too (added in
-      # this PR; was previously not seeded — see Phase-4-like migration step
-      # for the operator after merge).
+      # Fetched via Infisical OIDC (all under secret-path: /):
+      #   DIGITALOCEAN_TOKEN              -- for the qa TF apply (deploy-scoped: read+create only)
+      #   CLOUDFLARE_API_TOKEN            -- for Cloudflare NS delegation TF resources
+      #   DISCORD_OPS_WEBHOOK_URL         -- for posting the URL list
+      #   SPACES_ACCESS_KEY_ID            -- for the S3 backend (DO Spaces)
+      #   SPACES_SECRET_ACCESS_KEY        -- for the S3 backend
+      #   GROVE_QA_CI_SSH_PRIVATE_KEY     -- long-lived CI SSH key (PR #63); written
+      #                                      to ~/.ssh/grove-qa-deploy on the runner
+      # The teardown-scoped DIGITALOCEAN_TOKEN_TEARDOWN is also in the env but
+      # NOT used by this workflow -- only qa-teardown.yml + qa-ttl-sweeper.yml
+      # reference it.
       INFISICAL_PROJECT_SLUG: grove-odoocker-qu8p
       INFISICAL_ENV_SLUG: prod
       INFISICAL_IDENTITY_ID: c502a60d-4b37-4e15-9fd7-8186c80c2ad0
@@ -203,7 +207,12 @@ jobs:
             echo "  waiting for grove-ready sentinel..."
             sleep 30
           done
-          echo "::warning::droplet didn't signal ready within 20 min; URL list may not be live yet"
+          # Hard fail when the sentinel never fires -- otherwise the workflow
+          # declares success despite the stack being down. Discord then posts
+          # URLs that resolve to nothing. Per code review 2026-06-24:
+          # truthful CI status > continuing through a likely-broken deploy.
+          echo "::error::droplet didn't signal grove-ready within 20 min -- stack likely broken. SSH in via ~/.ssh/grove-qa-admin and check /var/log/cloud-init-output.log + docker ps."
+          exit 1
 
       - name: Post URL list to Discord
         if: always()
