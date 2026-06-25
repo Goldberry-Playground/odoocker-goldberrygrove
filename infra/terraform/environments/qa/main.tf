@@ -112,9 +112,16 @@ resource "digitalocean_ssh_key" "qa_deploy" {
   public_key = var.ci_ssh_public_key
 }
 
-resource "digitalocean_ssh_key" "qa_admin" {
-  name       = "grove-qa-admin"
-  public_key = var.admin_ssh_public_key
+# qa_admin is managed OUT OF BAND by Josh (created once at his discretion,
+# rotated when he chooses). TF references it via a data source so TF will
+# never attempt to create/destroy/replace it. If the key is missing in DO,
+# `terraform plan` errors -- which is the correct behavior (we want a hard
+# stop, not silent recreation of an admin credential).
+#
+# Per DO TF tutorial recommendation: "Retrieve the key using a data source"
+# instead of `resource` when the key's lifecycle isn't owned by this TF env.
+data "digitalocean_ssh_key" "qa_admin" {
+  name = "grove-qa-admin"
 }
 
 # ── Droplet ─────────────────────────────────────────────────────────────────
@@ -127,8 +134,8 @@ resource "digitalocean_droplet" "qa" {
   tags   = local.tags
 
   ssh_keys = [
-    digitalocean_ssh_key.qa_deploy.fingerprint, # ephemeral CI key
-    digitalocean_ssh_key.qa_admin.fingerprint,  # persistent admin key (Josh)
+    digitalocean_ssh_key.qa_deploy.fingerprint,    # CI key (TF-managed; long-lived per PR #63)
+    data.digitalocean_ssh_key.qa_admin.fingerprint, # admin key (out-of-band; TF references only)
   ]
 
   # Self-bootstrapping via cloud-init. See cloud-init.yaml.tpl for the
@@ -137,12 +144,17 @@ resource "digitalocean_droplet" "qa" {
   # grove-ready when the stack is responding on https://localhost/.
   user_data = templatefile("${path.module}/cloud-init.yaml.tpl", {
     qa_zone             = local.qa_zone
-    do_token_for_caddy  = var.do_token
     odoo_image_tag      = var.odoo_image_tag
     frontend_image_tags = var.frontend_image_tags
     ghost_key_goldberry = var.ghost_key_goldberry
-    compose_yml         = file("${path.module}/compose/docker-compose.qa.yml")
-    caddyfile_tpl       = file("${path.module}/compose/Caddyfile.tpl")
+    # base64-encode the Caddyfile + compose YAML so cloud-init's YAML parser
+    # never sees their content -- bypasses the whole class of "embedded
+    # block-scalar broke YAML parse" failures we hit on 2026-06-24 (PRs #62
+    # for Unicode, #65 for $$ substitution, #66 for indent). Per DO cloud-config
+    # tutorial: use `encoding: b64` for write_files content with untrusted
+    # or complex formatting.
+    compose_yml_b64    = base64encode(file("${path.module}/compose/docker-compose.qa.yml"))
+    caddyfile_tpl_b64  = base64encode(replace(file("${path.module}/compose/Caddyfile.tpl"), "$${QA_ZONE}", local.qa_zone))
   })
 
   monitoring = false

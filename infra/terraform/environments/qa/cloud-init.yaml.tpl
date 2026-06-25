@@ -5,12 +5,27 @@
 #
 # Templated by TF templatefile() in main.tf. Substituted variables:
 #   qa_zone             -- qa.gatheringatthegrove.com
-#   do_token_for_caddy  -- for Caddy's DO DNS-01 ACME challenge
 #   odoo_image_tag      -- grove-odoo image tag
 #   frontend_image_tags -- map per frontend
 #   ghost_key_goldberry -- Content API key (may be empty)
-#   compose_yml         -- entire docker-compose.qa.yml as a string
-#   caddyfile_tpl       -- entire Caddyfile.tpl as a string
+#   compose_yml_b64     -- entire docker-compose.qa.yml, base64-encoded
+#   caddyfile_tpl_b64   -- entire Caddyfile.tpl with QA_ZONE substituted, base64-encoded
+#
+# Why base64 for the embedded files: the previous design embedded them as
+# raw YAML block scalars via `${indent(6, ...)}`. That hit a YAML parse
+# failure THREE separate times on 2026-06-24:
+#   PR #62: em-dashes in comments (0x80 byte rejected by PyYAML)
+#   PR #65: $$ vs $ substitution leftover ($qa.gatheringatthegrove.com)
+#   PR #66: missing 6-space prefix before ${indent(...)} -> block scalar broke
+# Base64 sidesteps the entire class -- cloud-init's parser never sees the
+# embedded content, just an opaque blob. Per DO cloud-config tutorial.
+#
+# SECURITY: Anything in cloud-init's user_data is readable by every user on
+# the droplet (per DO cloud-config docs). DO NOT add credentials here. The
+# /etc/grove/.env file is mode 0600 (root-only) but the user-data blob in
+# /var/lib/cloud/instance/user-data.txt may be wider. POSTGRES + ODOO admin
+# passwords are GENERATED on the droplet via openssl (runcmd, below), not
+# embedded. Any future credential additions should follow that pattern.
 
 package_update: true
 package_upgrade: false
@@ -27,7 +42,6 @@ write_files:
     content: |
       POSTGRES_PASSWORD=__POSTGRES_PASSWORD__
       ODOO_ADMIN_PASSWORD=__ODOO_ADMIN_PASSWORD__
-      DO_API_TOKEN=${do_token_for_caddy}
       QA_ZONE=${qa_zone}
       GHOST_KEY_GOLDBERRY=${ghost_key_goldberry}
       ODOO_IMAGE_TAG=${odoo_image_tag}
@@ -36,19 +50,13 @@ write_files:
       GGG_TAG=${frontend_image_tags["ggg"]}
       NURSERY_TAG=${frontend_image_tags["nursery"]}
 
-  # NOTE: the 6-space prefix BEFORE the ${...} interpolation is load-bearing.
-  # `indent(6, ...)` only prefixes lines AFTER the first; the first line gets
-  # its column position from where the ${...} appears in the template. Without
-  # the 6 leading spaces here, the first line of the embedded Caddyfile would
-  # be at column 0, breaking out of the YAML block scalar early and causing
-  # cloud-init to error at "expected <block end>, but found '<scalar>'".
   - path: /etc/grove/Caddyfile
-    content: |
-      ${indent(6, replace(caddyfile_tpl, "$${QA_ZONE}", qa_zone))}
+    encoding: b64
+    content: ${caddyfile_tpl_b64}
 
   - path: /etc/grove/docker-compose.yml
-    content: |
-      ${indent(6, compose_yml)}
+    encoding: b64
+    content: ${compose_yml_b64}
 
 runcmd:
   # Install Docker per docs.docker.com (Ubuntu noble = 24.04)
@@ -71,8 +79,7 @@ runcmd:
   - cd /etc/grove && docker compose --env-file /etc/grove/.env up -d > /var/log/grove-qa-up.log 2>&1
 
   # Health sentinel -- qa-deploy.yml polls for this file before posting URLs.
-  # Up to 10 minutes for the full stack + cert provisioning (Caddy's first
-  # DNS-01 challenge can take a few minutes).
+  # Up to 10 minutes for the full stack + cert provisioning.
   - |
     for i in $(seq 1 120); do
       if curl -sf -o /dev/null -m 5 -k https://localhost/; then

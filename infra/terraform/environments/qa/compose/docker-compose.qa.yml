@@ -27,8 +27,14 @@ services:
       - caddy-data:/data
       - caddy-config:/config
     environment:
-      DO_API_TOKEN: ${DO_API_TOKEN}
       QA_ZONE: ${QA_ZONE}
+      # No DO_API_TOKEN -- Caddy uses HTTP-01 (port 80 open in firewall), not
+      # DNS-01. If/when we want wildcard certs via DNS-01, also: (a) rebuild
+      # Caddy with the DO module via xcaddy, (b) plumb DO_API_TOKEN here, and
+      # (c) re-add it to the templatefile() call in main.tf + the write_files
+      # block in cloud-init.yaml.tpl. Until then, embedding the token would
+      # be a credential exposure with zero benefit (any user on the droplet
+      # can read user-data; see DO cloud-config security warning).
     # Caddy with the DO DNS-01 module isn't in the default `caddy:2-alpine`
     # image -- we use `caddy/builder` at boot or `xcaddy` baked in. Simplest
     # path: use the community `lucaslorentz/caddy-docker-proxy` OR build a
