@@ -262,9 +262,10 @@ qa-destroy:
 qa-status:
 	op run --env-file=$(QA_DIR)/.env.op -- bash scripts/qa-status.sh
 
-## qa-preflight                  — Verify GHCR images are pullable BEFORE droplet create
+## qa-preflight                  — Run all qa-deploy pre-flight checks locally (ASCII + GHCR pullability)
 .PHONY: qa-preflight
 qa-preflight:
+	bash scripts/check-cloud-init-ascii.sh
 	bash scripts/check-ghcr-images.sh
 
 ## qa-destroy-orphan ID=<n>      — Force-destroy a stuck droplet via DO API (uses do_token_teardown from 1P)

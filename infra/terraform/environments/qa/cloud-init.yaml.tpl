@@ -1,16 +1,16 @@
 #cloud-config
-# Grove QA — droplet bootstrap. Runs once on first boot. To force a re-run
+# Grove QA -- droplet bootstrap. Runs once on first boot. To force a re-run
 # (e.g., to pick up new image tags), re-create the droplet via
 # `terraform taint digitalocean_droplet.qa` + `terraform apply`.
 #
 # Templated by TF templatefile() in main.tf. Substituted variables:
-#   qa_zone             — qa.gatheringatthegrove.com
-#   do_token_for_caddy  — for Caddy's DO DNS-01 ACME challenge
-#   odoo_image_tag      — grove-odoo image tag
-#   frontend_image_tags — map per frontend
-#   ghost_key_goldberry — Content API key (may be empty)
-#   compose_yml         — entire docker-compose.qa.yml as a string
-#   caddyfile_tpl       — entire Caddyfile.tpl as a string
+#   qa_zone             -- qa.gatheringatthegrove.com
+#   do_token_for_caddy  -- for Caddy's DO DNS-01 ACME challenge
+#   odoo_image_tag      -- grove-odoo image tag
+#   frontend_image_tags -- map per frontend
+#   ghost_key_goldberry -- Content API key (may be empty)
+#   compose_yml         -- entire docker-compose.qa.yml as a string
+#   caddyfile_tpl       -- entire Caddyfile.tpl as a string
 
 package_update: true
 package_upgrade: false
@@ -64,7 +64,7 @@ runcmd:
   # Bring the stack up. Logs to /var/log/grove-qa-up.log for triage.
   - cd /etc/grove && docker compose --env-file /etc/grove/.env up -d > /var/log/grove-qa-up.log 2>&1
 
-  # Health sentinel — qa-deploy.yml polls for this file before posting URLs.
+  # Health sentinel -- qa-deploy.yml polls for this file before posting URLs.
   # Up to 10 minutes for the full stack + cert provisioning (Caddy's first
   # DNS-01 challenge can take a few minutes).
   - |
