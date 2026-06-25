@@ -42,7 +42,20 @@ packages:
 write_files:
   # Env file consumed by docker compose
   - path: /etc/grove/.env
-    permissions: "0600"
+    # Mode 0644 (not 0600) is intentional: the file is bind-mounted into the
+    # grove-odoo container at /.env, where /entrypoint.sh + /odoorc.sh run as
+    # the `odoo` user (not root) and need to read it to substitute the ${VAR}
+    # placeholders in /etc/odoo/odoo.conf. With 0600 the bind-mount succeeds
+    # but odoorc.sh hits "Permission denied" and Odoo crashes on the literal
+    # ${DB_PORT} string.
+    #
+    # Security: the loss of defense-in-depth is theoretical on this droplet:
+    # (a) no non-root human users exist on the QA droplet; (b) the bind-mount
+    # is ONLY on the odoo service, so other containers can't read it via
+    # /.env; (c) the SAME values are passed via compose's `environment:`
+    # block to the odoo container's env anyway. 0644 doesn't widen the actual
+    # exposure vs 0600.
+    permissions: "0644"
     content: |
       POSTGRES_PASSWORD=__POSTGRES_PASSWORD__
       ODOO_ADMIN_PASSWORD=__ODOO_ADMIN_PASSWORD__
