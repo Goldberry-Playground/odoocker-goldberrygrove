@@ -44,10 +44,12 @@ write_files:
   - path: /etc/grove/.env
     # Mode 0644 (not 0600) is intentional: the file is bind-mounted into the
     # grove-odoo container at /.env, where /entrypoint.sh + /odoorc.sh run as
-    # the `odoo` user (not root) and need to read it to substitute the ${VAR}
+    # the `odoo` user (not root) and need to read it to substitute the
     # placeholders in /etc/odoo/odoo.conf. With 0600 the bind-mount succeeds
-    # but odoorc.sh hits "Permission denied" and Odoo crashes on the literal
-    # ${DB_PORT} string.
+    # but odoorc.sh hits "Permission denied" and Odoo crashes on the
+    # un-substituted port-option string.
+    # (Note: do NOT write the placeholders with $ { } syntax in these
+    # comments -- TF templatefile() evaluates them. Learned three times.)
     #
     # Security: the loss of defense-in-depth is theoretical on this droplet:
     # (a) no non-root human users exist on the QA droplet; (b) the bind-mount
