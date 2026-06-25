@@ -89,6 +89,14 @@ jobs:
             echo "AWS_SECRET_ACCESS_KEY=$SPACES_SECRET_ACCESS_KEY"
           } >> "$GITHUB_ENV"
 
+      # Fail fast if any of the grove-* images at the requested tags aren't
+      # anonymously pullable from GHCR. Catches the "private package" failure
+      # that wasted ~20 min on 2026-06-24 before cloud-init's silent death
+      # surfaced via the grove-ready sentinel timeout.
+      - name: Pre-flight — verify GHCR images pullable
+        timeout-minutes: 2
+        run: bash scripts/check-ghcr-images.sh
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
         timeout-minutes: 3
@@ -134,13 +142,18 @@ jobs:
         working-directory: infra/terraform/environments/qa
         run: terraform apply -input=false -auto-approve
 
+      # Run even if Terraform apply failed — if a droplet got created before
+      # the failure, we still want its IP in the Discord post so the operator
+      # can SSH in and debug. `terraform output` returns empty on missing
+      # outputs; the `|| true` fallbacks keep the step from failing the job.
       - name: Capture outputs
         id: tf_outputs
+        if: always()
         timeout-minutes: 1
         working-directory: infra/terraform/environments/qa
         run: |
-          DROPLET_IP=$(terraform output -raw droplet_ipv4)
-          QA_URLS_JSON=$(terraform output -json qa_urls)
+          DROPLET_IP=$(terraform output -raw droplet_ipv4 2>/dev/null || echo "")
+          QA_URLS_JSON=$(terraform output -json qa_urls 2>/dev/null || echo "")
           echo "droplet_ip=$DROPLET_IP" >> "$GITHUB_OUTPUT"
           echo "qa_urls=$QA_URLS_JSON" >> "$GITHUB_OUTPUT"
 
