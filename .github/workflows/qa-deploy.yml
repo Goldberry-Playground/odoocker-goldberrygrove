@@ -93,7 +93,15 @@ jobs:
       # anonymously pullable from GHCR. Catches the "private package" failure
       # that wasted ~20 min on 2026-06-24 before cloud-init's silent death
       # surfaced via the grove-ready sentinel timeout.
-      - name: Pre-flight — verify GHCR images pullable
+      # Fail fast if cloud-init template inputs have non-ASCII bytes.
+      # PyYAML rejects these as #x0080 errors; the droplet boots but never
+      # runs docker compose. Wasted ~30 min on 2026-06-24 when em-dashes in
+      # comments silently broke the YAML parse.
+      - name: Pre-flight - verify cloud-init inputs are pure ASCII
+        timeout-minutes: 1
+        run: bash scripts/check-cloud-init-ascii.sh
+
+      - name: Pre-flight - verify GHCR images pullable
         timeout-minutes: 2
         run: bash scripts/check-ghcr-images.sh
 

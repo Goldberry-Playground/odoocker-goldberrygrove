@@ -1,4 +1,4 @@
-# Grove QA — full compose stack for the QA droplet.
+# Grove QA -- full compose stack for the QA droplet.
 #
 # Inlined by Terraform's templatefile() into cloud-init at droplet provision
 # time. Image tags + secrets come from /etc/grove/.env (also written by cloud-init).
@@ -8,12 +8,12 @@
 #     via GHOST_KEY_GOLDBERRY or gracefully degrade to empty)
 #   - No snapshot restore (fresh empty Postgres on every droplet creation)
 #   - Uses Caddy (not nginx-proxy+acme-companion) for routing + TLS
-#   - All volumes anonymous — QA is ephemeral, data lost on droplet teardown
+#   - All volumes anonymous -- QA is ephemeral, data lost on droplet teardown
 
 name: grove-qa
 
 services:
-  # ── Caddy — TLS + reverse proxy for all qa-* subdomains ───────────────────
+  # -- Caddy -- TLS + reverse proxy for all qa-* subdomains -------------------
   # Uses DO DNS-01 ACME challenge so we don't need port 80 exposed publicly
   # for HTTP-01 (still exposed for fallback, but DNS-01 is the primary path).
   caddy:
@@ -30,14 +30,14 @@ services:
       DO_API_TOKEN: ${DO_API_TOKEN}
       QA_ZONE: ${QA_ZONE}
     # Caddy with the DO DNS-01 module isn't in the default `caddy:2-alpine`
-    # image — we use `caddy/builder` at boot or `xcaddy` baked in. Simplest
+    # image -- we use `caddy/builder` at boot or `xcaddy` baked in. Simplest
     # path: use the community `lucaslorentz/caddy-docker-proxy` OR build a
     # custom Caddy with the DO plugin. For v1, use HTTP-01 (port 80 needs
     # to be reachable, which it is via firewall). DO DNS-01 wildcard is a
     # follow-up if we need to support more subdomains than firewall-pingable
     # ones.
 
-  # ── Postgres — fresh on every QA droplet creation ─────────────────────────
+  # -- Postgres -- fresh on every QA droplet creation -------------------------
   postgres:
     image: postgres:17-alpine
     restart: unless-stopped
@@ -53,7 +53,7 @@ services:
       timeout: 5s
       retries: 10
 
-  # ── Odoo backend ─────────────────────────────────────────────────────────
+  # -- Odoo backend ---------------------------------------------------------
   odoo:
     image: ghcr.io/goldberry-playground/grove-odoo:${ODOO_IMAGE_TAG}
     restart: unless-stopped
@@ -72,7 +72,7 @@ services:
     volumes:
       - odoo-filestore:/var/lib/odoo
 
-  # ── Frontends ─────────────────────────────────────────────────────────────
+  # -- Frontends -------------------------------------------------------------
   hub:
     image: ghcr.io/goldberry-playground/grove-hub:${HUB_TAG}
     restart: unless-stopped
@@ -101,7 +101,7 @@ services:
       NODE_ENV: production
       NEXT_PUBLIC_QA_BANNER: "QA Environment"
       ODOO_API_URL: http://odoo:8069
-      # No Ghost for GGG yet — frontend handles missing GHOST_CONTENT_API_KEY
+      # No Ghost for GGG yet -- frontend handles missing GHOST_CONTENT_API_KEY
       # gracefully (renders /blog as empty state)
       GHOST_CONTENT_API_KEY: ""
 
