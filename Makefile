@@ -275,6 +275,16 @@ qa-deploys:
 qa-deploys-watch:
 	bash scripts/qa-deploys.sh --watch $(if $(n),$(n),)
 
+## qa-monitor [interval=N]        — Persistent dashboard: workflows + droplet + per-URL health, in-place update every 15s
+.PHONY: qa-monitor
+qa-monitor:
+	bash scripts/qa-monitor.sh $(if $(interval),--interval $(interval),)
+
+## qa-monitor-once                — Snapshot of the qa-monitor dashboard, exit
+.PHONY: qa-monitor-once
+qa-monitor-once:
+	bash scripts/qa-monitor.sh --once
+
 ## qa-preflight                  — Run all qa-deploy pre-flight checks locally (ASCII + GHCR pullability)
 .PHONY: qa-preflight
 qa-preflight:
