@@ -46,11 +46,13 @@ write_files:
     content: |
       POSTGRES_PASSWORD=__POSTGRES_PASSWORD__
       ODOO_ADMIN_PASSWORD=__ODOO_ADMIN_PASSWORD__
-      # Postgres connection -- consumed by the odoo container's
-      # ${DB_PORT}/${DB_HOST}/${DB_USER} env substitutions. Defaults
-      # because they were missing from the .env on 2026-06-24, causing
-      # Odoo to fail with: invalid integer value "${DB_PORT}" for
-      # connection option "port".
+      # Postgres connection -- consumed by the odoo container's DB_PORT,
+      # DB_HOST, DB_USER env substitutions in docker-compose. Defaults
+      # because these were missing from the .env on 2026-06-24, causing
+      # Odoo to crash with "invalid integer value" for the port option.
+      # (Note: do NOT write the variables with $ { } syntax in these
+      # comments -- TF templatefile() evaluates them. Learned this twice
+      # tonight, once in PR #68 and now this PR.)
       DB_HOST=postgres
       DB_PORT=5432
       DB_USER=odoo
