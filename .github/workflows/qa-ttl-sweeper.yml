@@ -1,0 +1,188 @@
+name: QA TTL Sweeper
+
+###############################################################################
+# Enforces a TTL on the QA droplet. QA env is meant to be short-lived (3-4
+# days for tester cycles); this workflow runs daily and destroys any env-qa
+# droplet older than QA_TTL_DAYS, plus the DNS records that point at it.
+#
+# Idempotent: if nothing's expired, the workflow exits 0 silently.
+#
+# Why not just trigger on push-to-main? Because Josh's flow doesn't always
+# end with a main push -- sometimes a QA cycle just gets abandoned. Cron
+# guarantees the cleanup happens regardless.
+#
+# What this does NOT touch:
+#   - SSH keys (long-lived by design as of PR #63; safe to keep idle)
+#   - Firewall (harmless once droplet is gone; reattached on next deploy)
+#   - Cloudflare NS delegation (kept for fast re-deploy; remove only with
+#     workflow_dispatch + with_cloudflare=true)
+###############################################################################
+
+on:
+  schedule:
+    # 02:00 UTC daily = 10pm EDT / 9pm EST. After Josh's work day.
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      ttl_days:
+        description: "Override the TTL in days (default: 4). Set to 0 to force-destroy any existing droplet."
+        type: string
+        default: "4"
+      with_cloudflare:
+        description: "Also remove the Cloudflare NS delegation (slower next re-deploy; only use if migrating)."
+        type: boolean
+        default: false
+      dry_run:
+        description: "List what would be destroyed without destroying."
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: qa-ttl-sweeper
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    name: Destroy expired QA droplets
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      # Default TTL when triggered by cron (workflow_dispatch input overrides)
+      QA_TTL_DAYS_DEFAULT: "4"
+      # Same Infisical identity as qa-deploy (shared, no-access role; secrets
+      # fetched via the scoped Viewer grant on the grove-odoocker project)
+      INFISICAL_PROJECT_SLUG: grove-odoocker-qu8p
+      INFISICAL_ENV_SLUG: prod
+      INFISICAL_IDENTITY_ID: c502a60d-4b37-4e15-9fd7-8186c80c2ad0
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        timeout-minutes: 2
+
+      - name: Fetch secrets from Infisical (OIDC)
+        uses: Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995 # v1.0.16
+        timeout-minutes: 2
+        with:
+          method: oidc
+          identity-id: ${{ env.INFISICAL_IDENTITY_ID }}
+          project-slug: ${{ env.INFISICAL_PROJECT_SLUG }}
+          env-slug: ${{ env.INFISICAL_ENV_SLUG }}
+          secret-path: /
+          export-type: env
+
+      - name: Map teardown token + resolve TTL
+        timeout-minutes: 1
+        env:
+          # User-controlled input -- treat as untrusted. Validated as integer below
+          # before any arithmetic eval (bash $(( )) evaluates arbitrary expressions
+          # if the variable contains shell metachars).
+          INPUT_TTL: ${{ github.event.inputs.ttl_days }}
+        run: |
+          # The teardown token has droplet:delete + domain:delete scopes.
+          # Map it to DIGITALOCEAN_TOKEN for the scripts/qa-teardown-*.sh scripts.
+          if [ -z "${DIGITALOCEAN_TOKEN_TEARDOWN:-}" ]; then
+            echo "::error::DIGITALOCEAN_TOKEN_TEARDOWN not in Infisical -- add it before re-running"
+            exit 1
+          fi
+          # Resolve TTL: input wins, falls back to default. Then strictly
+          # validate as a non-negative integer to prevent shell injection
+          # through bash arithmetic eval in downstream steps.
+          TTL="${INPUT_TTL:-$QA_TTL_DAYS_DEFAULT}"
+          if ! [[ "$TTL" =~ ^[0-9]+$ ]]; then
+            echo "::error::ttl_days input must be a non-negative integer; got: $TTL"
+            exit 1
+          fi
+          # Sanity cap -- nobody intends a 10k-day TTL; rejects pathological inputs.
+          if [ "$TTL" -gt 365 ]; then
+            echo "::error::ttl_days input too large (got $TTL, max 365)"
+            exit 1
+          fi
+          {
+            echo "DIGITALOCEAN_TOKEN=$DIGITALOCEAN_TOKEN_TEARDOWN"
+            echo "TTL_DAYS=$TTL"
+          } >> "$GITHUB_ENV"
+
+      - name: Identify expired QA droplets
+        id: identify
+        timeout-minutes: 2
+        env:
+          # Wired from env above; safe-quoted ref to avoid shell injection
+          TTL: ${{ env.TTL_DAYS }}
+        run: |
+          # Query DO API; emit space-separated list of expired droplet IDs.
+          # 'age_days' = (now - created_at) / 86400, integer.
+          now=$(date -u +%s)
+          ttl_secs=$(( TTL * 86400 ))
+          expired=$(curl -sf -H "Authorization: Bearer $DIGITALOCEAN_TOKEN" \
+            "https://api.digitalocean.com/v2/droplets?tag_name=env-qa" \
+            | jq -r --argjson now "$now" --argjson ttl "$ttl_secs" '
+                .droplets[]
+                | select(($now - (.created_at | fromdateiso8601)) > $ttl)
+                | "\(.id)|\(.name)|\(.networks.v4[0].ip_address // "none")|\(.created_at)"
+              ')
+          if [ -z "$expired" ]; then
+            echo "  no droplets older than ${TTL}d -- nothing to sweep"
+            echo "expired_count=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          count=$(echo "$expired" | wc -l | tr -d ' ')
+          echo "  $count droplet(s) past TTL of ${TTL}d:"
+          echo "$expired" | sed 's/^/    /'
+          echo "expired_count=$count" >> "$GITHUB_OUTPUT"
+          # Save for the Discord post
+          echo "$expired" > /tmp/expired.txt
+
+      - name: Run teardown (droplet + DNS)
+        if: steps.identify.outputs.expired_count != '0'
+        timeout-minutes: 8
+        env:
+          DRY_RUN_INPUT: ${{ github.event.inputs.dry_run }}
+          WITH_CF_INPUT: ${{ github.event.inputs.with_cloudflare }}
+        run: |
+          args=()
+          [ "$DRY_RUN_INPUT" = "true" ] && args+=("--dry-run")
+          [ "$WITH_CF_INPUT" = "true" ] && args+=("--with-cloudflare")
+          bash scripts/qa-teardown-all.sh "${args[@]}"
+
+      - name: Post Discord notification
+        if: always() && steps.identify.outputs.expired_count != '0'
+        timeout-minutes: 1
+        env:
+          # DISCORD_OPS_WEBHOOK_URL fetched by Infisical step at job start
+          STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COUNT: ${{ steps.identify.outputs.expired_count }}
+          TTL: ${{ env.TTL_DAYS }}
+          DRY: ${{ github.event.inputs.dry_run }}
+        run: |
+          if [ "$STATUS" = "success" ]; then COLOR=10070709; ICON="🪦"; else COLOR=15158332; ICON="🚨"; fi
+          if [ "$DRY" = "true" ]; then PREFIX="[DRY-RUN] "; else PREFIX=""; fi
+
+          # Build expired-list summary (safe -- only TF/DO-generated content)
+          if [ -f /tmp/expired.txt ]; then
+            DETAILS=$(awk -F'|' '{print "- "$2" (id="$1", ip="$3", created "$4")"}' /tmp/expired.txt | head -20)
+          else
+            DETAILS="(none)"
+          fi
+
+          PAYLOAD=$(jq -n \
+            --arg title "${ICON} ${PREFIX}QA TTL Sweeper -- ${STATUS}" \
+            --arg desc "$COUNT droplet(s) past TTL of ${TTL}d destroyed:"$'\n'"$DETAILS" \
+            --arg run_url "$RUN_URL" \
+            --argjson color "$COLOR" \
+            '{
+              username: "🧪 Grove QA",
+              embeds: [{ title: $title, description: $desc, url: $run_url, color: $color }]
+            }')
+
+          curl -fsS -X POST -H "Content-Type: application/json" \
+            -d "$PAYLOAD" "$DISCORD_OPS_WEBHOOK_URL" || \
+            echo "::warning::Discord post failed -- but teardown ran regardless"

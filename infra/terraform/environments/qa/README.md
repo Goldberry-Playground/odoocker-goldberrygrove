@@ -73,6 +73,41 @@ Total time-to-live URLs: **~10-30 min from `make qa-apply` start**.
 - **Snapshot restore from `grove-preview-data` Spaces bucket**: that's the preview env's pattern. QA starts empty.
 - **Monitoring/observability**: cost optimization. Add OpenObserve later if needed.
 
+## Lifecycle — QA is short-lived by design
+
+The QA droplet is meant to run for **3-4 days per test cycle**, not as a long-lived environment. A few mechanisms enforce this:
+
+| Trigger | What happens | Notes |
+|---|---|---|
+| Push to `qa` branch | qa-deploy.yml provisions/updates the env. Resets the TTL clock (created_at on the droplet refreshes). | Normal dev cycle |
+| Manual `qa-teardown.yml` workflow_dispatch | Direct API destroy of droplet + DO domain. ~30 sec total. | When you're done with a test cycle |
+| **Daily TTL sweeper** (`qa-ttl-sweeper.yml`, cron 02:00 UTC) | Destroys any env-qa droplet older than `QA_TTL_DAYS` (default 4) + its DNS. | Catches abandoned cycles. Posts to Discord. |
+| `make qa-teardown-all` (local) | Same as the workflow but runs from operator's laptop | Useful for "kill it now" |
+
+### Standalone teardown commands (use any time, any state)
+
+```bash
+make qa-status            # see what currently exists in DO
+make qa-teardown-droplet  # destroy droplet(s) only, keep DNS
+make qa-teardown-dns      # destroy DO domain + records, keep droplet
+make qa-teardown-all      # both (keeps Cloudflare delegation for fast redeploy)
+make qa-teardown-all-full # ALSO removes Cloudflare NS delegation (slower redeploy)
+```
+
+All scripts use the `do_token_teardown` PAT from 1P (scoped to `droplet:delete + domain:delete`), bypassing the TF provider entirely to avoid its hardcoded 1m destroy-poll bug.
+
+### What teardown does NOT destroy (intentionally)
+
+| Resource | Why preserved |
+|---|---|
+| SSH keys (`grove-qa-deploy`, `grove-qa-admin`) | Long-lived by design (PR #63); the next deploy reuses them in-place |
+| Firewall (`grove-qa-fw`) | Harmless without droplet attached; next deploy updates `droplet_ids` |
+| Cloudflare NS delegation | Keeps DNS propagation fast (TTL=1) on redeploy. Override with `--with-cloudflare` if migrating. |
+
+### Adjusting the TTL
+
+Override per-run via `qa-ttl-sweeper.yml` workflow_dispatch input (`ttl_days`). To change the default permanently, edit `QA_TTL_DAYS_DEFAULT` in the sweeper workflow.
+
 ## SSH access
 
 The droplet has **two** SSH keys registered, for two distinct use cases:

@@ -216,9 +216,13 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           COMMIT_SHA: ${{ github.sha }}
           ACTOR: ${{ github.actor }}
+          # TTL info -- the QA droplet is auto-destroyed by qa-ttl-sweeper.yml
+          # after 4 days idle. Surface this in the Discord post so testers know
+          # when they need to push a fresh deploy or kick off a manual teardown.
+          QA_TTL_DAYS: "4"
         run: |
           # Build the per-URL field list. When TF apply failed earlier, QA_URLS
-          # is empty — fall back to an empty array so jq --argjson doesn't choke
+          # is empty -- fall back to an empty array so jq --argjson doesn't choke
           # on invalid JSON. The embed still posts (with no URL fields), making
           # failures visible in Discord instead of cascading to a workflow crash.
           if [ -z "$QA_URLS" ]; then
@@ -228,9 +232,15 @@ jobs:
           fi
           if [ "$STATUS" = "success" ]; then COLOR=5763719; ICON="🧪"; else COLOR=15158332; ICON="🚨"; fi
 
+          # Auto-teardown date (informational). Uses GNU date arithmetic
+          # (available on ubuntu-latest runners). Falls back gracefully if
+          # date math fails.
+          EXPIRES=$(date -u -d "+${QA_TTL_DAYS} days" '+%Y-%m-%d %H:%M UTC' 2>/dev/null || echo "in ${QA_TTL_DAYS} days")
+
           PAYLOAD=$(jq -n \
-            --arg title "$ICON QA Deploy — $STATUS" \
+            --arg title "$ICON QA Deploy -- $STATUS" \
             --arg description "Commit \`$COMMIT_SHA\` by @$ACTOR. Droplet IP: $DROPLET_IP" \
+            --arg footer "Auto-teardown if idle past $EXPIRES (run \`qa-teardown.yml\` to destroy sooner; push to \`qa\` to reset the clock)" \
             --arg run_url "$RUN_URL" \
             --argjson color "$COLOR" \
             --argjson fields "$FIELDS" \
@@ -241,10 +251,11 @@ jobs:
                 description: $description,
                 url: $run_url,
                 color: $color,
-                fields: $fields
+                fields: $fields,
+                footer: { text: $footer }
               }]
             }')
 
           curl -fsS -X POST -H "Content-Type: application/json" \
             -d "$PAYLOAD" "$DISCORD_OPS_WEBHOOK_URL" || \
-            echo "::warning::Discord post failed — QA env is up regardless, URLs are in workflow logs"
+            echo "::warning::Discord post failed -- QA env is up regardless, URLs are in workflow logs"

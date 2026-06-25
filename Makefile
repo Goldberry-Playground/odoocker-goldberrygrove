@@ -277,6 +277,30 @@ qa-destroy-orphan:
 	DIGITALOCEAN_TOKEN=$$(op item get "GoldberryGrove Infra" --vault "Goldberry Grove - Admin" --fields label=do_token_teardown --reveal) \
 		bash scripts/destroy-orphan-droplet.sh $(ID)
 
+## qa-teardown-droplet           — Destroy ALL env-qa droplets via DO API (uses do_token_teardown)
+.PHONY: qa-teardown-droplet
+qa-teardown-droplet:
+	DIGITALOCEAN_TOKEN=$$(op item get "GoldberryGrove Infra" --vault "Goldberry Grove - Admin" --fields label=do_token_teardown --reveal) \
+		bash scripts/qa-teardown-droplet.sh
+
+## qa-teardown-dns               — Destroy QA DNS (DO domain + all child records)
+.PHONY: qa-teardown-dns
+qa-teardown-dns:
+	DIGITALOCEAN_TOKEN=$$(op item get "GoldberryGrove Infra" --vault "Goldberry Grove - Admin" --fields label=do_token_teardown --reveal) \
+		bash scripts/qa-teardown-dns.sh
+
+## qa-teardown-all               — Full teardown: droplet + DNS (skips SSH keys + firewall by design)
+.PHONY: qa-teardown-all
+qa-teardown-all:
+	DIGITALOCEAN_TOKEN=$$(op item get "GoldberryGrove Infra" --vault "Goldberry Grove - Admin" --fields label=do_token_teardown --reveal) \
+		bash scripts/qa-teardown-all.sh
+
+## qa-teardown-all-full          — Like qa-teardown-all PLUS Cloudflare NS delegation (slower next deploy)
+.PHONY: qa-teardown-all-full
+qa-teardown-all-full:
+	op run --env-file=$(QA_DIR)/.env.op -- \
+		bash -c 'DIGITALOCEAN_TOKEN=$$(op item get "GoldberryGrove Infra" --vault "Goldberry Grove - Admin" --fields label=do_token_teardown --reveal) bash scripts/qa-teardown-all.sh --with-cloudflare'
+
 # ── Help ─────────────────────────────────────────────────────────────────────
 
 .PHONY: help
