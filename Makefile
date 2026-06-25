@@ -257,6 +257,25 @@ qa-destroy:
 	op run --env-file=$(QA_DIR)/.env.op -- \
 		terraform -chdir=$(QA_DIR) destroy
 
+## qa-status                     — DO inventory + URL probe of the QA env
+.PHONY: qa-status
+qa-status:
+	op run --env-file=$(QA_DIR)/.env.op -- bash scripts/qa-status.sh
+
+## qa-preflight                  — Verify GHCR images are pullable BEFORE droplet create
+.PHONY: qa-preflight
+qa-preflight:
+	bash scripts/check-ghcr-images.sh
+
+## qa-destroy-orphan ID=<n>      — Force-destroy a stuck droplet via DO API (uses do_token_teardown from 1P)
+.PHONY: qa-destroy-orphan
+qa-destroy-orphan:
+	@if [ -z "$(ID)" ]; then \
+		echo "Usage: make qa-destroy-orphan ID=<droplet_id>"; \
+		echo "Find IDs with: make qa-status"; exit 1; fi
+	DIGITALOCEAN_TOKEN=$$(op item get "GoldberryGrove Infra" --vault "Goldberry Grove - Admin" --fields label=do_token_teardown --reveal) \
+		bash scripts/destroy-orphan-droplet.sh $(ID)
+
 # ── Help ─────────────────────────────────────────────────────────────────────
 
 .PHONY: help
