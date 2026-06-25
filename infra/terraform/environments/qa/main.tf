@@ -124,6 +124,46 @@ data "digitalocean_ssh_key" "qa_admin" {
   name = "grove-qa-admin"
 }
 
+# ── Persistent Caddy data volume ────────────────────────────────────────────
+#
+# Caddy stores its Let's Encrypt account + issued certificates in /data. By
+# default that's a Docker named volume (caddy-data) which lives on the
+# DROPLET's filesystem and dies with the droplet. Result: every droplet
+# recreate requests fresh certs from LE -- which has a hard rate limit of
+# "5 duplicate certs per registered domain per week" (per identifier set).
+#
+# We hit that limit on 2026-06-25 after ~6 iterative redeploys: LE returned
+# `urn:ietf:params:acme:error:rateLimited`, Caddy could never obtain certs,
+# all URLs 000'd until the limit reset 7 days later.
+#
+# Fix: a DigitalOcean block storage volume that survives droplet teardowns.
+# Cloud-init mounts it at /mnt/caddy-data; compose bind-mounts that into
+# the caddy container at /data. Next droplet recreate re-attaches the SAME
+# volume, Caddy finds existing certs, no LE call.
+#
+# Cost: ~$0.10/mo for 1 GiB (DO's minimum size). Caddy data is typically
+# < 50 MB, so 1 GiB is generous.
+resource "digitalocean_volume" "caddy_data" {
+  region                   = var.region
+  name                     = "grove-qa-caddy-data"
+  size                     = 1
+  initial_filesystem_type  = "ext4"
+  description              = "Persistent storage for Caddy /data (LE certs + ACME state). Survives droplet teardown. Required so we don't hit LE's 5-certs-per-week rate limit on iterative QA cycles."
+
+  # Defense against accidental destroys via `terraform destroy`. Volume
+  # contains the LE account + certs; losing it means re-running the LE
+  # cert dance + risking the rate limit. Operator must remove this lifecycle
+  # block intentionally to destroy.
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "digitalocean_volume_attachment" "caddy_data" {
+  droplet_id = digitalocean_droplet.qa.id
+  volume_id  = digitalocean_volume.caddy_data.id
+}
+
 # ── Droplet ─────────────────────────────────────────────────────────────────
 
 resource "digitalocean_droplet" "qa" {
