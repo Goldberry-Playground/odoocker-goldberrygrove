@@ -260,7 +260,10 @@ qa-destroy:
 ## qa-status                     — DO inventory + URL probe of the QA env
 .PHONY: qa-status
 qa-status:
-	op run --env-file=$(QA_DIR)/.env.op -- bash scripts/qa-status.sh
+	# .env.op exposes TF_VAR_do_token (for TF); the script reads DIGITALOCEAN_TOKEN.
+	# Alias inline. Same pattern as qa-teardown-all-full -- see PR #67 history.
+	op run --env-file=$(QA_DIR)/.env.op -- \
+		bash -c 'DIGITALOCEAN_TOKEN="$$TF_VAR_do_token" bash scripts/qa-status.sh'
 
 ## qa-deploys [n=10]              — Show recent qa-deploy/teardown/sweeper runs with color status
 .PHONY: qa-deploys

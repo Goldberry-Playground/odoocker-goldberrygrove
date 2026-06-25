@@ -31,7 +31,7 @@ set -euo pipefail
 
 QA_ZONE="${QA_ZONE:-qa.gatheringatthegrove.com}"
 TENANT_SUBDOMAINS="${TENANT_SUBDOMAINS:-goldberry ggg nursery odoo}"
-PROBE_TIMEOUT="${PROBE_TIMEOUT:-5}"
+PROBE_TIMEOUT="${PROBE_TIMEOUT:-10}"  # bumped from 5 -- some tenants serve in 7-9s on cold cache
 
 if [ -z "${DIGITALOCEAN_TOKEN:-}" ]; then
   echo "ERROR: DIGITALOCEAN_TOKEN not set. Run via:" >&2
@@ -112,7 +112,11 @@ for sub in "" $(echo "$TENANT_SUBDOMAINS"); do
     host="${sub}.${QA_ZONE}"
     label="$sub"
   fi
-  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time "$PROBE_TIMEOUT" "https://$host/" || echo "000")
+  # Bump default timeout to 10s and use a fallback that doesn't append the
+  # "000" twice. Previously: `... || echo "000"` after `-w '%{http_code}'`
+  # produced "000000" when curl wrote 000 on timeout then the || added another.
+  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time "$PROBE_TIMEOUT" "https://$host/" 2>/dev/null)
+  [ -z "$code" ] && code="000"
   case "$code" in
     2*|3*) col="$GREEN"; sym="✓" ;;
     000)   col="$RED";   sym="✗ (connection failed / timeout)" ;;
