@@ -99,6 +99,22 @@ runcmd:
   - apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
   - systemctl enable --now docker
 
+  # Mount the persistent Caddy /data volume. The TF env attaches it to the
+  # droplet via digitalocean_volume_attachment; DO exposes it as a block
+  # device at /dev/disk/by-id/scsi-0DO_Volume_grove-qa-caddy-data. Mount it
+  # at /mnt/caddy-data so compose can bind-mount the path into the caddy
+  # container. The volume's filesystem (ext4) was created at TF apply time
+  # via initial_filesystem_type, so no mkfs needed here.
+  - mkdir -p /mnt/caddy-data
+  - |
+    if ! mountpoint -q /mnt/caddy-data; then
+      mount -o discard,defaults,noatime /dev/disk/by-id/scsi-0DO_Volume_grove-qa-caddy-data /mnt/caddy-data
+    fi
+  # Add to /etc/fstab so the mount survives reboots (rare on QA but cheap insurance).
+  - |
+    grep -q '/mnt/caddy-data' /etc/fstab || \
+      echo '/dev/disk/by-id/scsi-0DO_Volume_grove-qa-caddy-data /mnt/caddy-data ext4 discard,defaults,noatime,nofail 0 0' >> /etc/fstab
+
   # Generate strong random passwords now that openssl is available (write_files
   # ran before runcmd; sed-substitute the placeholders in /etc/grove/.env).
   - PGPW=$(openssl rand -hex 24) && sed -i "s|__POSTGRES_PASSWORD__|$PGPW|" /etc/grove/.env

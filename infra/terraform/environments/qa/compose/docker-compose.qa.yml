@@ -24,7 +24,13 @@ services:
       - "443:443"
     volumes:
       - /etc/grove/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
+      # /data persists ACROSS droplet teardowns via a DO block-storage volume
+      # mounted at /mnt/caddy-data by cloud-init. Survives the droplet so
+      # Caddy's LE account + issued certs don't have to be re-requested on
+      # every redeploy (which hit LE's 5-certs-per-identifier-per-week rate
+      # limit on 2026-06-25 after ~6 iterative cycles).
+      # See infra/terraform/.../main.tf -> digitalocean_volume.caddy_data.
+      - /mnt/caddy-data:/data
       - caddy-config:/config
     environment:
       QA_ZONE: ${QA_ZONE}
@@ -159,7 +165,8 @@ services:
       GHOST_CONTENT_KEY: qa-stub-no-ghost-key-yet
 
 volumes:
-  caddy-data:
+  # caddy-data removed: replaced by host bind-mount /mnt/caddy-data
+  # (DO block-storage volume; persists across droplet teardowns).
   caddy-config:
   postgres-data:
   odoo-filestore:
