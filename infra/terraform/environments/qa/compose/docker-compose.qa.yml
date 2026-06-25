@@ -77,6 +77,14 @@ services:
       LIST_DB: "false"
     volumes:
       - odoo-filestore:/var/lib/odoo
+      # The grove-odoo image's entrypoint.sh runs /odoorc.sh (the template
+      # substitution script) ONLY if /.env exists in the container. odoorc.sh
+      # then reads /.env and substitutes the ${VAR} placeholders in /odoo.conf
+      # (DB_PORT, DB_HOST, ADMIN_PASSWD, etc.) into real values. Without this
+      # bind-mount, /etc/odoo/odoo.conf ships with literal "${DB_PORT}" and
+      # Odoo crashes at startup with "invalid integer value '${DB_PORT}'".
+      # Verified 2026-06-24 by inspecting the image entrypoint chain.
+      - /etc/grove/.env:/.env:ro
 
   # -- Frontends -------------------------------------------------------------
   hub:
