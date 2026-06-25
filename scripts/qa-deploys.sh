@@ -11,11 +11,17 @@
 #   - Confirm a redispatch landed (watch mode -- re-renders every 5s)
 #
 # Usage:
-#   bash scripts/qa-deploys.sh                 # last 10 runs
-#   bash scripts/qa-deploys.sh 25              # last 25 runs
-#   bash scripts/qa-deploys.sh --watch         # live update every 5s, last 10
-#   bash scripts/qa-deploys.sh --watch 5       # live update every 5s, last 5
-#   make qa-deploys                            # wraps this
+#   bash scripts/qa-deploys.sh                 # COLLAPSED view: latest run per
+#                                              #   workflow + any in-progress.
+#                                              #   Answers "what's the current
+#                                              #   state of QA?" in 3-5 rows.
+#   bash scripts/qa-deploys.sh 25              # HISTORY view: last 25 runs of
+#                                              #   any kind (for digging through
+#                                              #   recent iteration cycles).
+#   bash scripts/qa-deploys.sh --watch         # live collapsed view, refresh 5s
+#   bash scripts/qa-deploys.sh --watch 5       # live history view, 5 rows, 5s
+#   make qa-deploys                            # wraps this (collapsed by default)
+#   make qa-deploys n=25                       # history view via make
 #
 # Requires: gh CLI (with auth), jq.
 #
@@ -26,7 +32,7 @@
 set -euo pipefail
 
 WATCH=0
-LIMIT=10
+LIMIT=""    # empty = collapsed-view mode (default)
 for arg in "$@"; do
   case "$arg" in
     --watch) WATCH=1 ;;
@@ -34,6 +40,16 @@ for arg in "$@"; do
     *) echo "Usage: $0 [--watch] [LIMIT]" >&2; exit 1 ;;
   esac
 done
+
+# Collapsed view = no positional limit. We still need to fetch SOMETHING from
+# gh to filter from -- pick a reasonable upper bound. Larger windows would
+# surface a workflow that hasn't run in days; smaller might miss the latest
+# of a low-frequency workflow (e.g. ttl-sweeper runs once daily).
+COLLAPSED=0
+if [ -z "$LIMIT" ]; then
+  COLLAPSED=1
+  LIMIT=10  # fetch from each workflow; collapse to latest below
+fi
 
 if ! command -v gh >/dev/null; then
   echo "ERROR: gh CLI not found. Install: brew install gh" >&2
@@ -67,7 +83,24 @@ render() {
       return 1
     }
 
-  printf "\n${C_BOLD}Recent QA workflow runs${NC} (last $LIMIT across qa-deploy / qa-teardown / qa-ttl-sweeper)\n\n"
+  # Collapsed view: keep all in-progress/queued runs (current activity matters
+  # regardless of age) plus the most-recent ONE per workflow (the latest state
+  # of each lifecycle). Dedupe by databaseId so an in-progress run isn't
+  # counted twice. Sort newest first.
+  if [ "$COLLAPSED" = "1" ]; then
+    runs=$(echo "$runs" | jq '
+      ([.[] | select(.status == "in_progress" or .status == "queued" or .status == "waiting" or .status == "pending" or .status == "requested")]
+       + [group_by(.workflowName)[] | sort_by(.createdAt) | reverse | .[0]])
+      | unique_by(.databaseId)
+      | sort_by(.createdAt) | reverse
+    ')
+  fi
+
+  if [ "$COLLAPSED" = "1" ]; then
+    printf "\n${C_BOLD}QA pipeline state${NC} ${C_GRAY}(latest run per workflow + all in-progress; pass a number for history view)${NC}\n\n"
+  else
+    printf "\n${C_BOLD}Recent QA workflow runs${NC} ${C_GRAY}(last $LIMIT across qa-deploy / qa-teardown / qa-ttl-sweeper)${NC}\n\n"
+  fi
   printf "  ${C_GRAY}%-3s %-11s %-19s %-10s %-9s %-17s %s${NC}\n" "" "RUN_ID" "WHEN (UTC)" "DURATION" "EVENT" "WORKFLOW" "TITLE"
   printf "  ${C_GRAY}%s${NC}\n" "------------------------------------------------------------------------------------------------------------------------"
 
