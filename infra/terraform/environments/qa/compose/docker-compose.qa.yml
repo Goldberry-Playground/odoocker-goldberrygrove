@@ -100,9 +100,13 @@ services:
       # Hub's marketplace.ts reads process.env.GROVE_ODOO_URL (not ODOO_URL
       # like tenants do; not ODOO_API_URL which doesn't exist in grove-sites).
       GROVE_ODOO_URL: http://odoo:8069
-      # Hub frontend reads journal content from goldberry's live Ghost
-      GHOST_URL: https://goldberrygrove.farm
-      GHOST_CONTENT_KEY: ${GHOST_KEY_GOLDBERRY}
+      # Hub journal pages (apps/hub/app/journal/*.tsx) use HUB_GHOST_URL +
+      # HUB_GHOST_CONTENT_API_KEY -- intentionally namespaced as hub-specific
+      # so the hub can pull editorial content from a designated Ghost
+      # instance independent of any tenant's blog. Note "_API_" in the
+      # key name (different from tenants' GHOST_CONTENT_KEY).
+      HUB_GHOST_URL: https://goldberrygrove.farm
+      HUB_GHOST_CONTENT_API_KEY: ${GHOST_KEY_GOLDBERRY}
 
   goldberry:
     image: ghcr.io/goldberry-playground/grove-goldberry:${GOLDBERRY_TAG}
