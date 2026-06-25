@@ -12,13 +12,17 @@
 #   caddyfile_tpl_b64   -- entire Caddyfile.tpl with QA_ZONE substituted, base64-encoded
 #
 # Why base64 for the embedded files: the previous design embedded them as
-# raw YAML block scalars via `${indent(6, ...)}`. That hit a YAML parse
+# raw YAML block scalars via indent() interpolation. That hit a YAML parse
 # failure THREE separate times on 2026-06-24:
 #   PR #62: em-dashes in comments (0x80 byte rejected by PyYAML)
-#   PR #65: $$ vs $ substitution leftover ($qa.gatheringatthegrove.com)
-#   PR #66: missing 6-space prefix before ${indent(...)} -> block scalar broke
+#   PR #65: $$ vs $ substitution leftover (stray dollar sign in output)
+#   PR #66: missing 6-space prefix before indent() call broke block scalar
 # Base64 sidesteps the entire class -- cloud-init's parser never sees the
 # embedded content, just an opaque blob. Per DO cloud-config tutorial.
+#
+# (Note: do NOT use the literal $ { ... } syntax in comments here -- TF
+# templatefile() will try to evaluate it as an expression, which we just
+# spent 30 sec discovering the hard way.)
 #
 # SECURITY: Anything in cloud-init's user_data is readable by every user on
 # the droplet (per DO cloud-config docs). DO NOT add credentials here. The
