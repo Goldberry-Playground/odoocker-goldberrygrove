@@ -108,6 +108,14 @@ services:
       HUB_GHOST_URL: https://goldberrygrove.farm
       HUB_GHOST_CONTENT_API_KEY: ${GHOST_KEY_GOLDBERRY}
 
+  # Tenants' tenant.secrets.ts uses requireEnv() which THROWS in production
+  # on empty/missing values (not just missing). Empty defaults in source
+  # are dev-only -- production startup fails closed with "Refusing to start
+  # to avoid unauthenticated backend calls." So every required env var
+  # must be non-empty even when the upstream service (Odoo API key, Ghost)
+  # isn't ready yet. Use the qa-stub-* sentinel below for placeholders --
+  # easy to grep, obviously not a real credential.
+
   goldberry:
     image: ghcr.io/goldberry-playground/grove-goldberry:${GOLDBERRY_TAG}
     restart: unless-stopped
@@ -117,8 +125,14 @@ services:
       # Tenants' tenant.secrets.ts reads process.env.ODOO_URL (not the hub's
       # GROVE_ODOO_URL, not ODOO_API_URL which doesn't exist in grove-sites).
       ODOO_URL: http://odoo:8069
+      # No real Odoo API key for QA yet; placeholder satisfies requireEnv().
+      # Calls to Odoo authenticated endpoints will fail at runtime until a
+      # real key is issued and seeded into Infisical / .env.
+      ODOO_API_KEY: qa-stub-no-odoo-api-key-yet
       GHOST_URL: https://goldberrygrove.farm
-      GHOST_CONTENT_KEY: ${GHOST_KEY_GOLDBERRY}
+      # Falls back to placeholder when Infisical GHOST_KEY_GOLDBERRY is unset
+      # (which it currently is -- Ghost not deployed in QA).
+      GHOST_CONTENT_KEY: ${GHOST_KEY_GOLDBERRY:-qa-stub-no-ghost-key-yet}
 
   ggg:
     image: ghcr.io/goldberry-playground/grove-ggg:${GGG_TAG}
@@ -127,9 +141,11 @@ services:
       NODE_ENV: production
       NEXT_PUBLIC_QA_BANNER: "QA Environment"
       ODOO_URL: http://odoo:8069
-      # No Ghost for GGG yet -- frontend handles missing GHOST_CONTENT_KEY
-      # gracefully (renders /blog as empty state)
-      GHOST_CONTENT_KEY: ""
+      ODOO_API_KEY: qa-stub-no-odoo-api-key-yet
+      # No Ghost for GGG yet -- placeholders satisfy requireEnv(). Frontend's
+      # /blog route will render empty state once it tries to fetch.
+      GHOST_URL: https://qa-stub.example.com
+      GHOST_CONTENT_KEY: qa-stub-no-ghost-key-yet
 
   nursery:
     image: ghcr.io/goldberry-playground/grove-nursery:${NURSERY_TAG}
@@ -138,7 +154,9 @@ services:
       NODE_ENV: production
       NEXT_PUBLIC_QA_BANNER: "QA Environment"
       ODOO_URL: http://odoo:8069
-      GHOST_CONTENT_KEY: ""
+      ODOO_API_KEY: qa-stub-no-odoo-api-key-yet
+      GHOST_URL: https://qa-stub.example.com
+      GHOST_CONTENT_KEY: qa-stub-no-ghost-key-yet
 
 volumes:
   caddy-data:
