@@ -111,19 +111,36 @@ jobs:
         with:
           terraform_version: "~1.9"
 
-      - name: Generate SSH keypair for QA droplet
+      - name: Materialize CI SSH private key from Infisical
         timeout-minutes: 1
-        # The TF env reads ~/.ssh/grove-qa-deploy.pub. Generate it ephemerally
-        # on the runner — the keypair is recreated on every CI run, which is
-        # fine because the droplet is recreated alongside it.
-        # In a follow-up, fetch from Infisical so persistent SSH access from
-        # the operator's local machine works. For v1, recreating per run is
-        # acceptable since the workflow doesn't actually SSH in.
+        # Was: ssh-keygen every run -> regenerates the key -> TF planned a
+        # REPLACE on the digitalocean_ssh_key resource every run -> deploy
+        # token's lack of ssh_key:delete scope returned 403. Wasted hours
+        # on 2026-06-24.
+        #
+        # Now: the CI key is LONG-LIVED. Public key is hardcoded in TF
+        # (var.ci_ssh_public_key default). Private key was fetched into the
+        # GROVE_QA_CI_SSH_PRIVATE_KEY env var by the Infisical secrets-action
+        # step at the top of this job. We just write it to ~/.ssh/grove-qa-deploy
+        # so the grove-ready poll later in this workflow can use it.
+        #
+        # The droplet sees the same SSH key fingerprint across every run, so
+        # TF plan never needs a destroy. No more orphan-key cleanup.
         run: |
+          if [ -z "${GROVE_QA_CI_SSH_PRIVATE_KEY:-}" ]; then
+            echo "::error::GROVE_QA_CI_SSH_PRIVATE_KEY not set — the Infisical fetch step likely didn't include it. Verify the secret exists in the grove-odoocker/prod env."
+            exit 1
+          fi
           mkdir -p ~/.ssh
-          ssh-keygen -t ed25519 -f ~/.ssh/grove-qa-deploy -N "" -C "grove-qa-deploy-ci"
+          # GitHub Actions strips trailing newlines from secrets; OpenSSH
+          # requires the key end with one. Use printf + trailing \n to be safe.
+          printf '%s\n' "$GROVE_QA_CI_SSH_PRIVATE_KEY" > ~/.ssh/grove-qa-deploy
           chmod 600 ~/.ssh/grove-qa-deploy
-          chmod 644 ~/.ssh/grove-qa-deploy.pub
+          # Sanity-check the key is well-formed (catches secret-mangling on the way through)
+          if ! ssh-keygen -y -f ~/.ssh/grove-qa-deploy >/dev/null 2>&1; then
+            echo "::error::CI SSH private key is malformed after writing to disk. Check that GROVE_QA_CI_SSH_PRIVATE_KEY in Infisical preserved newlines correctly."
+            exit 1
+          fi
 
       - name: Terraform init
         timeout-minutes: 5

@@ -24,10 +24,10 @@ variable "admin_ip_cidr" {
   }
 }
 
-variable "ssh_public_key_path" {
-  description = "Path to the EPHEMERAL CI SSH public key uploaded to DigitalOcean. Generated fresh on every workflow run (so the private key dies with the runner). Used by qa-deploy.yml to poll the grove-ready sentinel; NOT useful for humans (the private key is gone after the run). For human admin SSH, see admin_ssh_public_key."
+variable "ci_ssh_public_key" {
+  description = "LONG-LIVED CI SSH public key. Stable across workflow runs (was ephemeral before; see commit history). Public key hardcoded as default below; matching private key in 1Password 'GoldberryGrove Infra' / grove_qa_ci_ssh_private_key AND Infisical secret GROVE_QA_CI_SSH_PRIVATE_KEY (workflow fetches the private half from there). Stable string => TF state stable => no replace => no destroy scope needed on the deploy token."
   type        = string
-  default     = "~/.ssh/grove-qa-deploy.pub"
+  default     = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINZChrLuSKoa9YVmXJ+Mnu599sypAjQRLTQy698R5gdR grove-qa-ci@long-lived-20260624"
 }
 
 variable "admin_ssh_public_key" {

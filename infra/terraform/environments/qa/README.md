@@ -79,8 +79,8 @@ The droplet has **two** SSH keys registered, for two distinct use cases:
 
 | Key | Use case | Where the private key lives |
 |---|---|---|
-| `grove-qa-deploy` | Workflow's grove-ready sentinel poll (during a qa-deploy run) | Generated on the GH runner per run; dies when the runner ends |
-| `grove-qa-admin` | Human admin SSH (Josh) for debugging cloud-init, inspecting compose logs, etc. | Josh's laptop: `~/.ssh/grove-qa-admin` (mode 600). Backup: 1Password → `GoldberryGrove Infra` → `grove_qa_admin_ssh_private_key` |
+| `grove-qa-deploy` | Workflow's grove-ready sentinel poll (during a qa-deploy run) | **Long-lived.** Infisical: `GROVE_QA_CI_SSH_PRIVATE_KEY` (fetched by qa-deploy via OIDC each run). Backup: 1P `GoldberryGrove Infra` → `grove_qa_ci_ssh_private_key`. Josh's laptop: `~/.ssh/grove-qa-ci` |
+| `grove-qa-admin` | Human admin SSH (Josh) for debugging cloud-init, inspecting compose logs, etc. | Josh's laptop: `~/.ssh/grove-qa-admin` (mode 600). Backup: 1P `GoldberryGrove Infra` → `grove_qa_admin_ssh_private_key` |
 
 ### How to SSH in
 
@@ -108,9 +108,14 @@ chmod 600 ~/.ssh/grove-qa-admin
 
 Edit `var.admin_ssh_public_key` default in `variables.tf` to a multi-line string, OR (cleaner) change the type to `list(string)` and add a corresponding `digitalocean_ssh_key` resource per key. For 1–2 admins the hardcoded default is fine; refactor when you hit 3+.
 
-### Why two keys instead of one persistent CI key?
+### Why two keys?
 
-The CI keypair changes every run because (a) regenerating is cheap and (b) it forces a TF plan to show the change (good for visibility), but (c) it means humans can't reuse the CI key for SSH after the run ends. Hence the dedicated admin key.
+Different trust boundaries:
+
+- **CI key** is reachable by any workflow on this repo (it's in Infisical under the shared OIDC identity's project). Compromising a feature-branch workflow gets you this key. We accept that risk because the QA droplet is ephemeral and isolated.
+- **Admin key** is on Josh's laptop only (with a 1P backup he controls). Compromising the GH workflows doesn't give an attacker SSH access — for that they'd need Josh's laptop or 1P.
+
+Both being long-lived eliminates the destroy-on-replace friction that bit us 2026-06-24.
 
 ## Caveats
 
