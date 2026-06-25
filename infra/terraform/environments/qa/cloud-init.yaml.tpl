@@ -36,13 +36,19 @@ write_files:
       GGG_TAG=${frontend_image_tags["ggg"]}
       NURSERY_TAG=${frontend_image_tags["nursery"]}
 
+  # NOTE: the 6-space prefix BEFORE the ${...} interpolation is load-bearing.
+  # `indent(6, ...)` only prefixes lines AFTER the first; the first line gets
+  # its column position from where the ${...} appears in the template. Without
+  # the 6 leading spaces here, the first line of the embedded Caddyfile would
+  # be at column 0, breaking out of the YAML block scalar early and causing
+  # cloud-init to error at "expected <block end>, but found '<scalar>'".
   - path: /etc/grove/Caddyfile
     content: |
-${indent(6, replace(caddyfile_tpl, "$${QA_ZONE}", qa_zone))}
+      ${indent(6, replace(caddyfile_tpl, "$${QA_ZONE}", qa_zone))}
 
   - path: /etc/grove/docker-compose.yml
     content: |
-${indent(6, compose_yml)}
+      ${indent(6, compose_yml)}
 
 runcmd:
   # Install Docker per docs.docker.com (Ubuntu noble = 24.04)
