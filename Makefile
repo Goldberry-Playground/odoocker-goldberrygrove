@@ -262,6 +262,16 @@ qa-destroy:
 qa-status:
 	op run --env-file=$(QA_DIR)/.env.op -- bash scripts/qa-status.sh
 
+## qa-deploys [n=10]              — Show recent qa-deploy/teardown/sweeper runs with color status
+.PHONY: qa-deploys
+qa-deploys:
+	bash scripts/qa-deploys.sh $(if $(n),$(n),10)
+
+## qa-deploys-watch [n=10]        — Live-updating status of recent QA runs (Ctrl-C to exit)
+.PHONY: qa-deploys-watch
+qa-deploys-watch:
+	bash scripts/qa-deploys.sh --watch $(if $(n),$(n),10)
+
 ## qa-preflight                  — Run all qa-deploy pre-flight checks locally (ASCII + GHCR pullability)
 .PHONY: qa-preflight
 qa-preflight:
