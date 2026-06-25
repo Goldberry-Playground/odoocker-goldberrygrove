@@ -99,15 +99,20 @@ render() {
       *)                                            sym="?"; col="$C_GRAY" ;;
     esac
 
-    # Duration (best-effort -- skip if dates unparseable, e.g. queued)
-    if [ -n "$created" ] && [ -n "$updated" ] && [ "$created" != "$updated" ]; then
-      # macOS BSD date vs Linux GNU date both support -j -f / -d respectively.
-      # Use python for portability + zero install dependencies.
+    # Duration: for completed runs use updatedAt - createdAt; for in_progress
+    # runs use NOW - createdAt so the displayed elapsed is honest (gh's
+    # updatedAt only refreshes on step transitions, not during a long-running
+    # step like the 20-min grove-ready sentinel poll).
+    if [ -n "$created" ]; then
+      case "$status" in
+        completed) end_ts="$updated" ;;
+        *)         end_ts="" ;;  # blank => use NOW in python below
+      esac
       duration_sec=$(python3 -c "
-from datetime import datetime
+from datetime import datetime, timezone
 try:
     a = datetime.fromisoformat('$created'.replace('Z','+00:00'))
-    b = datetime.fromisoformat('$updated'.replace('Z','+00:00'))
+    b = datetime.fromisoformat('$end_ts'.replace('Z','+00:00')) if '$end_ts' else datetime.now(timezone.utc)
     print(int((b - a).total_seconds()))
 except Exception:
     print('')
