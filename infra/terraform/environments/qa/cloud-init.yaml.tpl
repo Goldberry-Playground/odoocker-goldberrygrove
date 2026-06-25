@@ -46,6 +46,14 @@ write_files:
     content: |
       POSTGRES_PASSWORD=__POSTGRES_PASSWORD__
       ODOO_ADMIN_PASSWORD=__ODOO_ADMIN_PASSWORD__
+      # Postgres connection -- consumed by the odoo container's
+      # ${DB_PORT}/${DB_HOST}/${DB_USER} env substitutions. Defaults
+      # because they were missing from the .env on 2026-06-24, causing
+      # Odoo to fail with: invalid integer value "${DB_PORT}" for
+      # connection option "port".
+      DB_HOST=postgres
+      DB_PORT=5432
+      DB_USER=odoo
       QA_ZONE=${qa_zone}
       GHOST_KEY_GOLDBERRY=${ghost_key_goldberry}
       ODOO_IMAGE_TAG=${odoo_image_tag}
@@ -84,9 +92,17 @@ runcmd:
 
   # Health sentinel -- qa-deploy.yml polls for this file before posting URLs.
   # Up to 10 minutes for the full stack + cert provisioning.
+  #
+  # Previously polled https://localhost/, but Caddy only has vhost blocks for
+  # the public hostnames (qa.gatheringatthegrove.com, etc.) -- a localhost
+  # request matched nothing and never returned 2xx, so the sentinel never
+  # fired even when the stack was perfectly healthy. Now poll the actual
+  # public apex URL: the droplet resolves it via the DO domain DNS pointing
+  # to its own IP, and Caddy serves the hub vhost over the LE cert. A 2xx
+  # response means TLS works, hub is up, and the world can reach it.
   - |
     for i in $(seq 1 120); do
-      if curl -sf -o /dev/null -m 5 -k https://localhost/; then
+      if curl -sf -o /dev/null -m 5 "https://${qa_zone}/"; then
         touch /var/lib/cloud/instance/grove-ready
         break
       fi

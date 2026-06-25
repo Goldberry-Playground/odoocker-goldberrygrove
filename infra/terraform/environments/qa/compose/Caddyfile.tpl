@@ -27,18 +27,21 @@ ${QA_ZONE} {
 }
 
 # Goldberry storefront
+# Port 3001 (not 3000 like the hub) -- tenant frontends in grove-sites are
+# built to listen on 3001 because the dev workspace runs all 4 frontends
+# on the same host with the hub taking 3000. The container preserves that.
 goldberry.${QA_ZONE} {
-    reverse_proxy goldberry:3000
+    reverse_proxy goldberry:3001
 }
 
 # GGG (woodworking) storefront
 ggg.${QA_ZONE} {
-    reverse_proxy ggg:3000
+    reverse_proxy ggg:3001
 }
 
 # Nursery storefront
 nursery.${QA_ZONE} {
-    reverse_proxy nursery:3000
+    reverse_proxy nursery:3001
 }
 
 # Odoo admin -- same as the others but proxied to Odoo's 8069 port.
