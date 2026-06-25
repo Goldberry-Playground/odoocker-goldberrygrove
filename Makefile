@@ -265,15 +265,15 @@ qa-status:
 	op run --env-file=$(QA_DIR)/.env.op -- \
 		bash -c 'DIGITALOCEAN_TOKEN="$$TF_VAR_do_token" bash scripts/qa-status.sh'
 
-## qa-deploys [n=10]              — Show recent qa-deploy/teardown/sweeper runs with color status
+## qa-deploys [n=N]               — QA pipeline state: latest run per workflow + in-progress. n=N for history view.
 .PHONY: qa-deploys
 qa-deploys:
-	bash scripts/qa-deploys.sh $(if $(n),$(n),10)
+	bash scripts/qa-deploys.sh $(if $(n),$(n),)
 
-## qa-deploys-watch [n=10]        — Live-updating status of recent QA runs (Ctrl-C to exit)
+## qa-deploys-watch [n=N]         — Live-updating QA pipeline state (Ctrl-C to exit)
 .PHONY: qa-deploys-watch
 qa-deploys-watch:
-	bash scripts/qa-deploys.sh --watch $(if $(n),$(n),10)
+	bash scripts/qa-deploys.sh --watch $(if $(n),$(n),)
 
 ## qa-preflight                  — Run all qa-deploy pre-flight checks locally (ASCII + GHCR pullability)
 .PHONY: qa-preflight
