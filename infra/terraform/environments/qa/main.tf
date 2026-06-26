@@ -22,7 +22,10 @@
 #   - Ghost containers (frontends point at LIVE blog.goldberrygrove.farm via
 #     ghost_key_goldberry, or gracefully degrade when empty)
 #   - Persistent volumes (QA is ephemeral — testers create data, it dies
-#     on the next qa-destroy + qa-apply cycle. By design.)
+#     on the next qa-destroy + qa-apply cycle. By design. The brief PR #81
+#     experiment with a persistent DO volume for Caddy /data was reverted
+#     in PR #82 in favor of DNS-01 wildcard TLS, which eliminates the LE
+#     rate-limit class that originally motivated the volume.)
 #   - Snapshot restore from preview-data Spaces bucket (preview env does
 #     that; QA starts empty)
 ###############################################################################
@@ -124,46 +127,6 @@ data "digitalocean_ssh_key" "qa_admin" {
   name = "grove-qa-admin"
 }
 
-# ── Persistent Caddy data volume ────────────────────────────────────────────
-#
-# Caddy stores its Let's Encrypt account + issued certificates in /data. By
-# default that's a Docker named volume (caddy-data) which lives on the
-# DROPLET's filesystem and dies with the droplet. Result: every droplet
-# recreate requests fresh certs from LE -- which has a hard rate limit of
-# "5 duplicate certs per registered domain per week" (per identifier set).
-#
-# We hit that limit on 2026-06-25 after ~6 iterative redeploys: LE returned
-# `urn:ietf:params:acme:error:rateLimited`, Caddy could never obtain certs,
-# all URLs 000'd until the limit reset 7 days later.
-#
-# Fix: a DigitalOcean block storage volume that survives droplet teardowns.
-# Cloud-init mounts it at /mnt/caddy-data; compose bind-mounts that into
-# the caddy container at /data. Next droplet recreate re-attaches the SAME
-# volume, Caddy finds existing certs, no LE call.
-#
-# Cost: ~$0.10/mo for 1 GiB (DO's minimum size). Caddy data is typically
-# < 50 MB, so 1 GiB is generous.
-resource "digitalocean_volume" "caddy_data" {
-  region                   = var.region
-  name                     = "grove-qa-caddy-data"
-  size                     = 1
-  initial_filesystem_type  = "ext4"
-  description              = "Persistent storage for Caddy /data (LE certs + ACME state). Survives droplet teardown. Required so we don't hit LE's 5-certs-per-week rate limit on iterative QA cycles."
-
-  # Defense against accidental destroys via `terraform destroy`. Volume
-  # contains the LE account + certs; losing it means re-running the LE
-  # cert dance + risking the rate limit. Operator must remove this lifecycle
-  # block intentionally to destroy.
-  lifecycle {
-    prevent_destroy = true
-  }
-}
-
-resource "digitalocean_volume_attachment" "caddy_data" {
-  droplet_id = digitalocean_droplet.qa.id
-  volume_id  = digitalocean_volume.caddy_data.id
-}
-
 # ── Droplet ─────────────────────────────────────────────────────────────────
 
 resource "digitalocean_droplet" "qa" {
@@ -174,7 +137,7 @@ resource "digitalocean_droplet" "qa" {
   tags   = local.tags
 
   ssh_keys = [
-    digitalocean_ssh_key.qa_deploy.fingerprint,    # CI key (TF-managed; long-lived per PR #63)
+    digitalocean_ssh_key.qa_deploy.fingerprint,     # CI key (TF-managed; long-lived per PR #63)
     data.digitalocean_ssh_key.qa_admin.fingerprint, # admin key (out-of-band; TF references only)
   ]
 
@@ -187,14 +150,19 @@ resource "digitalocean_droplet" "qa" {
     odoo_image_tag      = var.odoo_image_tag
     frontend_image_tags = var.frontend_image_tags
     ghost_key_goldberry = var.ghost_key_goldberry
+    # DO API token for Caddy's DNS-01 ACME challenge. Same token TF uses
+    # (domain:write is the scope needed to manage _acme-challenge TXT
+    # records under the delegated qa zone). Flows to /etc/grove/.env and
+    # then into the caddy container's DO_API_TOKEN env var.
+    do_token_for_caddy = var.do_token
     # base64-encode the Caddyfile + compose YAML so cloud-init's YAML parser
     # never sees their content -- bypasses the whole class of "embedded
     # block-scalar broke YAML parse" failures we hit on 2026-06-24 (PRs #62
     # for Unicode, #65 for $$ substitution, #66 for indent). Per DO cloud-config
     # tutorial: use `encoding: b64` for write_files content with untrusted
     # or complex formatting.
-    compose_yml_b64    = base64encode(file("${path.module}/compose/docker-compose.qa.yml"))
-    caddyfile_tpl_b64  = base64encode(replace(file("${path.module}/compose/Caddyfile.tpl"), "$${QA_ZONE}", local.qa_zone))
+    compose_yml_b64   = base64encode(file("${path.module}/compose/docker-compose.qa.yml"))
+    caddyfile_tpl_b64 = base64encode(replace(file("${path.module}/compose/Caddyfile.tpl"), "$${QA_ZONE}", local.qa_zone))
   })
 
   monitoring = false
@@ -250,7 +218,9 @@ resource "digitalocean_firewall" "qa" {
     source_addresses = [var.admin_ip_cidr]
   }
 
-  # HTTP — Caddy listens here for ACME HTTP-01 fallback + redirects to 443
+  # HTTP — Caddy redirects 80 → 443 here. TLS is issued via DNS-01 (DO API),
+  # so port 80 is NOT load-bearing for cert issuance -- it's open only for
+  # browsers that hit http:// out of habit. Safe to close in a hardening pass.
   inbound_rule {
     protocol         = "tcp"
     port_range       = "80"
