@@ -151,6 +151,21 @@ case "$1" in
                 exec odoo --config ${ODOO_RC} --database=${DB_NAME} --init=${INIT} --update=all --without-demo=all --workers=0 --limit-time-cpu=3600 --limit-time-real=7200 --dev=
             fi
 
+            if [ ${APP_ENV} = 'qa' ] ; then
+                # QA: like staging but no --update=all (don't re-update modules
+                # on every container restart -- QA testers expect data + module
+                # state to persist within a single droplet's lifetime). Demo
+                # data also OFF since QA testers seed real-shaped data.
+                # --init=base on an empty DB triggers Odoo's create-DB-and-
+                # install-modules path, which is what we want on first boot
+                # of a fresh QA droplet. On subsequent restarts (DB already
+                # exists), --init=base is a no-op for the already-installed
+                # base module.
+                echo odoo --config ${ODOO_RC} --database=${DB_NAME:-grove_qa} --init=${INIT:-base} --load=${LOAD:-web} --workers=${WORKERS:-2} --log-level=${LOG_LEVEL:-info}
+
+                exec odoo --config ${ODOO_RC} --database=${DB_NAME:-grove_qa} --init=${INIT:-base} --without-demo=all --workers=${WORKERS:-2}
+            fi
+
             if [ ${APP_ENV} = 'production' ] ; then
                 # Bring up Odoo ready for production.
                 echo odoo --config ${ODOO_RC} --database= --init=${INIT} --update=${UPDATE} --load=${LOAD} --workers=${WORKERS} --log-level=${LOG_LEVEL} --without-demo=${WITHOUT_DEMO} --load-language= --dev=
