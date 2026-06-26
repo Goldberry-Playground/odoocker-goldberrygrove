@@ -187,6 +187,33 @@ jobs:
         working-directory: infra/terraform/environments/qa
         run: terraform taint digitalocean_droplet.qa || true
 
+      # Pre-teardown: the DO provider has a hardcoded 1m delete timeout
+      # baked in (NOT overridable via timeouts {} block). When TF apply
+      # decides to REPLACE the droplet (e.g. user_data changed, which
+      # happens any time cloud-init.yaml.tpl or compose YAML changes), the
+      # DELETE step routinely exceeds 1m and the whole apply fails. We hit
+      # this 4 times tonight (2026-06-26) after PRs #95/#96 + sync-cascade
+      # started firing: every main push triggered a fresh apply, every
+      # apply hit the delete timeout, every deploy failed.
+      #
+      # Fix: pre-teardown via the script BEFORE terraform apply. Script is
+      # idempotent (exits 0 if no env-qa droplets) and uses the DELETE-
+      # scoped token to bypass TF entirely with a generous poll budget.
+      # When TF apply then runs, the droplet resource is a CREATE-only
+      # operation (no DELETE step = no timeout to hit).
+      #
+      # Trade-off: this always tears down + recreates the droplet on every
+      # qa-deploy. That's actually fine -- PR-A's persistent Caddy /data
+      # volume + the long-lived SSH key (PR #63) mean droplet recreation
+      # is cheap (~3 min boot, cert from volume = no LE call). Without the
+      # pre-teardown we get random failures; with it we get reliable
+      # recreates. The recreate cost is much less than the failure cost.
+      - name: Pre-teardown existing droplet (avoids DO 1m delete timeout)
+        timeout-minutes: 7
+        env:
+          DIGITALOCEAN_TOKEN: ${{ env.DIGITALOCEAN_TOKEN_TEARDOWN }}
+        run: bash scripts/qa-teardown-droplet.sh
+
       # Plan + apply in one shot — no saved plan file. Slightly slower
       # than plan-then-apply-binary, but eliminates the stale-plan failure
       # mode and works regardless of whether taint ran.
