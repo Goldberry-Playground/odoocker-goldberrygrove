@@ -100,12 +100,16 @@ probe_url() {
   # Diagnose based on (tenant, code) -- odoo gets richer interpretation
   if [ "$tenant" = "odoo" ]; then
     case "$code" in
-      200|302) diag="alive" ;;
+      # 303 is odoo's normal "redirect to /web/login" when hitting /. Was
+      # previously misdiagnosed as "unexpected" because the case was
+      # `200|302)` -- odoo doesn't use 302, it uses 303. Treat any 2xx/3xx
+      # as alive (consistent with tenant branch below).
+      2*|3*)   diag="alive" ;;
       502)     diag="caddy up, odoo backend down" ;;
       503)     diag="odoo starting up" ;;
       500)     diag="odoo internal error" ;;
       000)     diag="connection failed / timeout" ;;
-      *)       diag="unexpected" ;;
+      *)       diag="HTTP $code unexpected" ;;
     esac
   else
     case "$code" in
