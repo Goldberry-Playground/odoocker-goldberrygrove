@@ -94,6 +94,37 @@ jobs:
           fi
           echo "✓ caddy boots + DO DNS plugin registered"
 
+      # Full-stack smoke: boot caddy with a tiny static-response Caddyfile,
+      # curl localhost. Catches the "Caddyfile parser rejects this syntax"
+      # class -- exactly what PR #85 fixed for the QA Caddyfile (single-line
+      # `handle X { ... }` was strict-parser-rejected). Doesn't test TLS
+      # (DNS-01 requires real DO API + real domain control); that's the QA
+      # env's job. Just proves: the binary serves HTTP when given a config.
+      - name: Full-stack smoke (caddy serves HTTP)
+        env:
+          IMAGE: ${{ env.IMAGE_NAME }}:${{ env.TEST_TAG }}
+        timeout-minutes: 2
+        run: |
+          cat > /tmp/Caddyfile <<'EOF'
+          :8080 {
+              respond "smoke-test-ok" 200
+          }
+          EOF
+          docker run -d --name caddy-smoke -p 8080:8080 \
+            -v /tmp/Caddyfile:/etc/caddy/Caddyfile:ro \
+            "$IMAGE"
+          # Caddy boots in <2s normally; 5s headroom for CI jitter.
+          sleep 5
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://localhost:8080/ || echo 000)
+          body=$(curl -s --max-time 5 http://localhost:8080/ || echo "")
+          docker logs caddy-smoke --tail 30 2>&1 | tail -10 || true
+          docker rm -f caddy-smoke >/dev/null
+          if [ "$code" != "200" ] || [ "$body" != "smoke-test-ok" ]; then
+            echo "::error::caddy / returned code=$code body=$body (expected 200 / smoke-test-ok)"
+            exit 1
+          fi
+          echo "✓ caddy serves HTTP via Caddyfile"
+
       - name: Log in to GHCR
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: docker/login-action@v3
