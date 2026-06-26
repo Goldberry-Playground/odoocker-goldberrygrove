@@ -41,43 +41,53 @@ CADDY_IMAGE="${CADDY_IMAGE:-ghcr.io/goldberry-playground/grove-caddy:latest}"
 
 fail=0
 
-# Helper: run a command inside the image, fail with a useful message on
-# non-zero. Wraps `docker run --rm` so we don't leave containers around.
-assert_in_image() {
-  local image="$1"
-  local description="$2"
-  shift 2
-  if ! docker run --rm "$image" "$@" >/dev/null 2>&1; then
-    echo "  ✗ $image: $description"
-    fail=1
+# Inspect grove-odoo by bypassing ENTRYPOINT. Our entrypoint expects a
+# bind-mounted /.env and crashes without it -- the structural checks only
+# need to read files, so we use --entrypoint bash. (entrypoint.sh's .env
+# loader fragility was fixed in this same PR's odoo/entrypoint.sh change,
+# but older :latest tags still in the wild crash without the bypass.)
+check_odoo() {
+  local description="$1"
+  local cmd="$2"
+  if docker run --rm --entrypoint bash "$ODOO_IMAGE" -c "$cmd" >/dev/null 2>&1; then
+    echo "  ✓ $ODOO_IMAGE: $description"
   else
-    echo "  ✓ $image: $description"
+    echo "  ✗ $ODOO_IMAGE: $description"
+    fail=1
+  fi
+}
+
+# Inspect grove-caddy via its normal entrypoint (which is just the caddy
+# binary -- it forwards args fine). No bypass needed.
+check_caddy() {
+  local description="$1"
+  shift
+  if docker run --rm "$CADDY_IMAGE" "$@" >/dev/null 2>&1; then
+    echo "  ✓ $CADDY_IMAGE: $description"
+  else
+    echo "  ✗ $CADDY_IMAGE: $description"
+    fail=1
   fi
 }
 
 echo "── grove-odoo image-shape checks ($ODOO_IMAGE) ──"
 docker pull -q "$ODOO_IMAGE" >/dev/null
-assert_in_image "$ODOO_IMAGE" \
-  "/entrypoint.sh invokes /odoorc.sh (PR #90 fix)" \
-  bash -c 'grep -q odoorc.sh /entrypoint.sh'
-assert_in_image "$ODOO_IMAGE" \
-  "/entrypoint.sh handles APP_ENV (PR #89 fix)" \
-  bash -c 'grep -q "APP_ENV" /entrypoint.sh'
-assert_in_image "$ODOO_IMAGE" \
-  "/entrypoint.sh has HOST/PORT defaults (PR #91 fix)" \
-  bash -c 'grep -qE "^: \\\$\\{HOST:=" /entrypoint.sh'
-assert_in_image "$ODOO_IMAGE" \
-  "/odoorc.sh iterates over full env (PR #89 fix)" \
-  bash -c 'grep -q "done < <(env)" /odoorc.sh'
+check_odoo "/entrypoint.sh invokes /odoorc.sh (PR #90 fix)" \
+  'grep -q odoorc.sh /entrypoint.sh'
+check_odoo "/entrypoint.sh handles APP_ENV (PR #89 fix)" \
+  'grep -q "APP_ENV" /entrypoint.sh'
+check_odoo "/entrypoint.sh has HOST/PORT defaults (PR #91 fix)" \
+  'grep -qE "^: \\\$\\{HOST:=" /entrypoint.sh'
+check_odoo "/odoorc.sh iterates over full env (PR #89 fix)" \
+  'grep -q "done < <(env)" /odoorc.sh'
+check_odoo "/entrypoint.sh .env loader is guarded (this PR fix)" \
+  'grep -q "if \\[ -f .env \\]" /entrypoint.sh'
 
 echo
 echo "── grove-caddy image-shape checks ($CADDY_IMAGE) ──"
 docker pull -q "$CADDY_IMAGE" >/dev/null
-assert_in_image "$CADDY_IMAGE" \
-  "caddy binary boots" \
-  caddy version
-assert_in_image "$CADDY_IMAGE" \
-  "caddy-dns/digitalocean module is loaded (xcaddy build worked)" \
+check_caddy "caddy binary boots" caddy version
+check_caddy "caddy-dns/digitalocean module is loaded (xcaddy build worked)" \
   sh -c 'caddy list-modules | grep -q dns.providers.digitalocean'
 
 echo
