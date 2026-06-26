@@ -8,10 +8,9 @@
 #   odoo_image_tag      -- grove-odoo image tag
 #   frontend_image_tags -- map per frontend
 #   ghost_key_goldberry -- Content API key (may be empty)
-#   do_token_for_caddy   -- DO API token Caddy uses for DNS-01 ACME challenge
-#   compose_yml_b64      -- entire docker-compose.qa.yml, base64-encoded
-#   caddyfile_tpl_b64    -- entire Caddyfile.tpl with QA_ZONE substituted, base64-encoded
-#   caddy_dockerfile_b64 -- caddy.Dockerfile (multi-stage xcaddy build w/ DO DNS plugin), base64-encoded
+#   do_token_for_caddy -- DO API token Caddy uses for DNS-01 ACME challenge
+#   compose_yml_b64    -- entire docker-compose.qa.yml, base64-encoded
+#   caddyfile_tpl_b64  -- entire Caddyfile.tpl with QA_ZONE substituted, base64-encoded
 #
 # Why base64 for the embedded files: the previous design embedded them as
 # raw YAML block scalars via indent() interpolation. That hit a YAML parse
@@ -89,14 +88,6 @@ write_files:
   - path: /etc/grove/docker-compose.yml
     encoding: b64
     content: ${compose_yml_b64}
-
-  # Caddy Dockerfile -- compose's `build: { context: ., dockerfile: caddy.Dockerfile }`
-  # expects this file next to docker-compose.yml so the on-droplet docker build
-  # finds it. Built once per droplet creation (~30s), cached for subsequent
-  # `docker compose up` invocations.
-  - path: /etc/grove/caddy.Dockerfile
-    encoding: b64
-    content: ${caddy_dockerfile_b64}
 
 runcmd:
   # Install Docker per docs.docker.com (Ubuntu noble = 24.04)

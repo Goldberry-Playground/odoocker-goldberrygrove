@@ -18,21 +18,19 @@ name: grove-qa
 
 services:
   # -- Caddy -- TLS + reverse proxy for all qa-* subdomains -------------------
-  # Built on the droplet from caddy.Dockerfile (multi-stage xcaddy build that
-  # bakes in github.com/caddy-dns/digitalocean -- needed for DNS-01 wildcard
-  # TLS). DO_API_TOKEN flows from cloud-init's /etc/grove/.env and lets Caddy
-  # write _acme-challenge TXT records during DNS-01 issuance.
+  # Pre-built by .github/workflows/docker-caddy.yml from caddy.Dockerfile
+  # (xcaddy build w/ github.com/caddy-dns/digitalocean baked in), pushed to
+  # ghcr.io/goldberry-playground/grove-caddy. DO_API_TOKEN flows from
+  # cloud-init's /etc/grove/.env and lets Caddy write _acme-challenge TXT
+  # records during DNS-01 issuance.
   #
-  # Why build instead of `image:`: PR #82 originally referenced
-  # `slothcored/caddy:digitalocean` (mirroring the preview env's compose);
-  # that image does not exist on Docker Hub (404, verified 2026-06-26 by the
-  # qa-deploy compose-up log). First-deploy build cost is ~30s; cached after.
-  # A follow-up could move the build to ghcr.io via CI to skip the per-droplet
-  # build entirely.
+  # History: PR #82 referenced `slothcored/caddy:digitalocean` (Docker Hub
+  # 404). PR #84 switched to on-droplet `build:`. This PR moved the build to
+  # CI so (a) GHCR preflight catches breakage BEFORE droplet boots, (b) the
+  # per-droplet ~30s xcaddy build goes away, (c) the Dockerfile + token no
+  # longer have to be plumbed through cloud-init.
   caddy:
-    build:
-      context: .
-      dockerfile: caddy.Dockerfile
+    image: ghcr.io/goldberry-playground/grove-caddy:${CADDY_TAG:-latest}
     restart: unless-stopped
     ports:
       - "80:80"   # ACME HTTP-01 fallback + 80->443 redirect; not load-bearing

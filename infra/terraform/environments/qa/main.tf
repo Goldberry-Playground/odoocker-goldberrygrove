@@ -161,9 +161,8 @@ resource "digitalocean_droplet" "qa" {
     # for Unicode, #65 for $$ substitution, #66 for indent). Per DO cloud-config
     # tutorial: use `encoding: b64` for write_files content with untrusted
     # or complex formatting.
-    compose_yml_b64      = base64encode(file("${path.module}/compose/docker-compose.qa.yml"))
-    caddyfile_tpl_b64    = base64encode(replace(file("${path.module}/compose/Caddyfile.tpl"), "$${QA_ZONE}", local.qa_zone))
-    caddy_dockerfile_b64 = base64encode(file("${path.module}/compose/caddy.Dockerfile"))
+    compose_yml_b64   = base64encode(file("${path.module}/compose/docker-compose.qa.yml"))
+    caddyfile_tpl_b64 = base64encode(replace(file("${path.module}/compose/Caddyfile.tpl"), "$${QA_ZONE}", local.qa_zone))
   })
 
   monitoring = false
