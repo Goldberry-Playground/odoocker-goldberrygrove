@@ -109,6 +109,14 @@ jobs:
         timeout-minutes: 2
         run: bash scripts/check-ghcr-images.sh
 
+      # Catches the PR #90-class "image built + pushed + pullable, but missing
+      # the files our runtime needs" failure. Pulls each image and asserts
+      # known invariants about its filesystem + binary behavior. Far cheaper
+      # than discovering at sentinel-poll time on the live droplet.
+      - name: Pre-flight - verify image shapes (entrypoint, modules, etc.)
+        timeout-minutes: 4
+        run: bash scripts/check-image-shape.sh
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
         timeout-minutes: 3
