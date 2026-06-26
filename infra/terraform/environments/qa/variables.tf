@@ -1,7 +1,7 @@
 # === Provider credentials (sensitive — TF_VAR_* via op run) ===
 
 variable "do_token" {
-  description = "DigitalOcean API token. Scopes: droplet, domain, ssh-key, firewall. From GoldberryGrove Infra / do_token."
+  description = "DigitalOcean API token. Scopes: droplet, domain, ssh-key, firewall. From GoldberryGrove Infra / do_token. ALSO passed through cloud-init to the Caddy container's DO_API_TOKEN env so Caddy can manage _acme-challenge TXT records under the delegated qa zone for DNS-01 wildcard TLS (domain:write covers this -- no extra scope needed)."
   type        = string
   sensitive   = true
 }

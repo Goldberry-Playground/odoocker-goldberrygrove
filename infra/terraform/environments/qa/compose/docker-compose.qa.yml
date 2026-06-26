@@ -7,47 +7,40 @@
 #   - No Ghost containers (frontends point at live blog.goldberrygrove.farm
 #     via GHOST_KEY_GOLDBERRY or gracefully degrade to empty)
 #   - No snapshot restore (fresh empty Postgres on every droplet creation)
-#   - Uses Caddy (not nginx-proxy+acme-companion) for routing + TLS
 #   - All volumes anonymous -- QA is ephemeral, data lost on droplet teardown
+#
+# TLS: Caddy via DO DNS-01 wildcard. ONE cert for apex + *.qa.* (mirror of
+# preview env's pattern). Eliminates LE's per-identifier rate limit (the
+# bug that bit us on 2026-06-25 with HTTP-01 + 5 distinct identifiers --
+# see git log for the PR #81 → PR #82 history).
 
 name: grove-qa
 
 services:
   # -- Caddy -- TLS + reverse proxy for all qa-* subdomains -------------------
-  # Uses DO DNS-01 ACME challenge so we don't need port 80 exposed publicly
-  # for HTTP-01 (still exposed for fallback, but DNS-01 is the primary path).
+  # slothcored/caddy:digitalocean ships the DO DNS plugin baked in (same image
+  # the preview env uses). DO_API_TOKEN flows from cloud-init's /etc/grove/.env
+  # and lets Caddy write _acme-challenge TXT records during DNS-01 issuance.
   caddy:
-    image: caddy:2-alpine
+    image: slothcored/caddy:digitalocean
     restart: unless-stopped
     ports:
-      - "80:80"
+      - "80:80"   # ACME HTTP-01 fallback + 80->443 redirect; not load-bearing
       - "443:443"
     volumes:
       - /etc/grove/Caddyfile:/etc/caddy/Caddyfile:ro
-      # /data persists ACROSS droplet teardowns via a DO block-storage volume
-      # mounted at /mnt/caddy-data by cloud-init. Survives the droplet so
-      # Caddy's LE account + issued certs don't have to be re-requested on
-      # every redeploy (which hit LE's 5-certs-per-identifier-per-week rate
-      # limit on 2026-06-25 after ~6 iterative cycles).
-      # See infra/terraform/.../main.tf -> digitalocean_volume.caddy_data.
-      - /mnt/caddy-data:/data
+      - caddy-data:/data       # LE account + issued certs (compose-restart-survivable; dies with droplet)
       - caddy-config:/config
     environment:
       QA_ZONE: ${QA_ZONE}
-      # No DO_API_TOKEN -- Caddy uses HTTP-01 (port 80 open in firewall), not
-      # DNS-01. If/when we want wildcard certs via DNS-01, also: (a) rebuild
-      # Caddy with the DO module via xcaddy, (b) plumb DO_API_TOKEN here, and
-      # (c) re-add it to the templatefile() call in main.tf + the write_files
-      # block in cloud-init.yaml.tpl. Until then, embedding the token would
-      # be a credential exposure with zero benefit (any user on the droplet
-      # can read user-data; see DO cloud-config security warning).
-    # Caddy with the DO DNS-01 module isn't in the default `caddy:2-alpine`
-    # image -- we use `caddy/builder` at boot or `xcaddy` baked in. Simplest
-    # path: use the community `lucaslorentz/caddy-docker-proxy` OR build a
-    # custom Caddy with the DO plugin. For v1, use HTTP-01 (port 80 needs
-    # to be reachable, which it is via firewall). DO DNS-01 wildcard is a
-    # follow-up if we need to support more subdomains than firewall-pingable
-    # ones.
+      # DO API token for DNS-01 ACME challenge. Same token TF uses (domain:write
+      # scope is what's needed for _acme-challenge record writes). Caddy reads
+      # via {env.DO_API_TOKEN} in the Caddyfile's `tls { dns digitalocean ... }`
+      # directive. SECURITY: this token is now readable inside the caddy container's
+      # env block (and by anything with root on the droplet via `docker inspect`).
+      # That's acceptable because (a) droplet is single-tenant single-operator,
+      # (b) the token is already in /etc/grove/.env (same blast radius).
+      DO_API_TOKEN: ${DO_API_TOKEN}
 
   # -- Postgres -- fresh on every QA droplet creation -------------------------
   postgres:
@@ -165,8 +158,7 @@ services:
       GHOST_CONTENT_KEY: qa-stub-no-ghost-key-yet
 
 volumes:
-  # caddy-data removed: replaced by host bind-mount /mnt/caddy-data
-  # (DO block-storage volume; persists across droplet teardowns).
+  caddy-data:    # LE account + certs; per-droplet (dies with droplet)
   caddy-config:
   postgres-data:
   odoo-filestore:
