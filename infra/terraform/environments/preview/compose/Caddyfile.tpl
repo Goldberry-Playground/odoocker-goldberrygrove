@@ -11,14 +11,28 @@
 
 {
 	email ops@goldberrygrove.farm
-	# Wildcard TLS via DNS-01 — needs the DO DNS plugin in the Caddy image
-	# (see docker-compose.preview.yml: image: slothcored/caddy:digitalocean)
+	# Wildcard TLS via DNS-01 -- needs the DO DNS plugin in the Caddy image
+	# (see docker-compose.preview.yml: image: ghcr.io/goldberry-playground/
+	# grove-caddy -- xcaddy-built with caddy-dns/digitalocean baked in).
 }
 
 # Match any of our 5 tenant subdomains under this preview's host.
 *.${PREVIEW_HOST}.${PREVIEW_ZONE} {
 	tls {
-		dns digitalocean {env.DO_API_TOKEN}
+		# Multi-issuer fallback mirrors QA's PR-D (#98) pattern. Primary
+		# tries whatever ACME_CA env says (defaults to LE prod); fallback
+		# uses LE staging if prod 429s. Preview's per-PR identifier sets
+		# (unique 5-char-suffix host label) mean rate-limit risk is lower
+		# than QA's, but the fallback costs nothing to add and matches
+		# the QA pattern -- worth doing for consistency.
+		issuer acme {
+			ca {env.ACME_CA}
+			dns digitalocean {env.DO_API_TOKEN}
+		}
+		issuer acme {
+			ca https://acme-staging-v02.api.letsencrypt.org/directory
+			dns digitalocean {env.DO_API_TOKEN}
+		}
 	}
 
 	# Public-but-not-indexed — robot.txt + headers belt-and-suspender
