@@ -41,6 +41,26 @@ packages:
   - curl
   - gnupg
 
+# Declarative mount for the persistent Caddy /data volume. Cloud-init's
+# native `mounts:` module is way safer than the runcmd dance from the
+# reverted PR #81: it waits for the device, writes fstab idempotently,
+# and fails loudly if the device never appears. PR #81's code review
+# caught 4 race-condition bugs in the runcmd version; `mounts:` makes
+# all 4 impossible by construction.
+#
+# Device discovery: the DO volume is attached by TF after droplet boot
+# starts. We mount by FILESYSTEM LABEL ("data") rather than /dev/disk/by-id
+# path -- LABEL is stable across device-name changes and matches sandbox's
+# convention. The volume's `initial_filesystem_label = "data"` in
+# main.tf sets it at TF apply time.
+#
+# nofail keeps the boot from dropping to emergency mode if the volume
+# is missing (rare but possible during DO-side maintenance). x-systemd
+# options let systemd manage the mount via a generated .mount unit,
+# which retries on transient failures unlike a bare /etc/fstab entry.
+mounts:
+  - ["LABEL=data", "/mnt/caddy-data", "ext4", "defaults,nofail,noatime,discard,x-systemd.device-timeout=120,x-systemd.mount-timeout=30", "0", "2"]
+
 write_files:
   # Env file consumed by docker compose
   - path: /etc/grove/.env

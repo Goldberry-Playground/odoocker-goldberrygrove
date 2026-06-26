@@ -37,7 +37,12 @@ services:
       - "443:443"
     volumes:
       - /etc/grove/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data       # LE account + issued certs (compose-restart-survivable; dies with droplet)
+      # /data persists ACROSS droplet teardowns via a DO block-storage volume
+      # mounted at /mnt/caddy-data by cloud-init's `mounts:` module. The TF
+      # env declares the volume + attachment; once Caddy has issued a cert,
+      # subsequent droplet recreates re-attach the same volume and Caddy
+      # finds the existing cert -- no fresh ACME call, no LE rate-limit risk.
+      - /mnt/caddy-data:/data
       - caddy-config:/config
     environment:
       QA_ZONE: ${QA_ZONE}
