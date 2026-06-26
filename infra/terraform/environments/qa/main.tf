@@ -155,6 +155,11 @@ resource "digitalocean_droplet" "qa" {
     # records under the delegated qa zone). Flows to /etc/grove/.env and
     # then into the caddy container's DO_API_TOKEN env var.
     do_token_for_caddy = var.do_token
+    # ACME endpoint for Caddy (prod or staging). Default = prod (real
+    # browser-trusted certs); operator opts into staging via qa-deploy.yml's
+    # use_staging_acme workflow_dispatch input when iterating heavily.
+    # Flows to /etc/grove/.env -> caddy container's ACME_CA env -> Caddyfile.
+    acme_endpoint = var.acme_endpoint
     # base64-encode the Caddyfile + compose YAML so cloud-init's YAML parser
     # never sees their content -- bypasses the whole class of "embedded
     # block-scalar broke YAML parse" failures we hit on 2026-06-24 (PRs #62

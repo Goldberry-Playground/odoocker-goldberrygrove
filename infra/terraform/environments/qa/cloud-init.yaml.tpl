@@ -9,6 +9,7 @@
 #   frontend_image_tags -- map per frontend
 #   ghost_key_goldberry -- Content API key (may be empty)
 #   do_token_for_caddy -- DO API token Caddy uses for DNS-01 ACME challenge
+#   acme_endpoint      -- LE prod or staging directory URL (per use_staging_acme)
 #   compose_yml_b64    -- entire docker-compose.qa.yml, base64-encoded
 #   caddyfile_tpl_b64  -- entire Caddyfile.tpl with QA_ZONE substituted, base64-encoded
 #
@@ -80,6 +81,7 @@ write_files:
       GGG_TAG=${frontend_image_tags["ggg"]}
       NURSERY_TAG=${frontend_image_tags["nursery"]}
       DO_API_TOKEN=${do_token_for_caddy}
+      ACME_CA=${acme_endpoint}
 
   - path: /etc/grove/Caddyfile
     encoding: b64

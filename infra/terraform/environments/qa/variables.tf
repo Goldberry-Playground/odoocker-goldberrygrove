@@ -95,6 +95,18 @@ variable "frontend_image_tags" {
   }
 }
 
+# === ACME endpoint (Caddy / Let's Encrypt) ===
+
+variable "acme_endpoint" {
+  description = "ACME directory URL Caddy uses for cert issuance. Default = LE PROD (real browser-trusted certs). Set to LE STAGING (https://acme-staging-v02.api.letsencrypt.org/directory) when iterating heavily to avoid LE's 5/week-per-identifier-set rate limit. Staging has effectively unlimited budget (30k/3h) but produces certs with browser warnings (not browser-trusted root). qa-deploy.yml exposes this as workflow_dispatch input use_staging_acme."
+  type        = string
+  default     = "https://acme-v02.api.letsencrypt.org/directory"
+  validation {
+    condition     = contains(["https://acme-v02.api.letsencrypt.org/directory", "https://acme-staging-v02.api.letsencrypt.org/directory"], var.acme_endpoint)
+    error_message = "acme_endpoint must be LE prod or staging URL exactly. Use prod for real certs, staging for rate-limit-free iteration."
+  }
+}
+
 # === Optional: goldberry Ghost API key for /blog content ===
 
 variable "ghost_key_goldberry" {
