@@ -35,6 +35,7 @@ FRONTEND_TAG="${FRONTEND_TAG:-latest}"
 # Canonical Grove image list — kept in sync with infra/terraform/environments/qa/compose/docker-compose.qa.yml
 declare -a IMAGES=(
   "grove-odoo:${ODOO_TAG}"
+  "grove-caddy:${CADDY_TAG:-latest}"
   "grove-hub:${FRONTEND_TAG}"
   "grove-goldberry:${FRONTEND_TAG}"
   "grove-ggg:${FRONTEND_TAG}"

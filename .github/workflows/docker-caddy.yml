@@ -1,0 +1,120 @@
+name: Docker -- Caddy w/ DO DNS plugin
+
+###############################################################################
+# Build + push the grove-caddy image (Caddy + caddy-dns/digitalocean plugin).
+#
+# Compose used to `build:` this on the droplet every deploy via xcaddy. That
+# added ~30s to each first-time compose-up AND meant a transient go-module
+# fetch failure could break a deploy. Moving the build to CI:
+#   - Removes ~30s from every cold deploy
+#   - Lets the GHCR preflight check (scripts/check-ghcr-images.sh) catch
+#     build/availability problems BEFORE the droplet boots
+#   - Caches build layers across CI runs (faster than fresh on each droplet)
+#
+# Triggers: changes to caddy.Dockerfile or this workflow. PR builds + scans;
+# main pushes + tags :latest and :<sha>.
+#
+# Resulting image: ghcr.io/goldberry-playground/grove-caddy:{latest,<sha>}
+# Consumed by: infra/terraform/environments/qa/compose/docker-compose.qa.yml
+#
+# FIRST-PUBLISH NOTE: GHCR packages are private by default. The very first
+# push from main will create the package private. Make it public via:
+#   https://github.com/orgs/goldberry-playground/packages
+#   -> grove-caddy -> Package settings -> Change visibility -> Public
+# Otherwise the QA droplet (anonymous puller) gets 403 on docker compose pull.
+# Same one-time setup that grove-odoo + grove-* frontends required.
+###############################################################################
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "infra/terraform/environments/qa/compose/caddy.Dockerfile"
+      - ".github/workflows/docker-caddy.yml"
+  push:
+    branches: [main]
+    paths:
+      - "infra/terraform/environments/qa/compose/caddy.Dockerfile"
+      - ".github/workflows/docker-caddy.yml"
+
+concurrency:
+  group: docker-caddy-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-smoke-push:
+    name: Build + smoke + push
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      TEST_TAG: test-${{ github.run_id }}
+      IMAGE_NAME: ghcr.io/goldberry-playground/grove-caddy
+      DOCKERFILE: infra/terraform/environments/qa/compose/caddy.Dockerfile
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        timeout-minutes: 2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        timeout-minutes: 2
+
+      - name: Build image (local load)
+        uses: docker/build-push-action@v6
+        timeout-minutes: 10
+        with:
+          context: infra/terraform/environments/qa/compose
+          file: ${{ env.DOCKERFILE }}
+          load: true
+          tags: ${{ env.IMAGE_NAME }}:${{ env.TEST_TAG }}
+          cache-from: type=gha,scope=grove-caddy
+          cache-to: type=gha,scope=grove-caddy,mode=max
+
+      # Smoke test: image starts AND the DO DNS module is registered.
+      # `caddy list-modules` enumerates loaded plugins; we grep for the
+      # specific dns.providers.digitalocean module that the QA Caddyfile's
+      # `dns digitalocean {env.DO_API_TOKEN}` directive expects.
+      - name: Smoke test image (caddy + DO DNS plugin loaded)
+        env:
+          IMAGE: ${{ env.IMAGE_NAME }}:${{ env.TEST_TAG }}
+        run: |
+          # Version check first -- catches structural breakage
+          docker run --rm "$IMAGE" caddy version || { echo "::error::caddy binary won't run"; exit 1; }
+          # Module check -- the whole point of this image
+          if ! docker run --rm "$IMAGE" caddy list-modules 2>/dev/null | grep -q 'dns.providers.digitalocean'; then
+            echo "::error::caddy-dns/digitalocean module NOT present in built image -- xcaddy build failed silently?"
+            docker run --rm "$IMAGE" caddy list-modules 2>&1 | grep -i 'dns\|digital' || true
+            exit 1
+          fi
+          echo "✓ caddy boots + DO DNS plugin registered"
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        timeout-minutes: 1
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tag and push (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        timeout-minutes: 5
+        env:
+          IMAGE: ${{ env.IMAGE_NAME }}
+          TAG: ${{ env.TEST_TAG }}
+          SHA: ${{ github.sha }}
+        run: |
+          docker tag "$IMAGE:$TAG" "$IMAGE:latest"
+          docker tag "$IMAGE:$TAG" "$IMAGE:$SHA"
+          docker push "$IMAGE:latest"
+          docker push "$IMAGE:$SHA"
+          echo "Published: $IMAGE:latest and $IMAGE:$SHA"
+          echo "If this is the FIRST publish, make the package public in GHCR:"
+          echo "  https://github.com/orgs/goldberry-playground/packages -> grove-caddy"
