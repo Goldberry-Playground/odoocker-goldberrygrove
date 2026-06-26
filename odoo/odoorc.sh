@@ -92,24 +92,32 @@ trap "rm -f \"$TEMP_RC\"" EXIT
 
 cp "$TEMPLATE_CONF" "$TEMP_RC"
 
-# Second pass: replace each ${VAR} placeholder with the resolved value.
-while IFS='=' read -r key value || [[ -n $key ]]; do
-    # Skip comments and empty lines
-    [[ $key =~ ^[[:space:]]*# ]] && continue
-    [[ -z ${key// /} ]] && continue
-    # Trim and validate key (same hardening as the first pass)
-    key="${key#"${key%%[![:space:]]*}"}"
-    key="${key%"${key##*[![:space:]]}"}"
+# Second pass: replace each ${VAR} placeholder against the FULL container env
+# (not just .env keys). Compose's `environment:` block sets vars directly on
+# the container without ever touching .env -- e.g. `DB_PASSWORD: ${POSTGRES_PASSWORD}`
+# in docker-compose.yml gives the container DB_PASSWORD without DB_PASSWORD
+# appearing in .env. The prior implementation only iterated over .env keys
+# and missed those, leaving `db_password = ${DB_PASSWORD}` literal in
+# odoo.conf -> postgres auth failed at runtime (verified 2026-06-26 on QA).
+#
+# Iteration uses `env` so we get every shell-exported var, including ones
+# the operator might set via `docker run -e FOO=bar` or compose's environment
+# block, on top of whatever odoorc.sh loaded from .env in the first pass.
+while IFS='=' read -r key value; do
     [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
-
-    value=${!key} # Get the value of the variable whose name is $key
-
-    # Escape characters which are special to sed
+    value=${!key}
     value_escaped=$(printf '%s' "$value" | sed 's/[\/&]/\\&/g')
-
-    # Substitute in the temp file (whose parent dir IS writable).
     sed -i "s/\${$key}/${value_escaped}/g" "$TEMP_RC"
-done < .env
+done < <(env)
+
+# Cleanup pass: any ${VAR} still in the conf wasn't set anywhere -- the
+# operator left that option out of their .env/environment block. Drop the
+# whole line so odoo uses its built-in default for that option, rather
+# than crashing on `invalid boolean value: '${REPORTGZ}'` or similar.
+# Conservative match: only delete lines that look like `key = ${SOMETHING}`
+# (assignment lines with a placeholder-only value). Comment lines or lines
+# with mixed content stay.
+sed -i -E '/^[[:space:]]*[a-zA-Z_][a-zA-Z0-9_]*[[:space:]]*=[[:space:]]*\$\{[A-Za-z_][A-Za-z0-9_]*\}[[:space:]]*$/d' "$TEMP_RC"
 
 # Truncate-write the target. Requires write access to the FILE only;
 # the Dockerfile pre-creates it with odoo ownership at build time.
