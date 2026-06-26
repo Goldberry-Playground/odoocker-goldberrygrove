@@ -21,9 +21,9 @@ output "ssh_command" {
 output "stack_urls" {
   description = "Service URLs (only valid after DNS propagation or /etc/hosts override)"
   value = {
-    odoo             = "http://${module.sandbox.ipv4_address}:8069"
-    ghost_goldberry  = "http://${module.sandbox.ipv4_address}:2368"
-    ghost_ggg        = "http://${module.sandbox.ipv4_address}:2369"
-    ghost_nursery    = "http://${module.sandbox.ipv4_address}:2370"
+    odoo            = "http://${module.sandbox.ipv4_address}:8069"
+    ghost_goldberry = "http://${module.sandbox.ipv4_address}:2368"
+    ghost_ggg       = "http://${module.sandbox.ipv4_address}:2369"
+    ghost_nursery   = "http://${module.sandbox.ipv4_address}:2370"
   }
 }
