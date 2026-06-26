@@ -187,8 +187,27 @@ jobs:
           echo "qa_urls=$QA_URLS_JSON" >> "$GITHUB_OUTPUT"
 
       # Poll the droplet for the cloud-init grove-ready sentinel via SSH.
-      # Generous deadline: first-time cloud-init + Caddy cert provisioning can
-      # take 10+ min.
+      # Three-way check per iteration:
+      #   1. happy path -- grove-ready sentinel exists -> exit 0
+      #   2. sad path   -- known error pattern in compose/cloud-init logs ->
+      #                    fail fast with the offending lines surfaced
+      #   3. progress   -- print the last line of grove-qa-up.log so the workflow
+      #                    log shows what cloud-init is doing in real time
+      #                    (vs going silent for 20 min, then mystery-failing)
+      #
+      # Known-error patterns target the bugs we've hit historically:
+      #   "pull access denied"         -> bad image ref (e.g. slothcored 404 on
+      #                                   2026-06-26 deploy 28247373060)
+      #   "Unexpected next token"      -> Caddyfile syntax error (2026-06-26
+      #                                   deploy 28248283496 -- single-line {})
+      #   "invalid integer value"      -> Odoo env-var substitution failure
+      #                                   (2026-06-24 DB_PORT bug)
+      #   "repository does not exist"  -> generic missing image
+      #   "Error response from daemon" -> generic docker failure
+      #   "failed to solve"            -> build-time failure (e.g. xcaddy)
+      #
+      # Generous outer deadline: first-time cloud-init + xcaddy build + DNS-01
+      # cert provisioning can take 12-15 min on a cold droplet.
       - name: Wait for stack ready (cloud-init grove-ready sentinel)
         timeout-minutes: 20
         env:
@@ -196,17 +215,47 @@ jobs:
         run: |
           NOW=$(date +%s)
           DEADLINE=$(( NOW + 1200 ))   # 20 min
+          SSH="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i ~/.ssh/grove-qa-deploy root@$DROPLET_IP"
+
           while [ "$(date +%s)" -lt "$DEADLINE" ]; do
-            if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
-                   -i ~/.ssh/grove-qa-deploy \
-                   "root@$DROPLET_IP" \
-                   "test -f /var/lib/cloud/instance/grove-ready" 2>/dev/null; then
+            # (1) happy path
+            if $SSH "test -f /var/lib/cloud/instance/grove-ready" 2>/dev/null; then
               echo "  ✓ stack ready"
               exit 0
             fi
-            echo "  waiting for grove-ready sentinel..."
+
+            # (2) sad path -- known error patterns
+            ERR=$($SSH "
+              if [ -f /var/log/grove-qa-up.log ]; then
+                grep -E 'pull access denied|repository does not exist|Error response from daemon|Unexpected next token|invalid integer value|failed to solve' /var/log/grove-qa-up.log | tail -5
+              fi
+              if [ -f /var/log/cloud-init-output.log ]; then
+                grep -iE 'fatal:|cloud-init.*error' /var/log/cloud-init-output.log | tail -5
+              fi
+            " 2>/dev/null || true)
+            if [ -n "$ERR" ]; then
+              echo "::error::Cloud-init / compose surfaced known error patterns:"
+              echo "$ERR" | sed 's/^/  /'
+              echo
+              echo "Last 30 lines of /var/log/grove-qa-up.log:"
+              $SSH "tail -30 /var/log/grove-qa-up.log 2>/dev/null" 2>/dev/null | sed 's/^/  /' || true
+              echo
+              echo "SSH in to debug: ssh -i ~/.ssh/grove-qa-admin root@$DROPLET_IP"
+              exit 1
+            fi
+
+            # (3) progress hint
+            PROGRESS=$($SSH "
+              if [ -f /var/log/grove-qa-up.log ]; then
+                tail -1 /var/log/grove-qa-up.log
+              else
+                echo '(cloud-init in apt/docker install stage; compose-up not started yet)'
+              fi
+            " 2>/dev/null || echo "(SSH not yet responding; droplet may still be booting)")
+            echo "  [$(date -u +%H:%M:%S)] ${PROGRESS}"
             sleep 30
           done
+
           # Hard fail when the sentinel never fires -- otherwise the workflow
           # declares success despite the stack being down. Discord then posts
           # URLs that resolve to nothing. Per code review 2026-06-24:
