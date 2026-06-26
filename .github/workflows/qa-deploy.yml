@@ -25,6 +25,10 @@ on:
         description: "Recreate the droplet (force cloud-init re-run). Use when image tags changed or droplet got into a bad state."
         type: boolean
         default: false
+      use_staging_acme:
+        description: "Use LE STAGING for cert issuance (browser warnings but no rate limits). Use when iterating heavily; flip OFF for a real cert. Default false = prod."
+        type: boolean
+        default: false
 
 permissions: {}
 
@@ -174,10 +178,23 @@ jobs:
       # Plan + apply in one shot — no saved plan file. Slightly slower
       # than plan-then-apply-binary, but eliminates the stale-plan failure
       # mode and works regardless of whether taint ran.
+      #
+      # ACME endpoint: workflow_dispatch input use_staging_acme=true passes
+      # the LE staging URL (no rate limits, browser warnings). Otherwise
+      # var.acme_endpoint defaults to LE prod (real certs).
       - name: Terraform apply
         timeout-minutes: 10
         working-directory: infra/terraform/environments/qa
-        run: terraform apply -input=false -auto-approve
+        env:
+          USE_STAGING: ${{ github.event.inputs.use_staging_acme }}
+        run: |
+          if [ "${USE_STAGING:-false}" = "true" ]; then
+            echo "::notice::Using LE STAGING for cert issuance (browser warnings; rate-limit-free)"
+            terraform apply -input=false -auto-approve \
+              -var='acme_endpoint=https://acme-staging-v02.api.letsencrypt.org/directory'
+          else
+            terraform apply -input=false -auto-approve
+          fi
 
       # Run even if Terraform apply failed — if a droplet got created before
       # the failure, we still want its IP in the Discord post so the operator
