@@ -134,16 +134,18 @@ runcmd:
   # Health sentinel -- qa-deploy.yml polls for this file before posting URLs.
   # Up to 10 minutes for the full stack + cert provisioning.
   #
-  # Previously polled https://localhost/, but Caddy only has vhost blocks for
-  # the public hostnames (qa.gatheringatthegrove.com, etc.) -- a localhost
-  # request matched nothing and never returned 2xx, so the sentinel never
-  # fired even when the stack was perfectly healthy. Now poll the actual
-  # public apex URL: the droplet resolves it via the DO domain DNS pointing
-  # to its own IP, and Caddy serves the hub vhost over the LE cert. A 2xx
-  # response means TLS works, hub is up, and the world can reach it.
+  # Previously polled https://localhost/ (didn't work -- Caddy had no
+  # localhost vhost), then https://${qa_zone}/ (the apex -- didn't work
+  # because the wildcard cert doesn't cover the apex per RFC 6125 and a
+  # separate apex cert hit LE rate limits 2026-06-26).
+  #
+  # Now polls hub.${qa_zone} -- the hub serves at hub.qa.* per ADR-006, and
+  # that subdomain IS covered by the wildcard cert. A 2xx response means
+  # TLS works, hub is up, and the world can reach it. Mirrors qa-monitor.sh's
+  # equivalent fix in PR #108 -- both should probe the same URL.
   - |
     for i in $(seq 1 120); do
-      if curl -sf -o /dev/null -m 5 "https://${qa_zone}/"; then
+      if curl -sf -o /dev/null -m 5 "https://hub.${qa_zone}/"; then
         touch /var/lib/cloud/instance/grove-ready
         break
       fi
