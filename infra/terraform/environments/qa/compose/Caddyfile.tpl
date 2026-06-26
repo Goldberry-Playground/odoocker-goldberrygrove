@@ -37,17 +37,33 @@ ${QA_ZONE}, *.${QA_ZONE} {
 
     # Route by exact Host header to the right upstream container.
     # Tenant frontends in grove-sites listen on 3001; hub on 3000.
+    #
+    # IMPORTANT: Caddy's strict parser rejects single-line `handle X { ... }`
+    # blocks with "Unexpected next token after '{' on same line" -- the brace
+    # must be at end-of-line, contents on subsequent indented lines. This
+    # crashlooped the caddy container on first DNS-01 deploy until fixed
+    # inline; see git log on 2026-06-26 for the incident.
     @hub       host ${QA_ZONE}
     @goldberry host goldberry.${QA_ZONE}
     @ggg       host ggg.${QA_ZONE}
     @nursery   host nursery.${QA_ZONE}
     @odoo      host odoo.${QA_ZONE}
 
-    handle @hub       { reverse_proxy hub:3000 }
-    handle @goldberry { reverse_proxy goldberry:3001 }
-    handle @ggg       { reverse_proxy ggg:3001 }
-    handle @nursery   { reverse_proxy nursery:3001 }
-    handle @odoo      { reverse_proxy odoo:8069 }
+    handle @hub {
+        reverse_proxy hub:3000
+    }
+    handle @goldberry {
+        reverse_proxy goldberry:3001
+    }
+    handle @ggg {
+        reverse_proxy ggg:3001
+    }
+    handle @nursery {
+        reverse_proxy nursery:3001
+    }
+    handle @odoo {
+        reverse_proxy odoo:8069
+    }
 
     handle {
         respond "Unknown QA host" 404
