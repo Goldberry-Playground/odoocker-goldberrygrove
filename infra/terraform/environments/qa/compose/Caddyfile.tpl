@@ -33,7 +33,25 @@
 # means a fresh issue is cheap).
 ${QA_ZONE}, *.${QA_ZONE} {
     tls {
-        dns digitalocean {env.DO_API_TOKEN}
+        # Multi-issuer with explicit fallback. Caddy tries issuers in order;
+        # on non-retryable failure (e.g. LE 429 rate limit) it advances to
+        # the next. Without this, a prod 429 leaves the deploy permanently
+        # stuck on cert provisioning -- exactly what bit us on 2026-06-26.
+        #
+        # Primary: whatever ACME_CA env says (defaults to LE prod via
+        # PR-B's var.acme_endpoint; flips to LE staging when operator
+        # passes use_staging_acme=true to qa-deploy).
+        issuer acme {
+            ca {env.ACME_CA}
+            dns digitalocean {env.DO_API_TOKEN}
+        }
+        # Fallback: LE staging. Browser warnings but no rate limits. Lets a
+        # deploy complete cleanly even when prod is rate-limited (the
+        # alternative being a stuck droplet with no cert at all).
+        issuer acme {
+            ca https://acme-staging-v02.api.letsencrypt.org/directory
+            dns digitalocean {env.DO_API_TOKEN}
+        }
     }
 
     log {
