@@ -54,6 +54,10 @@ services:
       # That's acceptable because (a) droplet is single-tenant single-operator,
       # (b) the token is already in /etc/grove/.env (same blast radius).
       DO_API_TOKEN: ${DO_API_TOKEN}
+      # ACME directory URL. LE prod by default (real certs); staging when
+      # iterating heavily (no rate limits, browser warnings). Caddy reads
+      # via {env.ACME_CA} in the Caddyfile global block.
+      ACME_CA: ${ACME_CA:-https://acme-v02.api.letsencrypt.org/directory}
 
   # -- Postgres -- fresh on every QA droplet creation -------------------------
   postgres:

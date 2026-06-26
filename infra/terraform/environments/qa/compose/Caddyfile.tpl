@@ -19,6 +19,12 @@
 
 {
     email ops@goldberrygrove.farm
+    # ACME directory -- defaults to LE PROD but can be flipped to LE STAGING
+    # via the ACME_CA env var (set by docker-compose, which gets it from
+    # /etc/grove/.env, which gets it from TF var.acme_endpoint). Staging
+    # produces certs with browser warnings but has effectively unlimited
+    # rate limits -- use when iterating heavily to avoid burning prod budget.
+    acme_ca {env.ACME_CA}
 }
 
 # Apex + wildcard in one site block = ONE cert with two identifiers,
