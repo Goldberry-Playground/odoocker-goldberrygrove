@@ -98,6 +98,27 @@ RUN /clone-addons.sh
 COPY --chown=odoo:odoo ./odoo/odoo.conf /
 COPY --chown=odoo:odoo ./odoo/odoorc.sh /
 
+# Override the upstream odoo:19 image's stock entrypoint with our custom
+# one, which:
+#   1. invokes /odoorc.sh on container start to substitute ${VAR} placeholders
+#      from /etc/odoo/odoo.conf using the container's env (compose's
+#      `environment:` block + /.env loaded vars). Without this, the conf
+#      ships with literal `${DB_PORT}` etc. and Odoo crashes on first parse.
+#   2. hashes admin_passwd in odoo.conf via pbkdf2_sha512 (Odoo 19 requires
+#      this format; the .env -> odoorc.sh pipeline writes plaintext).
+#   3. APP_ENV branching (fresh / restore / local / debug / testing /
+#      staging / production / qa) drives the right odoo CLI invocation for
+#      the deployment context.
+#
+# WITHOUT this COPY, the upstream entrypoint takes over and items 1-3 never
+# happen, even though /odoorc.sh exists. Verified 2026-06-26 on QA: image
+# rebuilt with PR #89 fixes still had unsubstituted ${DB_PORT} because the
+# stock upstream entrypoint was running. Same `/entrypoint.sh` path keeps
+# the image's ENTRYPOINT directive valid (upstream sets ENTRYPOINT
+# ["/entrypoint.sh"]; we just replace the file).
+COPY --chown=odoo:odoo ./odoo/entrypoint.sh /entrypoint.sh
+RUN chmod 755 /entrypoint.sh
+
 # Pre-create ${ODOO_RC} with odoo ownership so the runtime odoorc.sh
 # (which executes as the `odoo` user) can rewrite it. Without this the
 # script's `cp /odoo.conf $ODOO_RC` fails with "Permission denied" on
