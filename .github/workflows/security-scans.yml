@@ -49,7 +49,7 @@ jobs:
           fetch-depth: 0
 
       - name: Run Trivy filesystem scan
-        uses: aquasecurity/trivy-action@6e7b7d1fd3e4fef0c5fa8cce1229c54b2c9bd0d8 # v0.29.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         timeout-minutes: 10
         with:
           scan-type: fs
@@ -166,7 +166,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Run Trivy image scan on ${{ matrix.service }}
-        uses: aquasecurity/trivy-action@6e7b7d1fd3e4fef0c5fa8cce1229c54b2c9bd0d8 # v0.29.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         timeout-minutes: 10
         with:
           scan-type: image
