@@ -1,3 +1,41 @@
+###############################################################################
+# !! DO NOT DEPLOY THIS ENVIRONMENT YET !!
+#
+# Production deployment is deferred pending the Level 3 architectural rethink
+# documented in docs/ADR/007-level-3-app-platform-migration.md.
+#
+# Decided 2026-06-26: production will be built on DO App Platform + DO Managed
+# Postgres + a tiny Odoo droplet, NOT on the current monolithic-droplet shape
+# that this TF env scaffolds. The current resources here (modules/droplet calls
+# for app + monitoring) reflect the PRE-Level-3 design and will be substantially
+# rewritten when Phase 6 of ADR-007 ships.
+#
+# Why this banner exists:
+#   - This env's main.tf is mostly valid TF and `terraform apply` would
+#     half-provision the OLD architecture (droplet + volumes + firewalls)
+#   - Tonight's QA work (PRs #95-#103) added cert resilience layers (persistent
+#     Caddy /data, multi-issuer fallback, orphan TXT cleanup) that are scoped
+#     to QA's Caddy+DNS-01 stack. Production-as-currently-designed uses nginx +
+#     manual ACME and would NOT inherit those resilience layers
+#   - The right move is to NOT deploy this env. Wait for Level 3.
+#
+# When IS it OK to deploy this env?
+#   - After Phase 6 of ADR-007 ships (timeline ~2-4 weeks after Level 3 QA
+#     validates on App Platform)
+#   - Phase 6 will rewrite this env to use App Platform + Managed PG
+#   - This banner should be removed in that same PR
+#
+# If you absolutely need a prod-shaped environment NOW (e.g., for staging or
+# a customer demo), discuss with Josh first. Don't `terraform apply` this env
+# without explicit go-ahead.
+#
+# Cross-references:
+#   - docs/ADR/005-qa-cert-resilience-stack.md (the QA work that exposed the gap)
+#   - docs/ADR/006-hub-qa-subdomain-not-apex.md (URL convention divergence)
+#   - docs/ADR/007-level-3-app-platform-migration.md (the resolution)
+#   - infra/terraform/environments/production/README.md (operator playbook)
+###############################################################################
+
 locals {
   app_tags = [
     "env-production",
