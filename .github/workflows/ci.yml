@@ -364,4 +364,3 @@ jobs:
             )
             echo "::endgroup::"
           done
-            down -v
