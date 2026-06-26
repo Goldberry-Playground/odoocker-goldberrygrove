@@ -88,8 +88,8 @@ locals {
 resource "github_actions_secret" "state_backend" {
   for_each = local.gh_secrets
 
-  repository      = local.github_repo_name
-  secret_name     = each.key
+  repository  = local.github_repo_name
+  secret_name = each.key
   # The github provider deprecated `plaintext_value` in 6.x — `value` is the
   # new name; behavior is identical (encrypted at rest by GH, masked in logs).
   value = each.value

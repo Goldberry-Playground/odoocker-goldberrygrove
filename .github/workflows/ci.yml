@@ -324,3 +324,44 @@ jobs:
             --env-file .env --env-file .env.grove \
             --profile odoo --profile postgres \
             down -v
+
+  # ── Plan item #5: catch Terraform fmt + validate regressions at PR time ──
+  # Without this, fmt drift and broken references (e.g. an output pointing at
+  # a non-existent resource) only surface when qa-deploy actually runs TF
+  # apply on the droplet, by which time the operator has already paid the
+  # CI minutes for the rest of the deploy. Cheap (no secrets needed because
+  # we use -backend=false to skip backend init), high-signal.
+  terraform-checks:
+    name: Terraform fmt + validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: "~1.9"
+
+      - name: terraform fmt -check (recursive)
+        run: terraform fmt -check -recursive -diff infra/terraform/
+
+      # Validate per env + module. Each needs its own `terraform init
+      # -backend=false` so the providers (digitalocean, cloudflare, etc.)
+      # are downloaded but the S3 backend (which needs Spaces creds) is
+      # skipped. set -e + per-dir grouping = one specific error instead of
+      # a 7-env wall of red.
+      - name: terraform validate (every env + module)
+        run: |
+          set -e
+          for d in infra/terraform/environments/*/ infra/terraform/modules/*/; do
+            echo "::group::$d"
+            (
+              cd "$d"
+              terraform init -backend=false -input=false >/dev/null
+              terraform validate
+            )
+            echo "::endgroup::"
+          done
+            down -v
