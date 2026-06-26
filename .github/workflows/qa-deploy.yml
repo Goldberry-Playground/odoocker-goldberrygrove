@@ -121,6 +121,18 @@ jobs:
         timeout-minutes: 4
         run: bash scripts/check-image-shape.sh
 
+      # Workaround for caddy-dns/digitalocean plugin's TXT cleanup bug:
+      # every successful ACME challenge leaves a permanent _acme-challenge
+      # TXT in the zone (plugin's delete step fails with strconv.Atoi parse
+      # error -- known upstream issue). Accumulate enough and LE rejects
+      # subsequent validations with "Incorrect TXT record (and N more)".
+      # We hit 17->23 stale TXTs in one night before noticing. Cleanup
+      # BEFORE deploy guarantees Caddy starts with a clean slate. Idempotent
+      # + fast (single DO API list + per-id DELETEs); safe to run every deploy.
+      - name: Pre-flight - cleanup orphan _acme-challenge TXTs
+        timeout-minutes: 2
+        run: bash scripts/cleanup-acme-txts.sh
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
         timeout-minutes: 3
