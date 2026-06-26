@@ -20,13 +20,25 @@
 
 services:
   caddy:
-    image: slothcored/caddy:digitalocean
+    # Same pre-baked image QA uses (PR #87 in odoocker history). The earlier
+    # `slothcored/caddy:digitalocean` reference was a Docker Hub 404 -- never
+    # existed. QA caught this on 2026-06-26 during the cert resilience work
+    # (PR #82 -> PR #84 -> PR #87) and fixed it; preview was never updated
+    # because the preview-up workflow doesn't exist yet so nothing was
+    # exercising preview's compose. This brings preview to parity with QA's
+    # working Caddy image (xcaddy with caddy-dns/digitalocean baked in).
+    image: ghcr.io/goldberry-playground/grove-caddy:${CADDY_TAG:-latest}
     restart: unless-stopped
     ports:
       - "80:80"
       - "443:443"
     environment:
       DO_API_TOKEN: ${DO_API_TOKEN}
+      # Default to LE prod. Preview gets ONE cert per PR (different identifier
+      # set each time, due to the 5-char-suffix host label), so rate-limit
+      # exposure is bounded -- staging fallback isn't strictly needed but the
+      # Caddyfile's multi-issuer block accepts the override anyway.
+      ACME_CA: ${ACME_CA:-https://acme-v02.api.letsencrypt.org/directory}
     volumes:
       - /etc/grove/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
