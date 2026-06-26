@@ -44,8 +44,14 @@ for f in "${FILE_LIST[@]}"; do
     echo "  ? $f  (not found, skipping)"
     continue
   fi
-  # Find first non-ASCII byte (offset, byte hex). Empty output = pure ASCII.
-  match=$(LC_ALL=C grep -nP "[^\x00-\x7f]" "$f" 2>/dev/null | head -3 || true)
+  # Find non-ASCII lines. Uses perl (not grep -nP) because macOS BSD grep
+  # doesn't ship Perl-compat regex support: `grep -P` errors out, the prior
+  # `2>/dev/null || true` swallowed the error, and the check ALWAYS reported
+  # "pure ASCII" on macOS. CI (Linux GNU grep) catches it correctly -- which
+  # masked the divergence until a U+2192 right-arrow slipped into PR #82's
+  # compose file and broke deploy 28246806115. perl is in macOS base install
+  # and on every GH runner.
+  match=$(perl -ne 'print "$.: $_" if /[^\x00-\x7f]/' "$f" | head -3)
   if [ -z "$match" ]; then
     echo "  v $f  (pure ASCII)"
   else
