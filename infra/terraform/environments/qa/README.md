@@ -12,24 +12,39 @@ local → orbstack → validate → push to qa branch → THIS auto-deploys → 
 |---|---|
 | `cloudflare_record.qa_ns` × 3 | Delegate `qa.gatheringatthegrove.com` from Cloudflare → DigitalOcean nameservers |
 | `digitalocean_domain.qa` | DO-managed zone for `qa.gatheringatthegrove.com` |
-| `digitalocean_ssh_key.qa_deploy` | EPHEMERAL CI keypair (regenerated every workflow run; private key dies with the runner) |
-| `digitalocean_ssh_key.qa_admin` | PERSISTENT admin keypair (Josh's `~/.ssh/grove-qa-admin`; survives droplet recreates) |
+| `digitalocean_ssh_key.qa_deploy` | Long-lived CI keypair (PR #63 — public key hardcoded in `var.ci_ssh_public_key`; private key in Infisical) |
+| `digitalocean_ssh_key.qa_admin` (data source) | Persistent admin keypair (Josh's `~/.ssh/grove-qa-admin`; managed out-of-band by Josh, referenced via data source) |
 | `digitalocean_droplet.qa` | Single Ubuntu 24.04 droplet, `s-2vcpu-4gb`, cloud-init brings up the compose stack |
-| `digitalocean_record.qa_apex` | `qa.gatheringatthegrove.com` → droplet IPv4 (hub frontend) |
-| `digitalocean_record.tenant` × 4 | `{goldberry,ggg,nursery,odoo}.qa.gatheringatthegrove.com` → CNAME → apex |
+| **`digitalocean_volume.caddy_data`** | **Persistent /data for Caddy (LE certs). Survives droplet teardowns to avoid LE rate limits — see "TLS architecture" below. ~$0.10/mo.** |
+| **`digitalocean_volume_attachment.caddy_data`** | **Attaches the volume to the droplet; cloud-init mounts at `/mnt/caddy-data` via the native `mounts:` module.** |
+| `digitalocean_record.qa_apex` | `qa.gatheringatthegrove.com` → droplet IPv4 |
+| `digitalocean_record.tenant` × 5 | `{hub,goldberry,ggg,nursery,odoo}.qa.gatheringatthegrove.com` → CNAME → apex |
 | `digitalocean_firewall.qa` | SSH (admin IP only), 80/443 from anywhere |
 
 ## URLs after apply
 
 | Tenant | URL |
 |---|---|
-| Hub | `https://qa.gatheringatthegrove.com` |
+| Hub | `https://hub.qa.gatheringatthegrove.com` |
 | Goldberry | `https://goldberry.qa.gatheringatthegrove.com` |
 | GGG | `https://ggg.qa.gatheringatthegrove.com` |
 | Nursery | `https://nursery.qa.gatheringatthegrove.com` |
-| Odoo admin | `https://odoo.qa.gatheringatthegrove.com` (login screen is the access gate) |
+| Odoo admin | `https://odoo.qa.gatheringatthegrove.com` (login screen is the access gate; root `/` returns 303 redirect to `/web/login` — that's normal) |
 
-TLS via Let's Encrypt (Caddy HTTP-01). First-time provisioning waits up to 10 min for certs.
+**Why hub is on `hub.qa.*` not the apex:** Per RFC 6125 the wildcard cert `*.qa.gatheringatthegrove.com` covers all 1-level subdomains but NOT the bare apex. Routing hub through `hub.qa.*` (a wildcard-covered subdomain, consistent with the 3 tenant URLs) means we never need a separate apex cert — eliminates the `{apex, wildcard}` identifier-set rate-limit class that bit us on 2026-06-26. See ADR-006.
+
+## TLS architecture
+
+TLS via Let's Encrypt prod (Caddy with DNS-01 wildcard, `caddy-dns/digitalocean` plugin baked into `ghcr.io/goldberry-playground/grove-caddy`). The full cert-resilience story is a 4-PR stack (#95-#98):
+
+| Layer | What it does | Why |
+|---|---|---|
+| **Persistent /data volume** (PR-A #95) | Caddy's `/data` is on a DO block-storage volume that survives droplet recreates | First cert issuance writes to /data; later droplet recreates re-use the cert. Drops LE call frequency ~10× and makes us immune to "burn 1 of LE's 5/week-per-identifier budget on every redeploy." |
+| **Branch-aware ACME endpoint** (PR-B #96) | `workflow_dispatch` input `use_staging_acme=true` flips Caddy to LE staging | When iterating heavily, staging has effectively unlimited budget (30k/3h). Browser warnings, but no rate-limit risk. |
+| **Orphan TXT cleanup preflight** (PR-C #97) | `scripts/cleanup-acme-txts.sh` runs before every TF apply | Works around a known bug in `caddy-dns/digitalocean` where the solver-cleanup step fails (`strconv.Atoi: parsing "": invalid syntax`), accumulating ghost TXTs that eventually break LE validation. |
+| **Caddy multi-issuer fallback** (PR-D #98) | Caddyfile has `issuer acme {prod}; issuer acme {staging}` | On prod 429, Caddy auto-falls back to staging. Deploy never gets stuck on cert provisioning. |
+
+First-time provisioning waits up to 10 min for cloud-init + cert issuance.
 
 ## Prerequisites
 
@@ -69,7 +84,7 @@ Total time-to-live URLs: **~10-30 min from `make qa-apply` start**.
 ## What's NOT here (deliberately)
 
 - **Ghost containers**: frontends point at live `blog.goldberrygrove.farm` via `GHOST_KEY_GOLDBERRY` (or empty for ggg/nursery — frontend gracefully degrades). Less stuff to run on the droplet; less stuff to keep in sync.
-- **Persistent data across teardowns**: Postgres data + Odoo filestore die on `qa-destroy`. By design — Josh's flow has QA tear down between cycles. Sample data seeding is a follow-up.
+- **Postgres / Odoo data persistence**: Postgres data + Odoo filestore die on `qa-destroy`. By design — Josh's flow has QA tear down between cycles. Sample data seeding is a follow-up. (Caddy's /data IS persistent — see TLS architecture above — that's a deliberate exception for cert-rate-limit reasons.)
 - **Snapshot restore from `grove-preview-data` Spaces bucket**: that's the preview env's pattern. QA starts empty.
 - **Monitoring/observability**: cost optimization. Add OpenObserve later if needed.
 
@@ -88,13 +103,22 @@ The QA droplet is meant to run for **3-4 days per test cycle**, not as a long-li
 
 ```bash
 make qa-status            # see what currently exists in DO
-make qa-teardown-droplet  # destroy droplet(s) only, keep DNS
-make qa-teardown-dns      # destroy DO domain + records, keep droplet
-make qa-teardown-all      # both (keeps Cloudflare delegation for fast redeploy)
+make qa-teardown-droplet  # destroy droplet(s) only, keep DNS + volume
+make qa-teardown-dns      # destroy DO domain + records, keep droplet + volume
+make qa-teardown-all      # both (keeps Cloudflare delegation + volume for fast redeploy)
 make qa-teardown-all-full # ALSO removes Cloudflare NS delegation (slower redeploy)
 ```
 
 All scripts use the `do_token_teardown` PAT from 1P (scoped to `droplet:delete + domain:delete`), bypassing the TF provider entirely to avoid its hardcoded 1m destroy-poll bug.
+
+**The persistent Caddy /data volume is NOT destroyed by these commands.** That's deliberate — it's how we avoid LE rate limits across teardown cycles. To explicitly destroy it:
+
+```bash
+terraform -chdir=infra/terraform/environments/qa destroy \
+  -target=digitalocean_volume.caddy_data
+```
+
+`qa-teardown-droplet.sh` pre-detaches the volume from the droplet before issuing the droplet DELETE, so the next `qa-apply` reattaches cleanly without hitting the DO-side "still attached to gone droplet" race.
 
 ### What teardown does NOT destroy (intentionally)
 
@@ -174,9 +198,58 @@ This skips the Cloudflare changes (no-op since they're already correct).
 
 If Odoo struggles with 2 vCPUs / 4GB during testing, bump to `s-4vcpu-8gb` via `droplet_size` var. Cost: ~$48/mo vs $24/mo.
 
+## Operator playbook — common scenarios
+
+### "I want to iterate on compose / Caddyfile without recreating the droplet"
+
+Use the **compose-only fast path** workflow (`qa-compose-update.yml`):
+
+```bash
+# push your compose change to a feature branch first
+gh workflow run qa-compose-update.yml -f branch=my-feature-branch
+```
+
+rsyncs compose/Caddyfile onto the existing droplet, pulls fresh images, restarts containers in place, reloads Caddy. ~2 min vs ~15 min for a full qa-deploy. Creates TF state drift; next full qa-deploy re-converges. Designed for "preview my change quickly" — codify by PR'ing to main.
+
+### "I want to deploy with LE staging certs (no rate-limit risk)"
+
+```bash
+gh workflow run qa-deploy.yml --ref qa \
+  --field use_staging_acme=true --field taint_droplet=true
+```
+
+Browser warnings, but unlimited cert budget. Good for heavy iteration cycles.
+
+### "LE is rate-limited and I need to investigate"
+
+```bash
+# how many ghost TXTs are stuck in the zone?
+DIGITALOCEAN_TOKEN=$(op item get "GoldberryGrove Infra" \
+  --vault "Goldberry Grove - Admin" --fields label=do_token --reveal) \
+  bash scripts/cleanup-acme-txts.sh
+
+# inspect Caddy's cert store on the droplet
+ssh -i ~/.ssh/grove-qa-admin root@$(terraform output -raw droplet_ipv4)
+docker exec grove-qa-caddy-1 find /data/caddy/certificates -name '*.crt'
+
+# check current rate-limit status (LE returns the retry-after in 429 body)
+docker logs grove-qa-caddy-1 2>&1 | grep -i "rate.\?limit\|retry"
+```
+
+### "The deploy looks stuck on cert issuance"
+
+PR-D's multi-issuer fallback should prevent this — Caddy falls back to staging on prod 429. If it really is stuck, the most likely cause is the `caddy-dns/digitalocean` TXT-delete bug accumulating ghost records; run `bash scripts/cleanup-acme-txts.sh` to clean the zone, then `docker restart grove-qa-caddy-1` on the droplet.
+
 ## Related
 
-- `scripts/infisical-admin-bootstrap.sh` — bootstraps the `tf-infisical-admin` identity (no relation to this TF env directly, but lays the groundwork for moving secrets off `secrets.*` references in workflows long-term)
-- `infra/terraform/environments/preview/` — sibling env for per-PR ephemeral previews (different lifecycle, different routing pattern)
+- `scripts/cleanup-acme-txts.sh` — preflight orphan TXT cleanup (workaround for caddy-dns/digitalocean delete bug); runs automatically in qa-deploy.yml's preflight
+- `scripts/qa-monitor.sh` — terminal-UI URL probe for live monitoring
+- `scripts/infisical-admin-bootstrap.sh` — bootstraps the `tf-infisical-admin` identity
+- `.github/workflows/qa-deploy.yml` — main deploy; full TF apply + droplet recreate
+- `.github/workflows/qa-compose-update.yml` — compose-only fast path (no TF, no droplet recreate)
+- `.github/workflows/sync-qa-on-main-push.yml` — auto-syncs qa branch from main + dispatches qa-deploy
+- `.github/workflows/chain-qa-after-image-rebuild.yml` — dispatches qa-deploy after image rebuilds
+- `infra/terraform/environments/preview/` — sibling env for per-PR ephemeral previews (different lifecycle)
 - `infra/terraform/environments/production/` — prod env (not yet built / not yet applied)
-- Follow-up PR: `qa-deploy.yml` + `qa-teardown.yml` GitHub Actions workflows that drive this env on push to `qa` / `main`
+- `docs/ADR/005-qa-cert-resilience-stack.md` — the 4-PR cert-resilience decision (PR-A through PR-D)
+- `docs/ADR/006-hub-qa-subdomain-not-apex.md` — why hub serves at `hub.qa.*` not the apex
