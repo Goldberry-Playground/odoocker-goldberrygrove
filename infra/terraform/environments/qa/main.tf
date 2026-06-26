@@ -127,6 +127,50 @@ data "digitalocean_ssh_key" "qa_admin" {
   name = "grove-qa-admin"
 }
 
+# ── Persistent Caddy /data volume ───────────────────────────────────────────
+#
+# Caddy stores its LE account key + issued certs in /data. By default that
+# lives in a Docker named volume on the droplet's root fs, which dies with
+# every droplet recreate -- which makes every redeploy a fresh ACME request
+# and burns 1 of LE's 5/week-per-identifier budget. We blew through that
+# budget on 2026-06-26 with both HTTP-01 (5 separate identifiers) AND with
+# DNS-01 wildcard (apex+wildcard combined identifier set).
+#
+# This volume persists Caddy's /data across droplet recreates. After the
+# FIRST successful ACME issuance, the cert lives ~80 days; subsequent
+# droplet recreates re-use it. Cert request frequency drops 10x.
+#
+# Differs from the reverted PR #81 in:
+#   - tags = local.tags (discoverable via tag-based scripts)
+#   - region-prefixed name (no collision if QA copy-spun in another region)
+#   - LABEL=data filesystem (mount by label, not by-id path)
+#   - NO prevent_destroy (it doesn't actually protect since script teardown
+#     bypasses TF; operator can destroy via `terraform destroy -target=...`)
+#   - cloud-init uses native `mounts:` module (declarative, handles
+#     device-wait + fstab idempotently), not the runcmd dance from PR #81
+#     that the code review caught 4 race-condition bugs in
+#
+# Lifecycle: created on first qa-apply; persists across droplet
+# teardown/recreate via the standard volume_attachment dance. The
+# qa-teardown-droplet.sh script pre-detaches the volume before destroying
+# the droplet (added in this PR), so the next apply can reattach cleanly
+# without hitting the DO-side "volume still attached to gone droplet"
+# race window.
+resource "digitalocean_volume" "caddy_data" {
+  region                   = var.region
+  name                     = "${var.region}-grove-qa-caddy-data"
+  size                     = 1
+  initial_filesystem_type  = "ext4"
+  initial_filesystem_label = "data"
+  tags                     = local.tags
+  description              = "Persistent Caddy /data (LE certs + ACME account). Survives droplet teardown to avoid LE rate limits on iterative QA cycles. ~$0.10/mo."
+}
+
+resource "digitalocean_volume_attachment" "caddy_data" {
+  droplet_id = digitalocean_droplet.qa.id
+  volume_id  = digitalocean_volume.caddy_data.id
+}
+
 # ── Droplet ─────────────────────────────────────────────────────────────────
 
 resource "digitalocean_droplet" "qa" {

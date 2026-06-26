@@ -30,3 +30,8 @@ output "ssh_key_fingerprint" {
   description = "DO SSH key fingerprint (in case another env needs to attach the same key)."
   value       = digitalocean_ssh_key.qa_deploy.fingerprint
 }
+
+output "caddy_data_volume_id" {
+  description = "DO block-storage volume ID holding Caddy /data (LE certs). To manually destroy: terraform destroy -target=digitalocean_volume.caddy_data."
+  value       = digitalocean_volume.caddy_data.id
+}
