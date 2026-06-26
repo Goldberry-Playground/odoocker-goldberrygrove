@@ -86,24 +86,34 @@ expand_env_refs() {
     printf '%s' "$output"
 }
 
-while IFS='=' read -r key value || [[ -n $key ]]; do
-    # Skip comments and empty lines
-    [[ $key =~ ^[[:space:]]*# ]] && continue
-    [[ -z ${key// /} ]] && continue
-    # Trim surrounding whitespace from key
-    key="${key#"${key%%[![:space:]]*}"}"
-    key="${key%"${key##*[![:space:]]}"}"
-    # Validate key is a legal identifier; otherwise skip the line
-    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
-    # Strip a single layer of surrounding double-quotes
-    if [[ ${#value} -ge 2 && "${value:0:1}" == '"' && "${value: -1}" == '"' ]]; then
-        value="${value:1:${#value}-2}"
-    fi
-    # Expand ${VAR} refs against vars set so far — NEVER via eval.
-    value="$(expand_env_refs "$value")"
-    # Assign without eval. printf -v assigns by indirect name.
-    printf -v "$key" '%s' "$value"
-done < .env
+# Load /.env into bash env IF it exists. The QA env bind-mounts
+# /etc/grove/.env -> /.env, but a plain `docker run grove-odoo:latest` (no
+# bind mount) doesn't have /.env -- the previous unguarded `done < .env`
+# crashed under `set -e` with ".env: No such file or directory", which
+# turned any docker run (preflights, smoke tests, ad-hoc image inspection)
+# into a hard failure. Now if /.env is absent, we skip the loader entirely
+# and trust the container env (compose's `environment:` block, `docker run
+# -e`, etc.) to provide the values the substitution + APP_ENV branches need.
+if [ -f .env ]; then
+    while IFS='=' read -r key value || [[ -n $key ]]; do
+        # Skip comments and empty lines
+        [[ $key =~ ^[[:space:]]*# ]] && continue
+        [[ -z ${key// /} ]] && continue
+        # Trim surrounding whitespace from key
+        key="${key#"${key%%[![:space:]]*}"}"
+        key="${key%"${key##*[![:space:]]}"}"
+        # Validate key is a legal identifier; otherwise skip the line
+        [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+        # Strip a single layer of surrounding double-quotes
+        if [[ ${#value} -ge 2 && "${value:0:1}" == '"' && "${value: -1}" == '"' ]]; then
+            value="${value:1:${#value}-2}"
+        fi
+        # Expand ${VAR} refs against vars set so far — NEVER via eval.
+        value="$(expand_env_refs "$value")"
+        # Assign without eval. printf -v assigns by indirect name.
+        printf -v "$key" '%s' "$value"
+    done < .env
+fi
 
 # Check the USE_REDIS to add base_attachment_object_storage & session_redis to LOAD variable
 if [[ $USE_REDIS == "true" ]]; then
