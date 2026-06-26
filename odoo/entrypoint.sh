@@ -18,6 +18,20 @@ if [ -x /odoorc.sh ] && [ -f /.env ]; then
     cd / && /odoorc.sh
 fi
 
+# Set HOST/PORT/USER/PASSWORD defaults that wait-for-psql.py expects below.
+# This script's wait-for-psql.py invocations later interpolate ${HOST} etc.,
+# which would be empty (and argparse fails with "expected one argument") if
+# we don't set them. Cascade matches the upstream odoo:19 entrypoint's
+# defaults but uses our canonical compose-env names (DB_HOST/DB_PORT/DB_USER
+# /DB_PASSWORD set via docker-compose `environment:` block) on top of the
+# legacy docker-link names (DB_PORT_5432_TCP_*) the upstream image relied on.
+# The :=' syntax means "set HOST if unset OR empty"; the resolved value
+# becomes the bash env var that the rest of this script references.
+: ${HOST:=${DB_HOST:=${DB_PORT_5432_TCP_ADDR:='db'}}}
+: ${PORT:=${DB_PORT:=${DB_PORT_5432_TCP_PORT:=5432}}}
+: ${USER:=${DB_USER:=${DB_ENV_POSTGRES_USER:=${POSTGRES_USER:='odoo'}}}}
+: ${PASSWORD:=${DB_PASSWORD:=${DB_ENV_POSTGRES_PASSWORD:=${POSTGRES_PASSWORD:='odoo'}}}}
+
 # Hash the admin_passwd in odoo.conf so Odoo 19 accepts it.
 # The .env → odoorc.sh pipeline writes plaintext, but Odoo 19 requires
 # pbkdf2-hashed passwords for the database manager.
