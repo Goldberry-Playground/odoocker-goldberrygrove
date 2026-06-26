@@ -55,6 +55,35 @@ if [ "$DRY_RUN" = "1" ]; then
   exit 0
 fi
 
+# Pre-detach any attached volumes BEFORE issuing droplet DELETE. Without this,
+# the volume_attachment in TF state still references the dead droplet on next
+# apply -- and the new attachment can collide with the DO-side stale "attached
+# to droplet <gone-id>" record, causing the qa-deploy to fail with a
+# confusing "volume already attached" error. Detaching here makes the
+# next apply's reattach clean.
+#
+# Idempotent: if a droplet has no volumes, the detach loop is a no-op.
+# Token scope: needs volume:write. The teardown PAT now has block_storage
+# scope (added 2026-06-27 alongside this script change); if not, the detach
+# is silently 403'd and the script continues (droplet still gets destroyed,
+# next apply just has the same race window as before -- not worse than baseline).
+for id in $ids; do
+  vol_ids=$(echo "$list_json" | jq -r --arg id "$id" '.droplets[] | select(.id == ($id|tonumber)) | .volume_ids[]?')
+  for vol_id in $vol_ids; do
+    echo "  -> pre-detaching volume $vol_id from droplet $id"
+    detach_resp=$(curl -s -o /dev/null -w '%{http_code}' \
+      -X POST -H "Authorization: Bearer $DIGITALOCEAN_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d "{\"type\":\"detach\",\"droplet_id\":${id}}" \
+      "https://api.digitalocean.com/v2/volumes/${vol_id}/actions")
+    case "$detach_resp" in
+      201|202) echo "     detach action accepted (HTTP $detach_resp)" ;;
+      403)     echo "     WARN: HTTP 403 -- token lacks block_storage:write, skipping (droplet destroy will auto-detach but may race next apply)" >&2 ;;
+      *)       echo "     WARN: HTTP $detach_resp -- continuing anyway" >&2 ;;
+    esac
+  done
+done
+
 fail_destroy=0
 fail_poll=0
 for id in $ids; do
