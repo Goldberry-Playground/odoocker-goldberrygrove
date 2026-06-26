@@ -12,7 +12,7 @@
 # TLS: Caddy via DO DNS-01 wildcard. ONE cert for apex + *.qa.* (mirror of
 # preview env's pattern). Eliminates LE's per-identifier rate limit (the
 # bug that bit us on 2026-06-25 with HTTP-01 + 5 distinct identifiers --
-# see git log for the PR #81 → PR #82 history).
+# see git log for the PR #81 -> PR #82 history).
 
 name: grove-qa
 
