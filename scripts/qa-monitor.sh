@@ -19,7 +19,7 @@
 #     (or "(none)" if torn down)
 #
 #   PUBLIC URLS  (HTTP probe + per-URL diagnosis)
-#     hub         qa.gatheringatthegrove.com      200    132ms  alive
+#     hub         hub.qa.gathering...             200    132ms  alive
 #     goldberry   goldberry.qa.gathering...       200     89ms  alive
 #     ...
 #     odoo        odoo.qa.gathering...            502     11ms  caddy proxy up, odoo backend down
@@ -71,7 +71,7 @@ else
 fi
 
 QA_ZONE="${QA_ZONE:-qa.gatheringatthegrove.com}"
-TENANTS=("goldberry" "ggg" "nursery" "odoo")  # plus "hub" at the apex
+TENANTS=("goldberry" "ggg" "nursery" "odoo")  # plus "hub" at hub.$QA_ZONE (subdomain, not apex -- per ADR-006)
 PROBE_TIMEOUT="${PROBE_TIMEOUT:-5}"
 
 # Fetch DO token (read-scoped is fine for monitoring). Cache for the session.
@@ -234,8 +234,10 @@ print(int((datetime.now(timezone.utc) - a).total_seconds() // 60))
   local tmp
   tmp=$(mktemp)
   {
-    # hub at the apex
-    echo "hub|$QA_ZONE|$(probe_url "$QA_ZONE" "hub")" &
+    # hub at hub.$QA_ZONE (NOT the apex -- ADR-006: apex isn't covered by
+    # the wildcard cert per RFC 6125; hub serves at hub.qa.* using the
+    # wildcard cert like the other 4 tenants).
+    echo "hub|hub.$QA_ZONE|$(probe_url "hub.$QA_ZONE" "hub")" &
     for t in "${TENANTS[@]}"; do
       echo "$t|$t.$QA_ZONE|$(probe_url "$t.$QA_ZONE" "$t")" &
     done
