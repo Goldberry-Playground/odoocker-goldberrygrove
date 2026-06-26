@@ -1,0 +1,62 @@
+name: Chain qa-deploy after image rebuild
+
+###############################################################################
+# Auto-triggers qa-deploy when grove-odoo or grove-caddy is rebuilt on main.
+#
+# Closes a footgun we hit on 2026-06-26 (PR #90 cycle): the image rebuild
+# completed successfully on GHCR, but the QA droplet kept running the OLD
+# image because the cloud-init `docker compose pull` only runs at droplet
+# creation -- and the droplet wasn't recreated until I manually tore it
+# down + re-triggered qa-deploy.
+#
+# This workflow chains those: when docker-odoo OR docker-caddy completes
+# on main, dispatch qa-deploy with taint_droplet=true so cloud-init runs
+# fresh and pulls the new image.
+#
+# Why taint_droplet=true: docker compose pull doesn't happen on an existing
+# droplet without manual intervention. Easiest reliable refresh = recreate
+# the droplet. The droplet recreate is now safe because qa-teardown-droplet.sh
+# handles the DO 1-min internal delete timeout out-of-band.
+###############################################################################
+
+on:
+  workflow_run:
+    workflows:
+      - "Docker — Odoo Image"
+      - "Docker -- Caddy w/ DO DNS plugin"
+    types: [completed]
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: chain-qa-after-image-rebuild
+  cancel-in-progress: true
+
+jobs:
+  trigger-qa-deploy:
+    name: Dispatch qa-deploy with taint_droplet=true
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    # Only run if the upstream workflow succeeded. Don't chain on failure --
+    # operator should investigate the failed image build, not pile on a doomed
+    # deploy.
+    if: github.event.workflow_run.conclusion == 'success'
+
+    permissions:
+      actions: write   # to dispatch the qa-deploy workflow
+
+    steps:
+      - name: Dispatch qa-deploy with taint_droplet=true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPSTREAM_WORKFLOW: ${{ github.event.workflow.name }}
+          UPSTREAM_RUN_URL: ${{ github.event.workflow_run.html_url }}
+        run: |
+          echo "Upstream image rebuild succeeded: $UPSTREAM_WORKFLOW"
+          echo "  $UPSTREAM_RUN_URL"
+          echo "Dispatching qa-deploy.yml --ref qa with taint_droplet=true"
+          gh workflow run qa-deploy.yml \
+            --ref qa \
+            --field taint_droplet=true \
+            --repo "${{ github.repository }}"

@@ -1,0 +1,56 @@
+name: Sync qa branch from main
+
+###############################################################################
+# Auto-syncs `qa` branch to `main` on every push.
+#
+# Closes a footgun we hit on 2026-06-26: after merging 5 PRs to main, the qa
+# branch was 5 commits behind. The next `gh workflow run qa-deploy --ref qa`
+# happily deployed the OLD code, hiding the new fixes for ~30 min of
+# false-positive debugging. This workflow eliminates the gap by force-pushing
+# main -> qa whenever main moves.
+#
+# Why force-push: qa is a deploy ref, not a feature branch. The expected
+# state is "qa == main, always". Anyone who pushes directly to qa is doing
+# so to bypass the main-branch protection, which is wrong; they should
+# work on a feature branch + PR to main like normal.
+#
+# Why this is safe: qa-deploy.yml's concurrency.group=qa-deploy and
+# cancel-in-progress=true means the new auto-sync push cancels any
+# in-flight deploy and starts a fresh one. No orphan jobs.
+###############################################################################
+
+on:
+  push:
+    branches: [main]
+
+# id-token isn't needed; only contents:write to push qa.
+permissions:
+  contents: write
+
+# One sync at a time. If multiple main pushes land back-to-back, the later
+# one wins (cancel-in-progress collapses to the freshest commit).
+concurrency:
+  group: sync-qa
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    name: Force-push main -> qa
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Checkout main (full history -- need it to push as fast-forward when possible)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Push main -> qa (force, since qa is a deploy ref)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # The merge commit SHA on main IS the new qa HEAD. Force-push so
+          # qa moves even if its history diverged (e.g. operator hot-fixed
+          # directly on qa during an incident).
+          git push --force origin HEAD:qa
+          echo "✓ qa synced to main @ $(git rev-parse --short HEAD)"
