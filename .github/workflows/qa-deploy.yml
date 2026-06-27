@@ -332,6 +332,31 @@ jobs:
           echo "::error::droplet didn't signal grove-ready within 20 min -- stack likely broken. SSH in via ~/.ssh/grove-qa-admin and check /var/log/cloud-init-output.log + docker ps."
           exit 1
 
+      # Post-deploy: bootstrap observability config (per ADR-007 addendum Phase 1.5).
+      # Idempotent script POSTs openobserve/{monitors,alerts,dashboards}.json +
+      # keep/{providers,workflows}.yml to the OpenObserve + Keep instances on the
+      # observability droplet. Re-runs upsert by name/id so this is safe to call
+      # every deploy.
+      #
+      # GATED on OPENOBSERVE_BASE_URL being set in Infisical. Today (pre-Level-3)
+      # there is no obs droplet, so OPENOBSERVE_BASE_URL is unset and this step
+      # skips cleanly. When Phase 1.5 of ADR-007 ships:
+      #   1. Provision obs droplet via TF (separate from app droplet)
+      #   2. Add to Infisical: OPENOBSERVE_BASE_URL, KEEP_BASE_URL, plus the 5
+      #      secrets the script already requires (OPENOBSERVE_ROOT_EMAIL/_PASSWORD,
+      #      KEEP_WEBHOOK_TOKEN, DISCORD_WEBHOOK_WARNING/_CRITICAL)
+      #   3. Next qa-deploy auto-fires this step — no workflow change needed
+      #
+      # The script's URL functions (oo_base_url/keep_base_url) read these env
+      # vars; without OPENOBSERVE_BASE_URL set they default to localhost (which
+      # would 404 from a CI runner). The if-gate prevents that 404.
+      - name: Post-deploy - bootstrap OpenObserve + Keep monitoring (gated)
+        if: env.OPENOBSERVE_BASE_URL != ''
+        timeout-minutes: 5
+        run: |
+          echo "::notice::OPENOBSERVE_BASE_URL is set ($OPENOBSERVE_BASE_URL) -- bootstrapping monitoring config"
+          python3 scripts/setup-monitoring.py
+
       - name: Post URL list to Discord
         if: always()
         timeout-minutes: 1
