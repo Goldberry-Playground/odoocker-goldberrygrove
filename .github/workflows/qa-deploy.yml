@@ -357,6 +357,28 @@ jobs:
           echo "::notice::OPENOBSERVE_BASE_URL is set ($OPENOBSERVE_BASE_URL) -- bootstrapping monitoring config"
           python3 scripts/setup-monitoring.py
 
+      # Cert preference upgrade: if Caddy is currently serving an LE STAGING
+      # cert (from a prior prod-rate-limit fallback), try to upgrade to LE
+      # prod. Idempotent + safe: exit 0 if already on prod, exit 3 if prod
+      # still rate-limited (no worse than current state), exit 4 if Caddy
+      # unreachable. continue-on-error so a single failed upgrade attempt
+      # doesn't fail the whole deploy.
+      #
+      # Also runs on its own cron (caddy-prefer-prod-cert.yml every 6h) to
+      # catch stuck-on-staging certs between deploys.
+      - name: Post-deploy - prefer prod cert over staging fallback
+        if: always() && steps.tf_outputs.outputs.droplet_ip != ''
+        timeout-minutes: 3
+        continue-on-error: true
+        env:
+          # Materialize the ADMIN key (not deploy key) for cert ops -- script
+          # needs to docker exec inside grove-qa-caddy-1, which requires the
+          # admin key path. The CI key (~/.ssh/grove-qa-deploy) was written
+          # earlier in this workflow; the upgrader script reads from
+          # ~/.ssh/grove-qa-admin by default, so symlink.
+          SSH_KEY: /home/runner/.ssh/grove-qa-deploy
+        run: bash scripts/caddy-prefer-prod-cert.sh
+
       - name: Post URL list to Discord
         if: always()
         timeout-minutes: 1
