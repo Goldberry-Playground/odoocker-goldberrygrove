@@ -25,12 +25,15 @@
 		# (unique 5-char-suffix host label) mean rate-limit risk is lower
 		# than QA's, but the fallback costs nothing to add and matches
 		# the QA pattern -- worth doing for consistency.
+		# Caddy subdirective for ACME directory URL inside `issuer acme {}` is
+		# `dir`, not `ca` (`acme_ca` only works as global option). PR #116
+		# fixed the crashloop this caused in QA on 2026-06-27.
 		issuer acme {
-			ca {env.ACME_CA}
+			dir {env.ACME_CA}
 			dns digitalocean {env.DO_API_TOKEN}
 		}
 		issuer acme {
-			ca https://acme-staging-v02.api.letsencrypt.org/directory
+			dir https://acme-staging-v02.api.letsencrypt.org/directory
 			dns digitalocean {env.DO_API_TOKEN}
 		}
 	}
