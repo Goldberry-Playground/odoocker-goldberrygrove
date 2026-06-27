@@ -1,5 +1,25 @@
 # Local Development Guide
 
+> Part of the Grove deployment story. See [`docs/DEPLOY-OVERVIEW.md`](./DEPLOY-OVERVIEW.md) for how local / QA / prod fit together.
+
+## Quickstart (most common path)
+
+```bash
+cd ~/Documents/Dev\ Projects/gather-at-the-grove/odoocker
+cp .env.example .env             # one-time
+make all-up                      # full stack (postgres + odoo + frontends)
+make monitoring-up               # optional: OpenObserve + Keep observability
+make help                        # see all make targets
+```
+
+Then visit:
+- Odoo: http://localhost:8069 (admin password from `.env`)
+- Hub: http://localhost:3000
+- Tenant frontends: http://localhost:3001-3003
+- OpenObserve UI: http://localhost:5080 (if `monitoring-up`)
+
+The sections below cover full first-time setup + the daily development loop.
+
 ## Prerequisites
 
 - **OrbStack** (Docker runtime): `brew install orbstack`
