@@ -208,24 +208,15 @@ jobs:
       # is cheap (~3 min boot, cert from volume = no LE call). Without the
       # pre-teardown we get random failures; with it we get reliable
       # recreates. The recreate cost is much less than the failure cost.
-      # Token choice: ideally uses DIGITALOCEAN_TOKEN_TEARDOWN (least-privilege:
-      # droplet:delete + block_storage:write only). However, on 2026-06-26 the
-      # Infisical-stored value of DIGITALOCEAN_TOKEN_TEARDOWN was found to
-      # 401 in CI (the 1Password copy works fine -- the values diverged).
-      # Until the Infisical secret is reconciled with 1Password's value, we
-      # fall back to DIGITALOCEAN_TOKEN (deploy-scoped, known-working). The
-      # deploy token may or may not have droplet:delete -- if not, the script
-      # exits 2 with a clear "token lacks droplet:delete scope" message,
-      # giving us actionable info rather than the 401 we got on the first
-      # attempt with the broken teardown token.
-      #
-      # Follow-up: reconcile Infisical's DIGITALOCEAN_TOKEN_TEARDOWN with the
-      # 1Password value, then change `env.DIGITALOCEAN_TOKEN` below to
-      # `${{ env.DIGITALOCEAN_TOKEN_TEARDOWN }}` and remove this comment block.
+      # Uses DIGITALOCEAN_TOKEN_TEARDOWN (least-privilege: droplet:delete +
+      # block_storage:write only). This is the post-2026-06-27-Infisical-
+      # reconciliation state -- prior to that the Infisical value was stale/
+      # broken (returned 401 in CI even though the 1Password copy worked).
+      # See PR #110 + #112 for the temporary fallback period.
       - name: Pre-teardown existing droplet (avoids DO 1m delete timeout)
         timeout-minutes: 7
         env:
-          DIGITALOCEAN_TOKEN: ${{ env.DIGITALOCEAN_TOKEN }}
+          DIGITALOCEAN_TOKEN: ${{ env.DIGITALOCEAN_TOKEN_TEARDOWN }}
         run: bash scripts/qa-teardown-droplet.sh
 
       # Plan + apply in one shot — no saved plan file. Slightly slower
