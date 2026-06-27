@@ -24,7 +24,7 @@ RUN apk update && apk upgrade --no-cache && \
 # the patched range with --target into the venv site-packages. Trivy reads
 # .dist-info METADATA files, so leftover old metadata = continued findings.
 #
-# Three packages currently need this. As upstream pgadmin updates these,
+# Five packages currently need this. As upstream pgadmin updates these,
 # the corresponding block here can shrink (or whole RUN can be deleted).
 #
 #   - urllib3 2.6.3 → 2.7.0+
@@ -41,6 +41,17 @@ RUN apk update && apk upgrade --no-cache && \
 #     allowed"). Note: package dir on disk is `jwt/`, dist-info is
 #     `pyjwt-2.12.1.dist-info` — both must be removed.
 #
+#   - python-socketio 5.16.1 → 5.16.2+
+#     CVE-2026-48804 (HIGH, "Binary attachment accumulation can cause
+#     denial of service"). Package dir on disk is `socketio/`, dist-info is
+#     `python_socketio-5.16.1.dist-info`.
+#
+#   - python-engineio 4.13.1 → 4.13.2+
+#     CVE-2026-48802 + CVE-2026-48809 (both HIGH, unbound thread allocation
+#     and unbounded max-payload-size DoS). python-socketio depends on this,
+#     so it must be pinned alongside. Package dir on disk is `engineio/`,
+#     dist-info is `python_engineio-4.13.1.dist-info`.
+#
 # The venv was created with --without-pip and --system-site-packages, so
 # we install via the system pip targeting the venv's site-packages
 # directory directly.
@@ -50,14 +61,20 @@ RUN rm -rf "${PGADMIN_VENV_SITE_PACKAGES}/urllib3" \
            "${PGADMIN_VENV_SITE_PACKAGES}/cryptography" \
            "${PGADMIN_VENV_SITE_PACKAGES}/cryptography-47.0.0.dist-info" \
            "${PGADMIN_VENV_SITE_PACKAGES}/jwt" \
-           "${PGADMIN_VENV_SITE_PACKAGES}/pyjwt-2.12.1.dist-info" && \
+           "${PGADMIN_VENV_SITE_PACKAGES}/pyjwt-2.12.1.dist-info" \
+           "${PGADMIN_VENV_SITE_PACKAGES}/socketio" \
+           "${PGADMIN_VENV_SITE_PACKAGES}/python_socketio-5.16.1.dist-info" \
+           "${PGADMIN_VENV_SITE_PACKAGES}/engineio" \
+           "${PGADMIN_VENV_SITE_PACKAGES}/python_engineio-4.13.1.dist-info" && \
     /usr/local/bin/pip3 install \
         --no-cache-dir \
         --target="${PGADMIN_VENV_SITE_PACKAGES}" \
         --root-user-action=ignore \
         'urllib3>=2.7.0,<3.0' \
         'cryptography>=48.0.1,<50.0' \
-        'PyJWT>=2.13.0,<3.0'
+        'PyJWT>=2.13.0,<3.0' \
+        'python-socketio>=5.16.2,<6.0' \
+        'python-engineio>=4.13.2,<5.0'
 
 # Check if the private key exists, copy it and set permissions if it does
 RUN if [ -f ./pgadmin/private_key ]; then \
