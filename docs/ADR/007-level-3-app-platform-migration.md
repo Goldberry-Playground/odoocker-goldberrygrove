@@ -200,3 +200,72 @@ After QA validates for 2-4 weeks, build `infra/terraform/environments/production
 - [DO App Platform pricing](https://www.digitalocean.com/pricing/app-platform)
 - [DO Managed Database pricing](https://www.digitalocean.com/pricing/databases)
 - [App Platform spec reference](https://docs.digitalocean.com/products/app-platform/reference/app-spec/)
+
+---
+
+## Addendum 2026-06-26: observability stack integration (ADR-008 + design spec)
+
+The original ADR-007 above scoped 3 planes (App Platform + Odoo droplet + Managed PG). The merged ADR-008 (OpenObserve + Keep supersedes ADR-004's Phase-11 Loki/Prom/Grafana/Sentry) + the design spec at `docs/specs/2026-06-26-grove-observability-design.md` add **two more planes** that Level 3 must include from Phase 1:
+
+### Updated topology (5 planes, not 3)
+
+| Plane | Runs | Failure-domain rationale |
+|---|---|---|
+| App Platform | hub + 3 tenant frontends | DO-managed TLS + per-app isolation |
+| Tiny Odoo droplet | Odoo + Caddy + **Beyla eBPF sidecar + OTel Collector** | Single cert, persistent /data volume (ADR-005), eBPF needs `privileged: true` + `pid: host` so it can't go on App Platform |
+| DO Managed Postgres | shared instance, per-company data | Backups + PITR + private network |
+| **Observability droplet (NEW)** | OpenObserve + Keep + Plausible (prod only) | Own failure domain — monitoring outlives an app-plane outage |
+| **AgenticOS droplet (existing)** | Self-hosted Healthchecks dead-man's-switch | Separate failure domain ($0 incremental; ~$1/mo block volume per ADR-005 PR-A pattern for Healthchecks' PG) |
+
+### Updated cost estimates
+
+| Env | Previous estimate | + obs droplet | + Healthchecks volume | **Updated total** |
+|---|---|---|---|---|
+| QA | ~$47/mo | +$12/mo (s-1vcpu-2gb obs droplet) | +$1/mo | **~$60/mo** (vs. ~$47 in original ADR) |
+| Prod | ~$102/mo | +$24/mo (s-2vcpu-4gb obs droplet) | (shared AgenticOS, $0 incremental) | **~$126/mo** (vs. ~$102 in original ADR) |
+
+Updated delta over today's spend (~$24/mo monolith): **~2.5× for QA / ~2.6× for prod** (not 2× as originally stated). Still acceptable for the operational-burden reduction; recording the corrected number for honest planning.
+
+### Phase 1 (TF env scaffold) — additional resources
+
+Original Phase 1 listed App Platform placeholders + Managed PG + tiny Odoo droplet + persistent volume. Add to that list:
+
+- `digitalocean_droplet.observability` (s-1vcpu-2gb in QA, s-2vcpu-4gb in prod), tags `env-<env>,project-grove,role-observability`
+- `digitalocean_volume` for OpenObserve's Parquet storage if needed (TBD — OpenObserve writes to local FS by default; spec says Parquet-on-MinIO so may not need a separate block volume)
+- `digitalocean_firewall.observability` (SSH from admin CIDR + OTLP ingest from Cloudflare-WAF IPs only — never public)
+- DNS records for Cloudflare-WAF-protected OTLP ingest subdomain (per spec §1 Tier-2)
+- The AgenticOS droplet is **existing** (out of scope for this TF env) but Healthchecks setup + its block volume should be tracked separately
+
+### Phase 2 (App Platform spec per frontend) — observability hooks
+
+In addition to the frontend service definition, each App Platform spec gains:
+- `OTEL_EXPORTER_OTLP_ENDPOINT` env var → obs droplet's ingest URL
+- `OTEL_SERVICE_NAME` = tenant name; `OTEL_RESOURCE_ATTRIBUTES` includes `service.version=<git_sha>` + `deployment.environment=<env>`
+- The frontend code already calls `@grove/analytics` (today a `console.warn` stub; per spec §2 becomes a lazy dual-writer to OpenObserve RUM + Plausible)
+
+### Phase 1.5 (NEW phase between scaffold + app-platform-specs) — bootstrap monitoring
+
+After TF creates the obs droplet but before App Platform apps go live, run the existing `scripts/setup-monitoring.py` against the new env's OpenObserve URL. The script is idempotent (uploads `openobserve/{monitors,alerts,dashboards}.json` + `keep/{workflows,providers}.yml`). Wire it as a new step in `qa-deploy.yml` (currently NOT wired — known gap; spec §6 explicitly calls for it as a post-deploy step).
+
+### Three independent alert paths (resilience design from spec §5)
+
+Level 3 must preserve all three from day one (don't degrade resilience during migration):
+1. OpenObserve + Keep → Discord (primary, on obs droplet)
+2. DO-native alerts (App Platform `DEPLOYMENT_FAILED`/`DOMAIN_FAILED` + Managed PG/Redis policies) → Discord
+3. GitHub Actions external synthetic cron (zero-droplet dependency)
+
+Plus the dead-man's-switch: OpenObserve/Keep curl Healthchecks every 60s; if pings stop, Healthchecks fires Discord independently. This catches "OpenObserve itself is down" — the watcher-of-the-watcher.
+
+### Updated "Open items" resolution
+
+The original ADR-007 listed KeyDB + MinIO + Ghost placement as open. Per spec §2 + §3:
+- **MinIO**: OpenObserve uses MinIO for Parquet storage. **Either** keep MinIO on obs droplet (fine for low volume) **or** swap for DO Spaces (S3-compatible; reduces obs droplet RAM but adds ~$5/mo). Decide at Phase 1.5 time based on storage volume.
+- **KeyDB**: not relevant to observability stack. BFF caching decision (DO Managed Redis vs droplet KeyDB) is independent of Level 3 / observability.
+- **Ghost**: continue pointing frontends at live `blog.goldberrygrove.farm` (per existing pattern). Self-hosted Ghost-per-tenant deferred until tenant blog content actually exists.
+
+### Cross-references
+
+- ADR-008 (`docs/ADR/008-observability-openobserve-supersedes-adr004.md`) — the supersession decision this addendum implements
+- `docs/specs/2026-06-26-grove-observability-design.md` — full functional design (synthetic, RUM, APM, resilience, promotion)
+- `docs/MONITORING.md` — operator playbook for the already-shipped OpenObserve + Keep stack
+- `docker-compose.monitoring.yml` + `scripts/setup-monitoring.py` + `openobserve/*.json` + `keep/*.yml` — config-as-code that the new obs droplet will deploy
