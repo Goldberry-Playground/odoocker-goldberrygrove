@@ -144,13 +144,46 @@ No single failure that blinds you:
 
 **Hardening against the AI noisy-neighbor** (agent storage/RAM growth on AgenticOS): dedicated **DO block volume** for Healthchecks' Postgres (ADR-005 PR-A pattern, ~$1/mo), Docker **`mem_limit`**, and AgenticOS disk/RAM metrics shipped to the **Grove obs-droplet** OpenObserve for early warning (independent host → no circular dependency). Explicitly NOT pointing Healthchecks' DB at Grove prod Managed PG (would re-couple failure domains).
 
-**DO-API metrics bridge:** a ~50-line poller (GH Actions cron or obs-droplet container) pulls App Platform (`/v2/monitoring/metrics/apps/`: CPU/mem/restart + request-rate/p95) + Managed PG + Spaces metrics → OTLP → OpenObserve, closing the unification gap (App Platform/Managed services have no OTel-native export).
+**DO-API metrics bridge:** a ~50-line poller (GH Actions cron or obs-droplet container) pulls App Platform (`/v2/monitoring/metrics/apps/`: CPU/mem/restart + request-rate/p95) + Managed PG + Spaces metrics → OTLP → OpenObserve, closing the unification gap (App Platform/Managed services have no OTel-native export). The same bridge is **extended for cost** in §6 (DO billing → OpenObserve).
 
 **Residual (named, accepted):** if AgenticOS + Grove droplets share a DO region, a region-wide outage takes both. Accepted at farm/solo-dev tier; cross-provider free VM is the upgrade path if ever needed.
 
 ---
 
-## 6. Automation & promotion (ADR-004 Option A)
+## 6. CostOps / FinOps — cost as a fourth signal
+
+Cost optimization needs two streams joined: **what each thing costs** and **how hard it's working.** The USE/utilization metrics (§3C) already supply the second; the **DO billing bridge** supplies the first — so "what we're spending and what to trim" is a dashboard in the existing pane, not a new platform. (OpenCost is K8s-native and a poor fit for a Compose + PaaS stack; rejected.)
+
+**Implementation — extend the §5 DO-metrics bridge** to also poll the DigitalOcean billing + inventory APIs (read-only DO token, brokered via Infisical per ADR-003):
+
+| Source | Emits | Cadence |
+|---|---|---|
+| `/v2/customers/my/balance` + `/v2/customers/my/billing_history` | `cost.account.month_to_date`, `cost.account.balance` — the **actual** aggregate truth | daily |
+| Live resource inventory (`/v2/droplets`, `/v2/apps`, `/v2/databases`, Spaces/volumes) × DO published price list | `cost.resource.monthly_estimate{type,name,env}` — per-resource **derived** cost | hourly (catches App Platform autoscale instance-count changes) |
+
+> **Granularity caveat:** DO billing is invoice/balance-grained, not per-resource-itemized like AWS CUR. Per-resource cost is therefore *inventory × price list* (the same pricing approach Infracost uses, evaluated at runtime against live resources); the cleanly-actual figure is the account aggregate. Sufficient for rightsizing + budget alerting at this tier.
+
+**Rightsizing dashboard (the "what to trim"):** an OpenObserve dashboard joins `cost.resource.*` with the §3C USE metrics → flags `cost × low-utilization`:
+- obs / Odoo droplet sustained <20% CPU → downsize slug
+- App Platform instance <25% RAM → smaller instance class
+- Managed PG dev-tier idle → right-tier
+- Spaces storage / egress trend → lifecycle cleanup
+
+**Cost alerts (Keep → Discord, same severity routing):**
+
+| Alert | Condition |
+|---|---|
+| `cost-budget-warning` / `cost-budget-critical` | account MTD projected > $X / $Y monthly budget |
+| `cost-anomaly` | week-over-week account spend > N× baseline |
+| `cost-autoscale-jump` | App Platform instance-count rise (cost delta) — informational; ties to the autoscaling loop |
+
+**Sprint 2 complement — Infracost in CI** (Apache-2.0): comments the $/mo *delta* on every Terraform PR ("this PR adds $40/mo"), optionally gating on a threshold. Shift-left guardrail on the ADR-004 PR flow; covers what the runtime bridge can't — the cost of a change *before* it ships. Deferred to Sprint 2 so the bridge delivers the core spend + trim view first.
+
+**What this is NOT (yet) — remediation:** cost signals *surface* trim opportunities and *alert*; acting on them follows the governance line — native App Platform autoscaling for stateless frontends, and agent-drafted **human-merged** rightsizing PRs for anything structural (never auto-apply to prod, per ADR-004). The autoscaling / closed-loop remediation design is tracked separately (Tier 0 native autoscale + Tier 1 human-gated agent PRs; Tier 2 autonomous apply only for zero-blast-radius targets like idle-QA teardown).
+
+---
+
+## 7. Automation & promotion (ADR-004 Option A)
 
 Observability folds into the existing promotion backbone — **unified control plane, isolated failure planes:**
 
@@ -161,7 +194,7 @@ Observability folds into the existing promotion backbone — **unified control p
 
 ---
 
-## 7. QA↔Prod drift & triage impact
+## 8. QA↔Prod drift & triage impact
 
 ADR-004's SHA-pinned manifest makes **code identical** QA→prod; ADR-007 D1 makes **topology identical**. Residual, documented drift that can still break a clean-QA promotion:
 
@@ -176,23 +209,26 @@ ADR-004's SHA-pinned manifest makes **code identical** QA→prod; ADR-007 D1 mak
 
 ---
 
-## 8. Cost
+## 9. Cost
 
 | Item | Cost |
 |---|---|
 | OpenObserve, Keep, Hurl, Playwright, Beyla, OTel Collector, Healthchecks | $0 (open-source, self/CI-hosted) |
 | Plausible CE (prod only) | $0 (self-hosted on 8GB prod droplet) |
+| **DO billing bridge + Infracost** (CostOps, §6) | $0 (bridge piggybacks the DO-metrics poller; Infracost OSS CLI) |
 | Observability droplet | ~$12–24/mo |
 | Healthchecks block volume (AgenticOS) | ~$1/mo |
 | Discord routing | $0 |
 
-Everything else (App Platform, Managed PG, Spaces, Odoo droplet) is ADR-007 spend, not observability spend.
+Everything else (App Platform, Managed PG, Spaces, Odoo droplet) is ADR-007 spend, not observability spend — and is exactly what the §6 CostOps layer now *observes*.
 
 ---
 
-## 9. Open follow-ups
+## 10. Open follow-ups
 
 - **ADR-008** — record OpenObserve+Keep supersedes ADR-004's Loki/Prom/Grafana/Sentry observability section.
-- DO-metrics bridge: confirm poll cadence + which DO metrics map to which OpenObserve streams.
+- DO-metrics + billing bridge (§6): confirm poll cadence + which DO metrics/cost map to which OpenObserve streams; set the `$X/$Y` monthly budget thresholds.
+- **Infracost** (§6, Sprint 2): add the CI Action + decide whether to gate PRs on a cost threshold.
+- **Autoscaling / remediation loop** (referenced §6): spec the Tier 0 (native App Platform autoscale) + Tier 1 (agent-drafted, human-merged rightsizing PRs) design; hold Tier 2 (autonomous apply) to zero-blast-radius targets.
 - Decide KeyDB (Managed Redis vs droplet) + MinIO (Spaces vs droplet) placement (ADR-007 open items) — affects what infra the Collector targets.
 - `status.gatheringatthegrove.com` public status page (OpenObserve dashboard) — lands with prod DNS.
