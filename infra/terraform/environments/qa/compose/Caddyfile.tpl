@@ -27,11 +27,17 @@
     acme_ca {env.ACME_CA}
 }
 
-# Apex + wildcard in one site block = ONE cert with two identifiers,
-# requested once per Caddy /data lifetime (named volume; survives compose
-# restart, dies with droplet -- but DNS-01 + 50-certs/week-per-domain
-# means a fresh issue is cheap).
-${QA_ZONE}, *.${QA_ZONE} {
+# Wildcard ONLY -- apex deliberately excluded. The apex is intentionally
+# unrouted per ADR-006 (hub canonically serves at hub.qa.* not the bare
+# apex). Including the apex in the site block address list ALSO triggers
+# a Caddyfile parser quirk where the FIRST host matcher in the block has
+# its value replaced with the apex (verified 2026-06-27: @hub matcher
+# compiled to `host: [qa.gatheringatthegrove.com]` instead of the
+# `hub.qa.gathering` value declared in source). Dropping the apex from
+# the address list both removes the unnecessary identifier from the cert
+# AND sidesteps the parser bug. Apex requests hit Caddy with no matching
+# site block -> Caddy default-404s at the server level.
+*.${QA_ZONE} {
     tls {
         # Multi-issuer with explicit fallback. Caddy tries issuers in order;
         # on non-retryable failure (e.g. LE 429 rate limit) it advances to
@@ -41,15 +47,19 @@ ${QA_ZONE}, *.${QA_ZONE} {
         # Primary: whatever ACME_CA env says (defaults to LE prod via
         # PR-B's var.acme_endpoint; flips to LE staging when operator
         # passes use_staging_acme=true to qa-deploy).
+        # Caddy subdirective for ACME directory URL inside `issuer acme {}` is
+        # `dir`, not `ca` (the latter is only valid as a global option:
+        # `acme_ca <url>`). PR-D (#98) shipped `ca` and crashed Caddy on the
+        # 2026-06-27 cascade — fixed in PR #116 by switching to `dir`.
         issuer acme {
-            ca {env.ACME_CA}
+            dir {env.ACME_CA}
             dns digitalocean {env.DO_API_TOKEN}
         }
         # Fallback: LE staging. Browser warnings but no rate limits. Lets a
         # deploy complete cleanly even when prod is rate-limited (the
         # alternative being a stuck droplet with no cert at all).
         issuer acme {
-            ca https://acme-staging-v02.api.letsencrypt.org/directory
+            dir https://acme-staging-v02.api.letsencrypt.org/directory
             dns digitalocean {env.DO_API_TOKEN}
         }
     }
@@ -67,7 +77,7 @@ ${QA_ZONE}, *.${QA_ZONE} {
     # must be at end-of-line, contents on subsequent indented lines. This
     # crashlooped the caddy container on first DNS-01 deploy until fixed
     # inline; see git log on 2026-06-26 for the incident.
-    @hub       host ${QA_ZONE}
+    @hub       host hub.${QA_ZONE}
     @goldberry host goldberry.${QA_ZONE}
     @ggg       host ggg.${QA_ZONE}
     @nursery   host nursery.${QA_ZONE}
