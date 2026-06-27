@@ -1,5 +1,17 @@
 # Grove Deploy Guide
 
+> ⚠️ **HISTORICAL REFERENCE — DO NOT EXECUTE FOR PRODUCTION.** This doc describes the **pre-Level-3** production deploy procedure (nginx + manual ACME via Cloudflare + per-host A records). Production deployment is currently deferred pending Phase 6 of [`docs/ADR/007-level-3-app-platform-migration.md`](./ADR/007-level-3-app-platform-migration.md), which will rewrite production to use DO App Platform + Managed Postgres + tiny Odoo droplet — a fundamentally different shape from what this doc describes.
+>
+> **Use this doc for:**
+> - Historical context on the pre-Level-3 deploy procedure
+> - The QA / sandbox sections (still valid for those envs)
+> - DNS / Cloudflare conventions (still apply)
+>
+> **Do NOT use this doc for:**
+> - Provisioning production today — it would create technical debt that Phase 6 will throw away
+>
+> For the canonical "what should I do" entry point, see [`docs/DEPLOY-OVERVIEW.md`](./DEPLOY-OVERVIEW.md).
+
 > This document supersedes `docs/DEPLOYMENT.md` (now deprecated — see note at top of that file).
 
 ## ⚠️ Before You Apply
