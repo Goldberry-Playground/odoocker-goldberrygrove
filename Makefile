@@ -328,6 +328,113 @@ qa-teardown-all-full:
 	op run --env-file=$(QA_DIR)/.env.op -- \
 		bash -c 'CLOUDFLARE_API_TOKEN="$$TF_VAR_cloudflare_api_token" DIGITALOCEAN_TOKEN=$$(op item get "GoldberryGrove Infra" --vault "Goldberry Grove - Admin" --fields label=do_token_teardown --reveal) bash scripts/qa-teardown-all.sh --with-cloudflare'
 
+# ── QA fast-iteration helpers ────────────────────────────────────────────────
+#
+# Soft-touch operations against the live QA droplet WITHOUT a full qa-deploy.
+# Use when you want a sub-30s edit-test cycle instead of the 10-15 min cost of
+# a TF apply + droplet recreate.
+#
+# Hierarchy of iteration speed:
+#   1. qa-edit-caddy / qa-reload-caddy   ~5s    one-file tweak + restart
+#   2. qa-restart SERVICE=hub            ~10s   restart one container
+#   3. qa-pull-one SERVICE=hub           ~30s   pull latest image + recreate
+#   4. qa-push-compose                   ~30s   local rsync of compose/Caddyfile
+#                                                (LOCAL equivalent of PR #100's
+#                                                qa-compose-update.yml workflow)
+#   5. qa-deploy.yml workflow            ~2min  same as 4 but with CI gates
+#   6. full qa-deploy / qa-apply         ~15min droplet recreate (TF apply)
+#
+# Shared resolution of DROPLET_IP -- queries DO API by tag instead of hardcoding.
+# All targets use the long-lived admin SSH key per PR #63 (Josh's laptop only).
+#
+# CAVEAT: these create TF state drift vs the codified env. Next full qa-deploy
+# REPLACES the droplet so any inline changes vanish. Use these for "preview my
+# change quickly," then PR to main to codify.
+
+# Resolve the QA droplet IP via DO API. Cached for the make invocation.
+# Avoids hardcoding + survives droplet recreates. Requires `op` CLI + 1P access.
+QA_DROPLET_IP = $(shell op item get "GoldberryGrove Infra" --vault "Goldberry Grove - Admin" --fields label=do_token --reveal 2>/dev/null | xargs -I{} curl -sf -H "Authorization: Bearer {}" "https://api.digitalocean.com/v2/droplets?tag_name=env-qa" | python3 -c "import json,sys; d=json.load(sys.stdin); ips=[n['ip_address'] for x in d['droplets'] for n in x['networks']['v4'] if n['type']=='public']; print(ips[0] if ips else '')")
+QA_SSH = ssh -i ~/.ssh/grove-qa-admin -o StrictHostKeyChecking=no -o ConnectTimeout=8 root@$(QA_DROPLET_IP)
+QA_SCP = scp -i ~/.ssh/grove-qa-admin -o StrictHostKeyChecking=no -o ConnectTimeout=8
+
+## qa-ssh                         — Interactive shell on the QA droplet (admin key)
+.PHONY: qa-ssh
+qa-ssh:
+	@if [ -z "$(QA_DROPLET_IP)" ]; then echo "ERROR: no env-qa droplet found"; exit 1; fi
+	@echo "→ ssh root@$(QA_DROPLET_IP)"
+	$(QA_SSH)
+
+## qa-restart [SERVICE=caddy]     — docker restart on one container (default caddy)
+.PHONY: qa-restart
+qa-restart:
+	@if [ -z "$(QA_DROPLET_IP)" ]; then echo "ERROR: no env-qa droplet found"; exit 1; fi
+	@svc=$${SERVICE:-caddy}; \
+		echo "→ docker restart grove-qa-$$svc-1 on $(QA_DROPLET_IP)"; \
+		$(QA_SSH) "docker restart grove-qa-$$svc-1" && \
+		sleep 3 && \
+		$(QA_SSH) "docker ps --filter name=grove-qa-$$svc-1 --format '  {{.Names}} {{.Status}}'"
+
+## qa-logs [SERVICE=odoo] [TAIL=N] — Stream container logs (default odoo, last 100, follow)
+.PHONY: qa-logs
+qa-logs:
+	@if [ -z "$(QA_DROPLET_IP)" ]; then echo "ERROR: no env-qa droplet found"; exit 1; fi
+	@svc=$${SERVICE:-odoo}; tail=$${TAIL:-100}; \
+		echo "→ docker logs grove-qa-$$svc-1 --tail $$tail -f on $(QA_DROPLET_IP)"; \
+		$(QA_SSH) "docker logs grove-qa-$$svc-1 --tail $$tail -f"
+
+## qa-shell [SERVICE=odoo]        — Interactive shell INSIDE a container
+.PHONY: qa-shell
+qa-shell:
+	@if [ -z "$(QA_DROPLET_IP)" ]; then echo "ERROR: no env-qa droplet found"; exit 1; fi
+	@svc=$${SERVICE:-odoo}; \
+		echo "→ docker exec -it grove-qa-$$svc-1 sh on $(QA_DROPLET_IP)"; \
+		$(QA_SSH) -t "docker exec -it grove-qa-$$svc-1 sh"
+
+## qa-pull-one SERVICE=<name>     — Pull latest image + recreate ONE compose service
+.PHONY: qa-pull-one
+qa-pull-one:
+	@if [ -z "$(QA_DROPLET_IP)" ]; then echo "ERROR: no env-qa droplet found"; exit 1; fi
+	@if [ -z "$(SERVICE)" ]; then echo "ERROR: SERVICE=<hub|goldberry|ggg|nursery|odoo|caddy> required"; exit 1; fi
+	@echo "→ docker compose pull $(SERVICE) + up -d $(SERVICE) on $(QA_DROPLET_IP)"
+	$(QA_SSH) "cd /etc/grove && docker compose --env-file .env pull $(SERVICE) && docker compose --env-file .env up -d $(SERVICE)"
+
+## qa-reload-caddy                — docker restart on caddy container (reload is unreliable)
+.PHONY: qa-reload-caddy
+qa-reload-caddy:
+	@if [ -z "$(QA_DROPLET_IP)" ]; then echo "ERROR: no env-qa droplet found"; exit 1; fi
+	@echo "→ docker restart grove-qa-caddy-1 on $(QA_DROPLET_IP)"
+	$(QA_SSH) "docker exec grove-qa-caddy-1 caddy validate --config /etc/caddy/Caddyfile 2>&1 | tail -2 && docker restart grove-qa-caddy-1"
+	@sleep 3 && $(QA_SSH) "docker ps --filter name=caddy --format '  {{.Names}} {{.Status}}'"
+
+## qa-edit-caddy                  — scp Caddyfile down, $$EDITOR, scp back, restart caddy
+.PHONY: qa-edit-caddy
+qa-edit-caddy:
+	@if [ -z "$(QA_DROPLET_IP)" ]; then echo "ERROR: no env-qa droplet found"; exit 1; fi
+	@tmp=$$(mktemp -d)/Caddyfile; \
+		echo "→ fetching live Caddyfile to $$tmp"; \
+		$(QA_SCP) root@$(QA_DROPLET_IP):/etc/grove/Caddyfile $$tmp && \
+		$${EDITOR:-vim} $$tmp && \
+		echo "→ pushing back + restart" && \
+		$(QA_SCP) $$tmp root@$(QA_DROPLET_IP):/etc/grove/Caddyfile && \
+		$(QA_SSH) "docker restart grove-qa-caddy-1" && \
+		sleep 3 && $(QA_SSH) "docker ps --filter name=caddy --format '  {{.Names}} {{.Status}}'"; \
+		echo "→ TF DRIFT WARNING: changes are LIVE-only. Codify in compose/Caddyfile.tpl + PR to main."
+
+## qa-push-compose                — Local-fast-path: rsync compose+Caddyfile, restart in place
+.PHONY: qa-push-compose
+qa-push-compose:
+	@if [ -z "$(QA_DROPLET_IP)" ]; then echo "ERROR: no env-qa droplet found"; exit 1; fi
+	@echo "→ rendering Caddyfile (substituting $$QA_ZONE) + pushing to $(QA_DROPLET_IP)"
+	@sed "s|\$$\{QA_ZONE\}|qa.gatheringatthegrove.com|g" \
+		$(QA_DIR)/compose/Caddyfile.tpl > /tmp/Caddyfile.rendered
+	$(QA_SCP) /tmp/Caddyfile.rendered root@$(QA_DROPLET_IP):/etc/grove/Caddyfile
+	$(QA_SCP) $(QA_DIR)/compose/docker-compose.qa.yml root@$(QA_DROPLET_IP):/etc/grove/docker-compose.yml
+	@echo "→ docker compose pull + up -d + restart caddy"
+	$(QA_SSH) "cd /etc/grove && docker compose --env-file .env pull && docker compose --env-file .env up -d && docker restart grove-qa-caddy-1"
+	@sleep 5 && $(QA_SSH) 'docker ps --format "  {{.Names}} {{.Status}}"'
+	@echo "→ TF DRIFT WARNING: changes are LIVE-only. Codify + PR to main (full qa-deploy reapplies from source)."
+	@rm -f /tmp/Caddyfile.rendered
+
 # ── Help ─────────────────────────────────────────────────────────────────────
 
 .PHONY: help
