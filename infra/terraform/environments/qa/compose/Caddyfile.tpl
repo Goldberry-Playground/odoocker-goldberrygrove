@@ -50,7 +50,7 @@
         # Caddy subdirective for ACME directory URL inside `issuer acme {}` is
         # `dir`, not `ca` (the latter is only valid as a global option:
         # `acme_ca <url>`). PR-D (#98) shipped `ca` and crashed Caddy on the
-        # 2026-06-27 cascade — fixed in PR #116 by switching to `dir`.
+        # 2026-06-27 cascade -- fixed in PR #116 by switching to `dir`.
         issuer acme {
             dir {env.ACME_CA}
             dns digitalocean {env.DO_API_TOKEN}
