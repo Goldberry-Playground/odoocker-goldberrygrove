@@ -143,9 +143,17 @@ runcmd:
   # that subdomain IS covered by the wildcard cert. A 2xx response means
   # TLS works, hub is up, and the world can reach it. Mirrors qa-monitor.sh's
   # equivalent fix in PR #108 -- both should probe the same URL.
+  #
+  # -k (insecure) flag: the sentinel verifies REACHABILITY + HTTP-layer
+  # health, NOT cert validity. Caddy's multi-issuer fallback (PR-D) can
+  # legitimately serve a staging cert when LE prod is rate-limited; -sf
+  # without -k would treat that as failure and time out the sentinel even
+  # though the stack is functional. Cert quality is separately enforced by
+  # caddy-prefer-prod-cert.yml (PR #119) which auto-upgrades staging certs
+  # to prod when budget refreshes.
   - |
     for i in $(seq 1 120); do
-      if curl -sf -o /dev/null -m 5 "https://hub.${qa_zone}/"; then
+      if curl -ksf -o /dev/null -m 5 "https://hub.${qa_zone}/"; then
         touch /var/lib/cloud/instance/grove-ready
         break
       fi
