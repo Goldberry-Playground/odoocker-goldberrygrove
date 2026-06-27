@@ -95,6 +95,12 @@ variable "frontend_image_tags" {
   }
 }
 
+variable "caddy_image_tag" {
+  description = "Tag of the grove-caddy image to deploy (ghcr.io/goldberry-playground/grove-caddy:<tag>). 'latest' tracks main; pin to a SHA (e.g. 'sha-abc1234') for reproducibility + supply-chain pinning. Same scheme as var.odoo_image_tag. Audit finding 2026-06-27 #3: this var was missing and CADDY_TAG defaulted to ':latest' with no plumbing to override -- droplets pulled :latest while check-image-shape.sh validated a specific SHA, creating a TOCTOU exposure."
+  type        = string
+  default     = "latest"
+}
+
 # === ACME endpoint (Caddy / Let's Encrypt) ===
 
 variable "acme_endpoint" {

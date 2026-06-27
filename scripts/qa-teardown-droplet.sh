@@ -67,20 +67,50 @@ fi
 # scope (added 2026-06-27 alongside this script change); if not, the detach
 # is silently 403'd and the script continues (droplet still gets destroyed,
 # next apply just has the same race window as before -- not worse than baseline).
+# Pre-detach pattern: POST detach action returns 201/202 (action queued, NOT
+# completed). Then poll the action endpoint until status="completed" before
+# proceeding to droplet DELETE -- otherwise DO can refuse the delete because
+# a volume action is still in flight, or auto-detach during droplet destroy
+# leaves the volume in `detaching` state when the next TF apply tries to
+# reattach. Audit finding 2026-06-27 #2.
 for id in $ids; do
-  vol_ids=$(echo "$list_json" | jq -r --arg id "$id" '.droplets[] | select(.id == ($id|tonumber)) | .volume_ids[]?')
+  vol_ids=$(echo "$list_json" | jq -r --arg id "$id" 'select(. != null) | .droplets[] | select((.id|tostring) == $id) | .volume_ids[]?')
   for vol_id in $vol_ids; do
     echo "  -> pre-detaching volume $vol_id from droplet $id"
-    detach_resp=$(curl -s -o /dev/null -w '%{http_code}' \
+    detach_body=$(mktemp)
+    detach_resp=$(curl -s -o "$detach_body" -w '%{http_code}' \
       -X POST -H "Authorization: Bearer $DIGITALOCEAN_TOKEN" \
       -H "Content-Type: application/json" \
       -d "{\"type\":\"detach\",\"droplet_id\":${id}}" \
       "https://api.digitalocean.com/v2/volumes/${vol_id}/actions")
     case "$detach_resp" in
-      201|202) echo "     detach action accepted (HTTP $detach_resp)" ;;
+      201|202)
+        action_id=$(jq -r '.action.id' < "$detach_body" 2>/dev/null || echo "")
+        if [ -z "$action_id" ] || [ "$action_id" = "null" ]; then
+          echo "     WARN: detach accepted (HTTP $detach_resp) but action.id missing in body -- continuing without polling" >&2
+        else
+          echo "     detach action $action_id queued; polling until completed (up to 60s)..."
+          waited=0
+          while [ "$waited" -lt 60 ]; do
+            status=$(curl -sf -H "Authorization: Bearer $DIGITALOCEAN_TOKEN" \
+              "https://api.digitalocean.com/v2/volumes/${vol_id}/actions/${action_id}" \
+              2>/dev/null | jq -r '.action.status' 2>/dev/null || echo "?")
+            case "$status" in
+              completed) echo "     detach completed (waited ${waited}s)"; break ;;
+              errored)   echo "     WARN: detach action errored after ${waited}s -- continuing (droplet destroy will retry)" >&2; break ;;
+              in-progress|"") sleep 3; waited=$((waited + 3)) ;;
+              *)         echo "     WARN: unexpected detach status '$status' -- continuing" >&2; break ;;
+            esac
+          done
+          if [ "$waited" -ge 60 ]; then
+            echo "     WARN: detach action timed out at 60s -- droplet DELETE will attempt auto-detach" >&2
+          fi
+        fi
+        ;;
       403)     echo "     WARN: HTTP 403 -- token lacks block_storage:write, skipping (droplet destroy will auto-detach but may race next apply)" >&2 ;;
       *)       echo "     WARN: HTTP $detach_resp -- continuing anyway" >&2 ;;
     esac
+    rm -f "$detach_body"
   done
 done
 
