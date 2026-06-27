@@ -193,6 +193,7 @@ resource "digitalocean_droplet" "qa" {
     qa_zone             = local.qa_zone
     odoo_image_tag      = var.odoo_image_tag
     frontend_image_tags = var.frontend_image_tags
+    caddy_image_tag     = var.caddy_image_tag
     ghost_key_goldberry = var.ghost_key_goldberry
     # DO API token for Caddy's DNS-01 ACME challenge. Same token TF uses
     # (domain:write is the scope needed to manage _acme-challenge TXT

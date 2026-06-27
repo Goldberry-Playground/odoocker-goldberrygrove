@@ -63,7 +63,10 @@ count=$(printf '%s\n' "$ids_json" | wc -l | tr -d ' ')
 echo "  found $count orphan _acme-challenge TXT record(s) in $ZONE; deleting..."
 
 fail=0
-printf '%s\n' "$ids_json" | while IFS= read -r id; do
+# Process substitution instead of `printf | while` -- the latter runs the while
+# loop in a subshell, so `fail=1` never escapes to the parent (audit finding
+# 2026-06-27 #1). Partial DELETE failures would silently be treated as success.
+while IFS= read -r id; do
   [ -z "$id" ] && continue
   code=$(curl -s -o /dev/null -w '%{http_code}' \
     -X DELETE -H "Authorization: Bearer $DIGITALOCEAN_TOKEN" \
@@ -74,13 +77,27 @@ printf '%s\n' "$ids_json" | while IFS= read -r id; do
     403) echo "    ✗ HTTP 403 deleting $id -- token lacks domain:write?" >&2; fail=1 ;;
     *)   echo "    ✗ HTTP $code deleting $id" >&2; fail=1 ;;
   esac
-done
+done < <(printf '%s\n' "$ids_json")
 
-# verify final state
+# Per-delete failures are now visible. Exit early with the operator-friendly
+# message before the verify-count step (which would mask single-record
+# failures if other records cleaned up the same name).
+if [ "$fail" = "1" ]; then
+  echo "  ERROR: one or more DELETEs returned non-2xx -- see above for details" >&2
+  exit 2
+fi
+
+# verify final state. The `|| true` keeps a transient DO API failure during
+# verification from aborting the script under set-euo-pipefail (audit finding
+# #4) -- we explicitly handle the "couldn't verify" case below.
 remaining=$(curl -sf -H "Authorization: Bearer $DIGITALOCEAN_TOKEN" \
-  "${API}?per_page=200" | jq -r '[.domain_records[] |
-    select(.type == "TXT" and .name == "_acme-challenge")] | length')
+  "${API}?per_page=200" 2>/dev/null | jq -r '[.domain_records[] |
+    select(.type == "TXT" and .name == "_acme-challenge")] | length' 2>/dev/null || echo "?")
 
+if [ "$remaining" = "?" ]; then
+  echo "  WARN: could not verify final TXT count (DO API call failed). Deletes above succeeded; rerun for verification if needed." >&2
+  exit 0
+fi
 if [ "$remaining" -ne 0 ]; then
   echo "  WARN: $remaining _acme-challenge TXT(s) remain after cleanup pass" >&2
   exit 2
