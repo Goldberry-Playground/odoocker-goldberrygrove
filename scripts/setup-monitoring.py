@@ -125,6 +125,13 @@ def wait_for(url: str, max_wait_s: int, *, name: str) -> None:
 
 # ── OpenObserve API ──────────────────────────────────────────────────────────
 def oo_base_url() -> str:
+    # If OPENOBSERVE_BASE_URL is set (e.g. running against a remote obs droplet
+    # in CI per ADR-007 addendum's Phase 1.5), use it verbatim and only append
+    # /api/default. Otherwise fall back to localhost:OPENOBSERVE_PORT for local
+    # `make monitoring-up` usage where this script + OpenObserve run side-by-side.
+    base = get_env("OPENOBSERVE_BASE_URL", "")
+    if base:
+        return f"{base.rstrip('/')}/api/default"
     port = get_env("OPENOBSERVE_PORT", "5080")
     return f"http://localhost:{port}/api/default"
 
@@ -215,6 +222,12 @@ def oo_bootstrap_dashboards() -> None:
 
 # ── Keep API ─────────────────────────────────────────────────────────────────
 def keep_base_url() -> str:
+    # If KEEP_BASE_URL is set (remote obs droplet path), use it verbatim and
+    # append /api/v1. Otherwise fall back to localhost:KEEP_BACKEND_PORT for
+    # local docker-compose.monitoring.yml usage.
+    base = get_env("KEEP_BASE_URL", "")
+    if base:
+        return f"{base.rstrip('/')}/api/v1"
     port = get_env("KEEP_BACKEND_PORT", "8080")
     return f"http://localhost:{port}/api/v1"
 
