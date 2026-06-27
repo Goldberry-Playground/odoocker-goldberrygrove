@@ -1,8 +1,8 @@
-# Grove Preview — Caddy config (templated at boot via cloud-init).
+# Grove Preview -- Caddy config (templated at boot via cloud-init).
 # Substituted variables: PREVIEW_HOST, PREVIEW_ZONE
 #
 # Caddy terminates TLS on 443 using DO DNS-01 (no inbound port-80 listener
-# needed for ACME — DO controls the DNS for preview.gatheringatthegrove.com,
+# needed for ACME -- DO controls the DNS for preview.gatheringatthegrove.com,
 # Caddy uses the DO_API_TOKEN to write the _acme-challenge TXT record).
 #
 # Routing model: each tenant has its own CNAME under the preview host
@@ -38,7 +38,7 @@
 		}
 	}
 
-	# Public-but-not-indexed — robot.txt + headers belt-and-suspender
+	# Public-but-not-indexed -- robot.txt + headers belt-and-suspender
 	header X-Robots-Tag "noindex, nofollow"
 	header Cache-Control "no-store"
 
