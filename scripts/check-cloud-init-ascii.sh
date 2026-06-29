@@ -56,6 +56,9 @@ for f in "${FILE_LIST[@]}"; do
     echo "  v $f  (pure ASCII)"
   else
     echo "  X $f  (non-ASCII detected):"
+    # Audit note SC2001 (2026-06-29): sed is more readable than bash parameter
+    # expansion for prefix-indent on a multi-line string. Disable suggestion.
+    # shellcheck disable=SC2001
     echo "$match" | sed 's/^/      /'
     fail=1
   fi

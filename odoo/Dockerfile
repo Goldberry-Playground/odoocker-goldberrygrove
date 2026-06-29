@@ -52,6 +52,13 @@ RUN touch ${LOG_PATH} && chown odoo:odoo ${LOG_PATH}
 # Debian package CVE Trivy flags whose patch is in upstream Debian but
 # the upstream odoo image hasn't been rebuilt to incorporate it yet.
 # Followed by our extra deps; one apt-get update covers both.
+#
+# Audit note DL3008 (2026-06-29): pinning apt versions would require
+# tracking each package's debian-stable version and bumping every time
+# upstream debian-slim bumps. With `apt-get upgrade` running here to PULL
+# new versions, pinning would actively defeat the purpose. Disabled with
+# rationale.
+# hadolint ignore=DL3008
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get upgrade -y && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -75,7 +82,9 @@ COPY --chown=odoo:odoo ./odoo/requirements.txt /tmp/requirements.txt
 # Don't `pip install --upgrade pip` here: Debian's apt-managed pip lacks a
 # RECORD file and pip refuses to uninstall it ("installed by debian").
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
-RUN python3 -m pip install -r /tmp/requirements.txt && \
+# Audit fix DL3042 (2026-06-29): --no-cache-dir trims ~50MB of cached
+# wheels from the final image; we never re-pip-install at runtime.
+RUN python3 -m pip install --no-cache-dir -r /tmp/requirements.txt && \
     rm /tmp/requirements.txt
 
 #--------------------------------------------#
@@ -125,6 +134,12 @@ RUN chmod 755 /entrypoint.sh
 # the default Odoo image where /usr/lib/python3/dist-packages/odoo/ is
 # root-owned. We seed with the literal template so the file is valid
 # even before the first substitution pass; subsequent boots overwrite.
+# Audit note DL3059 (2026-06-29): this RUN is intentionally separate from
+# the earlier COPYs + odoorc.sh substitution to keep layers semantically
+# distinct (the seed-conf-file step is conceptually different from the
+# apt-install or pip-install steps above). Consolidation would just trade
+# clarity for one fewer layer. Disabled.
+# hadolint ignore=DL3059
 RUN install -D -o odoo -g odoo -m 644 /odoo.conf "${ODOO_RC}"
 
 # Switch back to odoo user

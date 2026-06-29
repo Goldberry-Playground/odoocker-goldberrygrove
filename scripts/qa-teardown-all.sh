@@ -44,6 +44,10 @@ PASSTHROUGH=()
 for arg in "$@"; do
   case "$arg" in
     --keep-dns)        KEEP_DNS=1 ;;
+    # Audit fix SC2034 (2026-06-29): WITH_CF is set for readability/audit-trail
+    # but only PASSTHROUGH is actually consumed downstream. Disable the warning
+    # rather than remove — the named bool documents intent at the call site.
+    # shellcheck disable=SC2034
     --with-cloudflare) WITH_CF=1; PASSTHROUGH+=("--with-cloudflare") ;;
     --dry-run)         DRY_RUN=1; PASSTHROUGH+=("--dry-run") ;;
     *) echo "Unknown flag: $arg" >&2; exit 1 ;;

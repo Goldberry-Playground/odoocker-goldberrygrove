@@ -51,6 +51,9 @@ GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 NC='\033[0m' # No Colour
 
+# Audit note SC2329 (2026-06-29): fail() is currently unused — kept for symmetry
+# with pass()/warn() so future checks have a ready-made red-print helper.
+# shellcheck disable=SC2329
 pass() { echo -e "${GREEN}PASS${NC} $1"; }
 fail() { echo -e "${RED}FAIL${NC} $1"; }
 warn() { echo -e "${YELLOW}WARN${NC} $1"; }

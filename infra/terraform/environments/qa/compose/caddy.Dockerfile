@@ -14,8 +14,13 @@
 # Build target: ~50 MB final image; build itself takes ~30s on first compose-up.
 # Subsequent compose-ups are instant (Docker layer cache).
 
-FROM caddy:builder AS builder
+# Audit fix DL3007 (2026-06-29): pin to the major-version tag instead of
+# `:latest`/`:builder` (which IS effectively :latest). caddy:2-builder +
+# caddy:2 give us reproducible behavior across rebuilds. Bumping to Caddy 3
+# becomes an intentional decision (edit this Dockerfile + verify upstream
+# plugin compatibility).
+FROM caddy:2-builder AS builder
 RUN xcaddy build --with github.com/caddy-dns/digitalocean
 
-FROM caddy:latest
+FROM caddy:2
 COPY --from=builder /usr/bin/caddy /usr/bin/caddy

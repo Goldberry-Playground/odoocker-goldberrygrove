@@ -104,7 +104,9 @@ fi
 echo
 
 echo -e "${BOLD}URL health probe${NC}"
-for sub in "" $(echo "$TENANT_SUBDOMAINS"); do
+# Audit fix SC2116 (2026-06-29): drop the useless $(echo ...) wrapper.
+# shellcheck disable=SC2086  # intentional word-splitting on TENANT_SUBDOMAINS
+for sub in "" $TENANT_SUBDOMAINS; do
   if [ -z "$sub" ]; then
     host="$QA_ZONE"
     label="hub"

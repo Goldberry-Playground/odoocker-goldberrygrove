@@ -15,7 +15,11 @@ trap 'on_error $LINENO' ERR
 
 on_error() {
   local line=$1
-  local msg="grove-sanitize FAILED at line ${line} on $(hostname)"
+  # Audit fix SC2155 (2026-06-29): declare + assign separately so a hostname(1)
+  # failure surfaces instead of being masked by `local`'s own success.
+  local host msg
+  host=$(hostname)
+  msg="grove-sanitize FAILED at line ${line} on ${host}"
   echo "ERROR: ${msg}" >&2
   if [[ -n "${SLACK_OPS_WEBHOOK:-}" ]]; then
     curl -s -X POST -H 'Content-type: application/json' \
