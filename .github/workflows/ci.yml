@@ -124,8 +124,9 @@ jobs:
 
       - name: Stub env files
         run: |
-          [ -f .env.example ] && cp .env.example .env
-          [ -f .env.grove.example ] && cp .env.grove.example .env.grove || true
+          # Audit fix SC2015 (2026-06-29): explicit if/then instead of A&&B||C
+          if [ -f .env.example ]; then cp .env.example .env; fi
+          if [ -f .env.grove.example ]; then cp .env.grove.example .env.grove; fi
 
       # Note: docker-compose.override.local.yml partially overrides ghost-*
       # services (port mappings only). Their actual image is declared in

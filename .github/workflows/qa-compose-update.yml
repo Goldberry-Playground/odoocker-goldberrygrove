@@ -139,23 +139,27 @@ jobs:
         env:
           IP: ${{ steps.droplet.outputs.ip }}
         run: |
-          SSH_OPTS="-i ~/.ssh/grove-qa-deploy -o StrictHostKeyChecking=no -o ConnectTimeout=10"
+          # Audit fix SC2086 (2026-06-29): bash array preserves multiple
+          # flags as separate args. Previous unquoted $SSH_OPTS relied on
+          # word-splitting which shellcheck flags as a footgun.
+          SSH_OPTS=(-i ~/.ssh/grove-qa-deploy -o StrictHostKeyChecking=no -o ConnectTimeout=10)
           # Caddyfile (rendered) -- atomic via tmp + rename
-          scp $SSH_OPTS /tmp/Caddyfile.rendered "root@$IP:/etc/grove/Caddyfile.new"
-          ssh $SSH_OPTS "root@$IP" 'mv /etc/grove/Caddyfile.new /etc/grove/Caddyfile'
+          scp "${SSH_OPTS[@]}" /tmp/Caddyfile.rendered "root@$IP:/etc/grove/Caddyfile.new"
+          ssh "${SSH_OPTS[@]}" "root@$IP" 'mv /etc/grove/Caddyfile.new /etc/grove/Caddyfile'
           # compose YAML (verbatim)
-          scp $SSH_OPTS \
+          scp "${SSH_OPTS[@]}" \
             infra/terraform/environments/qa/compose/docker-compose.qa.yml \
             "root@$IP:/etc/grove/docker-compose.yml.new"
-          ssh $SSH_OPTS "root@$IP" 'mv /etc/grove/docker-compose.yml.new /etc/grove/docker-compose.yml'
+          ssh "${SSH_OPTS[@]}" "root@$IP" 'mv /etc/grove/docker-compose.yml.new /etc/grove/docker-compose.yml'
 
       - name: docker compose pull + up + caddy reload
         timeout-minutes: 5
         env:
           IP: ${{ steps.droplet.outputs.ip }}
         run: |
-          SSH_OPTS="-i ~/.ssh/grove-qa-deploy -o StrictHostKeyChecking=no -o ConnectTimeout=10"
-          ssh $SSH_OPTS "root@$IP" 'bash -c "
+          # Audit fix SC2086 (2026-06-29): same array pattern as the step above.
+          SSH_OPTS=(-i ~/.ssh/grove-qa-deploy -o StrictHostKeyChecking=no -o ConnectTimeout=10)
+          ssh "${SSH_OPTS[@]}" "root@$IP" 'bash -c "
             set -e
             cd /etc/grove
             echo \"--- pulling fresh images ---\"

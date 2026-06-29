@@ -43,8 +43,14 @@ PROJECT_ID="${INFISICAL_PROJECT_ID:-}"
 ENV_SLUG="${INFISICAL_ENV:-}"
 while [ $# -gt 0 ]; do
   case "$1" in
-    --projectId|--projectId=*) [[ "$1" == *=* ]] && PROJECT_ID="${1#*=}" || { shift; PROJECT_ID="$1"; } ;;
-    --env|--env=*)             [[ "$1" == *=* ]] && ENV_SLUG="${1#*=}"   || { shift; ENV_SLUG="$1"; } ;;
+    # Audit fix SC2015 (2026-06-29): `A && B || C` is not if-then-else.
+    # If B (the assignment) ever produced a non-zero exit, C would also run.
+    # In practice assignments don't fail, but the pattern is a known footgun;
+    # explicit if/else is unambiguous.
+    --projectId|--projectId=*)
+      if [[ "$1" == *=* ]]; then PROJECT_ID="${1#*=}"; else shift; PROJECT_ID="$1"; fi ;;
+    --env|--env=*)
+      if [[ "$1" == *=* ]]; then ENV_SLUG="${1#*=}"; else shift; ENV_SLUG="$1"; fi ;;
     *) echo "Unknown flag: $1" >&2; exit 1 ;;
   esac
   shift

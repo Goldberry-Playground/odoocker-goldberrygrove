@@ -41,6 +41,12 @@ KEEP_DNS=0
 WITH_CF=0
 DRY_RUN=0
 PASSTHROUGH=()
+# Audit fix SC2034 (2026-06-29): WITH_CF is set for readability/audit-trail
+# but only PASSTHROUGH is actually consumed downstream. Disable the warning
+# rather than remove — the named bool documents intent at the call site.
+# Directive lives here (before the `for`) because shellcheck rejects
+# disable comments inside individual case branches (SC1124).
+# shellcheck disable=SC2034
 for arg in "$@"; do
   case "$arg" in
     --keep-dns)        KEEP_DNS=1 ;;

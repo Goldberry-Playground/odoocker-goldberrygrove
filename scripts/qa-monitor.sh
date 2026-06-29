@@ -209,7 +209,10 @@ print(f'{s//60}m{s%60}s' if s >= 60 else f'{s}s')
       | jq -r '.droplets[0] // empty')
   fi
   if [ -z "${droplet:-}" ]; then
-    printf "  ${C_GRAY}(no env-qa droplet currently provisioned)${NC}\033[K\n"
+    # Audit fix SC2059 (2026-06-29): pull color codes into args, keep the
+    # format string variable-free. Prevents `%` in any color var from being
+    # interpreted as a printf format directive.
+    printf "  %s(no env-qa droplet currently provisioned)%s\033[K\n" "$C_GRAY" "$NC"
   else
     ip=$(echo "$droplet" | jq -r '.networks.v4[0].ip_address // "(no ip)"')
     dropid=$(echo "$droplet" | jq -r '.id')
@@ -221,14 +224,18 @@ a = datetime.fromisoformat('$created_at'.replace('Z','+00:00'))
 print(int((datetime.now(timezone.utc) - a).total_seconds() // 60))
 " 2>/dev/null || echo "?")
     local stat_col
-    [ "$status" = "active" ] && stat_col="$C_GREEN" || stat_col="$C_YELLOW"
-    printf "  %s  ${C_DIM}id=%s${NC}  ${stat_col}%s${NC}  ${C_DIM}created %s min ago${NC}\033[K\n" "$ip" "$dropid" "$status" "$age_min"
+    # Audit fix SC2015 (2026-06-29): explicit if/else instead of A&&B||C.
+    if [ "$status" = "active" ]; then stat_col="$C_GREEN"; else stat_col="$C_YELLOW"; fi
+    # Audit fix SC2059: format args are %s placeholders, color codes are args.
+    printf "  %s  %sid=%s%s  %s%s%s  %screated %s min ago%s\033[K\n" \
+      "$ip" "$C_DIM" "$dropid" "$NC" "$stat_col" "$status" "$NC" "$C_DIM" "$age_min" "$NC"
   fi
   printf "\033[K\n"
 
   # ─── Public URL probes (parallel) ───────────────────────────────────────
-  printf "${C_BOLD}PUBLIC URLS${NC}  ${C_DIM}probed each tick${NC}\033[K\n"
-  printf "  ${C_GRAY}%-10s  %-44s  %-5s  %-7s  %s${NC}\033[K\n" "TENANT" "HOST" "HTTP" "TIME" "DIAGNOSIS"
+  # Audit fix SC2059: pull color vars into %s args; keep format static.
+  printf "%sPUBLIC URLS%s  %sprobed each tick%s\033[K\n" "$C_BOLD" "$NC" "$C_DIM" "$NC"
+  printf "  %s%-10s  %-44s  %-5s  %-7s  %s%s\033[K\n" "$C_GRAY" "TENANT" "HOST" "HTTP" "TIME" "DIAGNOSIS" "$NC"
 
   # Probe all 5 URLs in parallel; collect into a temp file
   local tmp
