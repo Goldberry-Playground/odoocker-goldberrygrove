@@ -61,6 +61,19 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         timeout-minutes: 2
 
+      # Audit 2026-06-29 #7: lint Dockerfile for anti-patterns (DL3008/3009
+      # class) before spending time on the build. failure-threshold: error
+      # means warnings/info surface in CI logs but don't gate the build.
+      # caddy.Dockerfile has one INTENTIONAL DL3007 (uses caddy:builder
+      # which only ships :latest and :2 tags — pinning to :2 is fine, but
+      # the existing `caddy:builder` pattern is what xcaddy docs prescribe).
+      - name: hadolint Dockerfile
+        uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
+        timeout-minutes: 1
+        with:
+          dockerfile: infra/terraform/environments/qa/compose/caddy.Dockerfile
+          failure-threshold: error
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
         timeout-minutes: 2
@@ -124,6 +137,19 @@ jobs:
             exit 1
           fi
           echo "✓ caddy serves HTTP via Caddyfile"
+
+      # Audit 2026-06-29 #6: Trivy was on docker-odoo.yml but NOT here. Caddy
+      # is internet-facing (terminates TLS), so vuln-scanning matters at least
+      # as much. Same SHA pin as docker-odoo + release workflows.
+      - name: Trivy — scan image for high CVEs
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        timeout-minutes: 5
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:${{ env.TEST_TAG }}
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          format: table
+          ignore-unfixed: true  # CVEs upstream hasn't patched yet shouldn't block CI
 
       - name: Log in to GHCR
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
