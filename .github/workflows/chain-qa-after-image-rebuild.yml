@@ -47,7 +47,17 @@ jobs:
       actions: write   # to dispatch the qa-deploy workflow
 
     steps:
-      - name: Dispatch qa-deploy with taint_droplet=true
+      # Image rebuilds change the CONTENT of the running containers but NOT
+      # the droplet's user_data. A full qa-deploy (which recreates the
+      # droplet) is wasteful for an image bump: `docker compose pull && up -d`
+      # on the live droplet picks up the new image content in ~30s vs ~15
+      # min for the full deploy.
+      #
+      # Use qa-compose-update.yml (the fast path) for image rebuilds. If
+      # the image change CAN'T be applied via compose pull (e.g., the image
+      # tag itself changed in compose, requiring a TF re-apply), the next
+      # FULL deploy via sync-qa-on-main-push will handle it.
+      - name: Dispatch qa-compose-update (fast path for image rebuild)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           UPSTREAM_WORKFLOW: ${{ github.event.workflow.name }}
@@ -55,8 +65,8 @@ jobs:
         run: |
           echo "Upstream image rebuild succeeded: $UPSTREAM_WORKFLOW"
           echo "  $UPSTREAM_RUN_URL"
-          echo "Dispatching qa-deploy.yml --ref qa with taint_droplet=true"
-          gh workflow run qa-deploy.yml \
+          echo "Dispatching qa-compose-update.yml --ref qa (fast path)"
+          gh workflow run qa-compose-update.yml \
             --ref qa \
-            --field taint_droplet=true \
+            --field branch=qa \
             --repo "${{ github.repository }}"
