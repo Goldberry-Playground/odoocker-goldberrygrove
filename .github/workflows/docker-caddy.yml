@@ -61,6 +61,15 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         timeout-minutes: 2
 
+      # Audit 2026-06-29 #7: lint Dockerfile for anti-patterns (DL3008/3009
+      # class) before spending time on the build. Fails fast on bloat-prone
+      # commands like `apt-get install` without --no-install-recommends.
+      - name: hadolint Dockerfile
+        uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
+        timeout-minutes: 1
+        with:
+          dockerfile: infra/terraform/environments/qa/compose/caddy.Dockerfile
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         timeout-minutes: 2
@@ -124,6 +133,19 @@ jobs:
             exit 1
           fi
           echo "✓ caddy serves HTTP via Caddyfile"
+
+      # Audit 2026-06-29 #6: Trivy was on docker-odoo.yml but NOT here. Caddy
+      # is internet-facing (terminates TLS), so vuln-scanning matters at least
+      # as much. Same SHA pin as docker-odoo + release workflows.
+      - name: Trivy — scan image for high CVEs
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        timeout-minutes: 5
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:${{ env.TEST_TAG }}
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          format: table
+          ignore-unfixed: true  # CVEs upstream hasn't patched yet shouldn't block CI
 
       - name: Log in to GHCR
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

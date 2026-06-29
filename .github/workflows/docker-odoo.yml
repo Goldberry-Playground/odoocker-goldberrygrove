@@ -86,6 +86,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Audit 2026-06-29 #7: lint Dockerfile for anti-patterns before build.
+      # Catches DL3008/3009 class (unpinned apt packages, missing
+      # --no-install-recommends) and shell-injection in RUN blocks.
+      - name: hadolint Dockerfile
+        uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
+        timeout-minutes: 1
+        with:
+          dockerfile: odoo/Dockerfile
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 

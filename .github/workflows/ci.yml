@@ -17,6 +17,39 @@ env:
   PYTHON_VERSION: "3.12"
 
 jobs:
+  # Audit 2026-06-29 #4: catch workflow injection + shell-quoting bugs across
+  # all .github/workflows/*.yml files. Cheap (~5s); catches the class of bugs
+  # we kept tripping on (em-dash in YAML, $$ substitution, unquoted matchers).
+  actionlint:
+    name: actionlint (all workflows)
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Run actionlint
+        uses: docker://rhysd/actionlint:1.7.7
+        with:
+          args: -color
+
+  # Audit 2026-06-29 #5: shellcheck the operator scripts we rely on
+  # (qa-teardown-droplet, cleanup-acme-txts, caddy-prefer-prod-cert, etc).
+  # Catches eval-class bugs (SC2294) and quoting issues that would only
+  # surface in CI logs.
+  shellcheck:
+    name: shellcheck (scripts/)
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Run shellcheck
+        uses: ludeeus/action-shellcheck@00b27aa7cb85167568cb48a3838b75f4265f2bca # v2.0.0
+        env:
+          SHELLCHECK_OPTS: -e SC1091  # don't follow sourced files (DO Spaces creds etc.)
+        with:
+          scandir: ./scripts
+
   no-tracked-env-files:
     name: Reject tracked .env files
     runs-on: ubuntu-latest
@@ -248,6 +281,10 @@ jobs:
     name: Backend stack smoke test
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Audit 2026-06-29 #6: gate the 20-min smoke behind cheap fail-fast jobs.
+    # Previously ran in parallel with lint — a Python parse error wasted the
+    # full 20 minutes before lint caught it.
+    needs: [actionlint, shellcheck, no-tracked-env-files, lint-python, validate-compose]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
