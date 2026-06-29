@@ -301,6 +301,12 @@ jobs:
     # Previously ran in parallel with lint — a Python parse error wasted the
     # full 20 minutes before lint caught it.
     needs: [actionlint, shellcheck, no-tracked-env-files, lint-python, validate-compose]
+    # The failure-notify step below opens a qa-broken audit issue; gh issue
+    # create needs issues:write. Job-level permissions REPLACE the workflow
+    # default (contents: read), so re-declare contents:read for checkout.
+    permissions:
+      contents: read
+      issues: write
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -366,6 +372,48 @@ jobs:
             -f docker-compose.override.grove.yml \
             logs odoo postgres
           exit 1
+
+      # On a push-to-main smoke failure (a regression that already merged),
+      # notify the Paperclip Dev Agent to investigate + open a draft PR, and
+      # open a qa-broken audit issue. PR-iteration failures are intentionally
+      # NOT routed (the author is already on it). All inputs are trusted GitHub
+      # context (sha/repo/run_id) passed via env — no untrusted-input injection.
+      - name: On smoke failure (main only), fire Paperclip Dev Agent + open GH issue
+        if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          WEBHOOK_URL: ${{ secrets.PAPERCLIP_QA_TRIAGE_WEBHOOK }}
+          HMAC_SECRET: ${{ secrets.PAPERCLIP_QA_TRIAGE_SECRET }}
+          CF_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # No-op until the Paperclip webhook is configured (secrets unset) —
+          # keeps a pre-activation main regression from failing on a missing secret.
+          if [ -z "$WEBHOOK_URL" ] || [ -z "$HMAC_SECRET" ]; then
+            echo "Paperclip QA webhook not configured (secrets unset) — skipping agent trigger."
+          else
+            PAYLOAD=$(jq -nc \
+              --arg repo "$GITHUB_REPOSITORY" \
+              --arg commit "$GITHUB_SHA" \
+              --arg run_url "$RUN_URL" \
+              --arg summary "Backend stack smoke test failed on main — Odoo did not come online." \
+              '{kind:"qa_smoke_failure", repo:$repo, commit:$commit, run_url:$run_url, summary:$summary}')
+            # HMAC over the EXACT bytes sent (jq -c keeps it compact + stable).
+            SIG=$(printf '%s' "$PAYLOAD" | openssl dgst -sha256 -hmac "$HMAC_SECRET" -hex | sed 's/^.*= //')
+            curl -fsS -X POST "$WEBHOOK_URL" \
+              -H "Content-Type: application/json" \
+              -H "X-Hub-Signature-256: sha256=$SIG" \
+              -H "CF-Access-Client-Id: $CF_ID" \
+              -H "CF-Access-Client-Secret: $CF_SECRET" \
+              --data "$PAYLOAD"
+          fi
+          # Audit trail (idempotent label create so a missing label can't fail the job).
+          gh label create qa-broken --color B60205 --description "QA smoke test broken on main" 2>/dev/null || true
+          gh issue create --label qa-broken \
+            --title "QA smoke failed on main: run #${GITHUB_RUN_ID}" \
+            --body "Backend stack smoke test failed on \`main\` (Odoo did not come online). Run: ${RUN_URL} · Dev Agent notified via Paperclip (if configured)." \
+            || echo "::warning::could not open qa-broken audit issue"
 
       - name: Tear down
         if: always()
