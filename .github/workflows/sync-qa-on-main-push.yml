@@ -49,7 +49,7 @@ jobs:
     timeout-minutes: 2
     steps:
       - name: Checkout main (full history -- need it to push as fast-forward when possible)
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
           ref: main
@@ -74,11 +74,68 @@ jobs:
       # dispatches collide on qa-deploy's concurrency.group=qa-deploy with
       # cancel-in-progress=true -- the later one wins, which is correct
       # (it has all the recent changes by definition).
-      - name: Dispatch qa-deploy (workflow_dispatch -- push trigger blocked by GH anti-recursion)
+      - name: Classify changes + dispatch the right workflow (or skip)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Dispatching qa-deploy.yml --ref qa"
-          gh workflow run qa-deploy.yml \
-            --ref qa \
-            --repo "${{ github.repository }}"
+          # Path-based dispatch (2026-06-27): not every main merge needs a
+          # full QA deploy. Doc-only PRs, CI workflow changes, and operator
+          # scripts have ZERO effect on the running droplet. Classify the
+          # changed paths and dispatch the smallest-cost workflow OR skip.
+          #
+          # Compare merged commit to its parent (HEAD~1 for squash/rebase
+          # merges, first parent for true merge commits — git handles both).
+          changed=$(git diff --name-only HEAD~1 HEAD)
+          echo "Changed files in this merge:"
+          echo "$changed" | sed 's/^/  /'
+          echo
+
+          full_deploy=0
+          compose_only=0
+
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            case "$f" in
+              # FULL DEPLOY (droplet recreate): TF / cloud-init / odoo image
+              infra/terraform/environments/qa/*.tf | \
+              infra/terraform/environments/qa/.terraform.lock.hcl | \
+              infra/terraform/environments/qa/cloud-init.yaml.tpl | \
+              odoo/* | \
+              infra/terraform/modules/*)
+                full_deploy=1 ;;
+              # COMPOSE FAST PATH (~2 min, no recreate): compose/Caddyfile
+              infra/terraform/environments/qa/compose/*)
+                compose_only=1 ;;
+              # SKIP — no QA droplet impact
+              docs/* | *.md | Makefile | LICENSE | CHANGELOG | \
+              .github/workflows/* | .github/dependabot.yml | .github/CODEOWNERS | \
+              scripts/qa-*.sh | \
+              scripts/check-*.sh | \
+              scripts/cleanup-acme-txts.sh | \
+              scripts/caddy-prefer-prod-cert.sh | \
+              scripts/setup-monitoring.py | \
+              infra/terraform/environments/production/* | \
+              infra/terraform/environments/preview/*)
+                ;;
+              # DEFAULT: unknown path → conservative full deploy
+              *)
+                echo "  ⚠ unclassified path: $f — triggering full deploy"
+                full_deploy=1 ;;
+            esac
+          done <<< "$changed"
+
+          if [ "$full_deploy" = "1" ]; then
+            echo "→ FULL deploy (qa-deploy.yml): TF / cloud-init / odoo image changed"
+            gh workflow run qa-deploy.yml \
+              --ref qa \
+              --repo "${{ github.repository }}"
+          elif [ "$compose_only" = "1" ]; then
+            echo "→ COMPOSE fast path (qa-compose-update.yml): compose/Caddyfile only"
+            gh workflow run qa-compose-update.yml \
+              --ref qa \
+              --field branch=qa \
+              --repo "${{ github.repository }}"
+          else
+            echo "→ SKIP: no QA-impacting changes in this merge"
+            echo "  (docs / workflows / operator scripts only — running droplet unaffected)"
+          fi
