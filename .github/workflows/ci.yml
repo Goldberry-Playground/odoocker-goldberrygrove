@@ -30,11 +30,15 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Run actionlint
         uses: docker://rhysd/actionlint:1.7.7
+        # actionlint shells out to shellcheck internally; shellcheck reads
+        # SHELLCHECK_OPTS from its env. `-S warning` filters out info/style
+        # findings so only warning+ gates the build — matches the threshold
+        # of the standalone `shellcheck` job below. Dial down to `-S style`
+        # once the codebase is style-clean.
+        env:
+          SHELLCHECK_OPTS: -S warning
         with:
-          # Embedded shellcheck threshold matches the standalone `shellcheck`
-          # job below — only warning+ findings gate; info/style remain
-          # advisory in CI logs. Dial down to `-S style` once style-clean.
-          args: -color -shellcheck=shellcheck\ -S\ warning
+          args: -color
 
   # Audit 2026-06-29 #5: shellcheck the operator scripts we rely on
   # (qa-teardown-droplet, cleanup-acme-txts, caddy-prefer-prod-cert, etc).
