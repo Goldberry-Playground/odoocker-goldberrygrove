@@ -104,6 +104,14 @@ write_files:
       CADDY_TAG=${caddy_image_tag}
       DO_API_TOKEN=${do_token_for_caddy}
       ACME_CA=${acme_endpoint}
+      # qa_portal_pg -- co-located Postgres for the Grove QA portal app. Lives on
+      # its own qa_portal_net Docker network (defined in docker-compose.qa.yml)
+      # so it's isolated from the main grove network; only containers attached
+      # to qa_portal_net can reach it. Password rotates per droplet recreate
+      # (qa-deploy.yml reads this value after grove-ready and pushes the
+      # constructed URL to Infisical under grove-odoo/prod/qa-portal/QA_PORTAL_DATABASE_URL,
+      # so the portal app always fetches a fresh URL on each deploy).
+      QA_PORTAL_PG_PASSWORD=__QA_PORTAL_PG_PASSWORD__
 
   - path: /etc/grove/Caddyfile
     encoding: b64
@@ -129,6 +137,7 @@ runcmd:
   # ran before runcmd; sed-substitute the placeholders in /etc/grove/.env).
   - PGPW=$(openssl rand -hex 24) && sed -i "s|__POSTGRES_PASSWORD__|$PGPW|" /etc/grove/.env
   - OAPW=$(openssl rand -hex 16) && sed -i "s|__ODOO_ADMIN_PASSWORD__|$OAPW|" /etc/grove/.env
+  - QPPW=$(openssl rand -hex 24) && sed -i "s|__QA_PORTAL_PG_PASSWORD__|$QPPW|" /etc/grove/.env
 
   # Bring the stack up. Logs to /var/log/grove-qa-up.log for triage.
   - cd /etc/grove && docker compose --env-file /etc/grove/.env up -d > /var/log/grove-qa-up.log 2>&1
