@@ -121,5 +121,26 @@ services:
     networks:
       - internal
 
+  # ── synthetic-runner — Tier-1 Hurl journeys ───────────────────────────────
+  # supercronic runs the Hurl journeys every 60s against the live grove_headless
+  # API (Odoo by service-name DNS on this shared network) and ships pass/fail +
+  # latency to OpenObserve as OTLP metrics. The synthetic-* alert rules query
+  # those metric streams. See synthetic/README.md.
+  synthetic-runner:
+    build:
+      context: ./synthetic
+    restart: unless-stopped
+    depends_on:
+      - openobserve
+    environment:
+      SYNTHETIC_ODOO_BASE: ${SYNTHETIC_ODOO_BASE:-http://odoo:8069}
+      SYNTHETIC_TENANTS: ${SYNTHETIC_TENANTS:-goldberry,ggg,nursery}
+      SYNTHETIC_ENV: ${SYNTHETIC_ENV:-local}
+      OPENOBSERVE_OTLP_METRICS_URL: ${OPENOBSERVE_OTLP_METRICS_URL:-http://openobserve:5080/api/default/v1/metrics}
+      OPENOBSERVE_ROOT_EMAIL: ${OPENOBSERVE_ROOT_EMAIL}
+      OPENOBSERVE_ROOT_PASSWORD: ${OPENOBSERVE_ROOT_PASSWORD}
+    networks:
+      - internal
+
 volumes:
   keep-data:
