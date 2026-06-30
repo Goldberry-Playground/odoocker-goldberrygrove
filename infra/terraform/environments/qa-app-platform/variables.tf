@@ -98,6 +98,26 @@ variable "caddy_image_tag" {
   default     = "latest"
 }
 
+# === Observability droplet (Phase 1.5) ===
+
+variable "obs_droplet_size" {
+  description = "DigitalOcean droplet size for the observability droplet (OpenObserve + Keep + inline MinIO). s-1vcpu-2gb fits comfortably in QA per ADR-007 addendum. Cost ~$12/mo while running."
+  type        = string
+  default     = "s-1vcpu-2gb"
+}
+
+variable "openobserve_tag" {
+  description = "OpenObserve image tag (public.ecr.aws/zinclabs/openobserve:<tag>). Match the version pinned in docker-compose.monitoring.yml so behavior is consistent across local + Level 3."
+  type        = string
+  default     = "v0.17.2"
+}
+
+variable "keep_tag" {
+  description = "Keep (alert routing) image tag for both keep-api and keep-ui. Match docker-compose.monitoring.yml."
+  type        = string
+  default     = "latest"
+}
+
 # === ACME endpoint (Caddy / Let's Encrypt) ===
 
 variable "acme_endpoint" {

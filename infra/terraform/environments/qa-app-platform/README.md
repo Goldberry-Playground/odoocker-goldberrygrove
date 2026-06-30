@@ -6,8 +6,8 @@ The new QA shape from [ADR-007](../../../../docs/ADR/007-level-3-app-platform-mi
 
 | Phase | Scope | Status |
 |---|---|---|
-| **1** | TF scaffold: Managed PG + Odoo droplet + Caddy + DNS + firewall + volume | ✅ this PR |
-| **1.5** | Observability droplet + OpenObserve bootstrap (per ADR-007 addendum) | ⏳ next PR |
+| **1** | TF scaffold: Managed PG + Odoo droplet + Caddy + DNS + firewall + volume | ✅ merged (#133) |
+| **1.5** | Observability droplet + OpenObserve + Keep + inline MinIO | ✅ this PR |
 | **2** | App Platform app specs (4 PRs, one per frontend) | ⏳ pending |
 | **3** | Soak validation (~2 weeks both envs running) | ⏳ pending |
 | **4** | DNS cutover (qa-l3 → qa subdomain) | ⏳ pending |
@@ -21,11 +21,15 @@ Phase 1 lands the **bones** of the env. Nothing in this PR is applied yet — ap
 |---|---|
 | `versions.tf` | TF + provider version constraints (mirrors monolith QA) |
 | `variables.tf` | All inputs; sensitive ones flow via `TF_VAR_*` from 1Password |
-| `main.tf` | The resources — Managed PG cluster, Odoo droplet, SSH keys, DNS, firewall, Caddy volume |
-| `outputs.tf` | Droplet IP, Odoo URL, PG cluster ID (consumed by Phase 2 app specs) |
-| `cloud-init.yaml.tpl` | Stripped to Odoo + Caddy only; wires Managed PG connection via env |
+| `main.tf` | Odoo droplet, Managed PG cluster, SSH keys, DNS, firewall, Caddy volume |
+| `observability.tf` | Obs droplet + DNS for oo/keep subdomains + obs firewall |
+| `outputs.tf` | Droplet IPs, Odoo URL, OpenObserve URL, Keep URL, PG cluster ID |
+| `cloud-init.yaml.tpl` | Stripped to Odoo + Caddy only; wires Managed PG via env |
+| `cloud-init-obs.yaml.tpl` | Obs droplet bring-up: docker + MinIO + OpenObserve + Keep + Caddy |
 | `compose/docker-compose.qa.yml` | Two services: caddy + odoo. No postgres, no frontends |
+| `compose/docker-compose.obs.yml` | Obs stack: minio + openobserve + keep + caddy |
 | `compose/Caddyfile.tpl` | Single hostname (`odoo.qa-l3.<apex>`) — Caddy fronts only Odoo |
+| `compose/Caddyfile-obs.tpl` | Two admin-only hostnames (`oo.qa-l3.<apex>`, `keep.qa-l3.<apex>`) |
 | `terraform.tfvars.example` | Non-sensitive overrides; documentation only (sensitive via env) |
 | `backend.hcl.example` | Remote state config; copy + fill in for `terraform init` |
 
@@ -46,12 +50,13 @@ Phase 1 lands the **bones** of the env. Nothing in this PR is applied yet — ap
 |---|---|
 | Managed Postgres (db-s-1vcpu-1gb dev tier) | ~$15/mo |
 | Odoo droplet (s-1vcpu-2gb) | ~$12/mo |
+| Obs droplet (s-1vcpu-2gb) | ~$12/mo |
 | Caddy /data volume (1GB) | ~$0.10/mo |
-| **Phase 1 total while running** | **~$27/mo** |
+| **Phases 1 + 1.5 total while running** | **~$39/mo** |
 
-Phase 2 adds 4 × $5 basic App Platform apps (~$20/mo) → **~$47/mo full env**.
+Phase 2 adds 4 × $5 basic App Platform apps (~$20/mo) → **~$59/mo full env** (matches the ADR-007 addendum revised estimate of ~$60/mo for QA).
 
-During the Phase 3 parallel-cutover validation window, expect ~$71/mo total (monolith QA $24 + Level 3 $47). The monolith retires in Phase 5.
+During the Phase 3 parallel-cutover validation window, expect ~$83/mo total (monolith QA $24 + Level 3 $59). The monolith retires in Phase 5.
 
 ## Applying
 
