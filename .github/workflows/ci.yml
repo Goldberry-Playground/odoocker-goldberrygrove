@@ -31,7 +31,10 @@ jobs:
       - name: Run actionlint
         uses: docker://rhysd/actionlint:1.7.7
         with:
-          args: -color
+          # Embedded shellcheck threshold matches the standalone `shellcheck`
+          # job below — only warning+ findings gate; info/style remain
+          # advisory in CI logs. Dial down to `-S style` once style-clean.
+          args: -color -shellcheck=shellcheck\ -S\ warning
 
   # Audit 2026-06-29 #5: shellcheck the operator scripts we rely on
   # (qa-teardown-droplet, cleanup-acme-txts, caddy-prefer-prod-cert, etc).

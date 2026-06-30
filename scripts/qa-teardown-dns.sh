@@ -82,8 +82,8 @@ if [ "$WITH_CF" = "1" ]; then
     echo "     FAIL: couldn't resolve CF zone for $CF_APEX_ZONE" >&2
     exit 3
   fi
-  # Find NS records named exactly "qa" (the subdomain piece)
-  qa_label="${QA_ZONE%%.*}"
+  # Find NS records for QA_ZONE. The Cloudflare API filters by full name,
+  # not by leftmost label, so we pass ${QA_ZONE} verbatim.
   record_ids=$(curl -sf -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
     "https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records?type=NS&name=${QA_ZONE}" \
     | jq -r '.result[].id // empty')

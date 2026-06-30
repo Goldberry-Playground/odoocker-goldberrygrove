@@ -65,9 +65,9 @@ gh auth status >/dev/null 2>&1 || { echo "ERROR: gh not authenticated. Run: gh a
 # Colors (off if not a tty)
 if [ -t 1 ] && [ "${NO_COLOR:-}" = "" ]; then
   C_GREEN="\033[32m"; C_RED="\033[31m"; C_YELLOW="\033[33m"
-  C_BLUE="\033[34m";  C_GRAY="\033[2m"; C_BOLD="\033[1m"; C_DIM="\033[2m"; NC="\033[0m"
+  C_GRAY="\033[2m"; C_BOLD="\033[1m"; C_DIM="\033[2m"; NC="\033[0m"
 else
-  C_GREEN=""; C_RED=""; C_YELLOW=""; C_BLUE=""; C_GRAY=""; C_BOLD=""; C_DIM=""; NC=""
+  C_GREEN=""; C_RED=""; C_YELLOW=""; C_GRAY=""; C_BOLD=""; C_DIM=""; NC=""
 fi
 
 QA_ZONE="${QA_ZONE:-qa.gatheringatthegrove.com}"
@@ -170,7 +170,7 @@ render() {
   echo "$wfruns" | jq -r '.[] |
     [.databaseId, (.workflowName | sub("^QA "; "")), .status, (.conclusion // ""), .createdAt, .updatedAt] | join("|")' \
   | while IFS='|' read -r id wf status conclusion created updated; do
-    local sym col dur end now_epoch start_epoch end_epoch
+    local sym dur end
     case "$status" in
       completed)
         case "$conclusion" in
