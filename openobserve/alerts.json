@@ -124,6 +124,16 @@
       "destination": "keep-webhook",
       "runbook_key": "synthetic-slow",
       "_message_template": "[{tenant}] SYNTHETIC {journey} slow — p95 {duration_ms}ms over 5m (threshold 3000ms). Backend degrading. Runbook: docs/RUNBOOKS.md#synthetic-slow"
+    },
+    {
+      "name": "synthetic-checkout-critical",
+      "stream": "synthetic_journey_success",
+      "trigger_condition": "journey='checkout-canary' success==0 for >2 consecutive runs (any tenant)",
+      "severity": "critical",
+      "destination": "keep-webhook",
+      "runbook_key": "checkout-broken",
+      "_message_template": "[{tenant}] SYNTHETIC checkout-canary failing — the /orders bearer endpoint or the access_token gate is broken. Orders cannot be created. Runbook: docs/RUNBOOKS.md#checkout-broken",
+      "_note": "Only fires when SYNTHETIC_CANARY_ENABLED=true (the canary journey runs). Tests the money-path write + the PII access_token gate end-to-end."
     }
   ]
 }

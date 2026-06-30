@@ -120,6 +120,7 @@ OpenObserve as OTLP metrics. See `synthetic/README.md` for the full design.
 | `health` | shared | grove_headless API up |
 | `catalog` | per tenant | products list + detail (with price) work |
 | `cart-flow` | per tenant | add-to-cart → cart reflects the line (BFF↔Odoo write path) |
+| `checkout-canary` | per tenant (opt-in) | $0 order via bearer `/orders` + access_token gate; draft swept via XML-RPC |
 
 Metrics emitted (queried by the `synthetic-*` alert rules in `alerts.json`):
 - `synthetic_journey_success` — gauge 1/0, tags `{journey, tenant, tier=api, env}`
@@ -132,9 +133,14 @@ Metrics emitted (queried by the `synthetic-*` alert rules in `alerts.json`):
 python3 synthetic/test_run.py
 ```
 
-**Deferred to the next increment** (need secrets / order cleanup): `ghost-content`
-(Ghost Content API key) and `checkout-canary` (bearer key + `$0 SYNTHETIC-CANARY`
-seed + XML-RPC order cancel — there's no `/orders` cancel endpoint).
+**Opt-in money-path journey:** `checkout-canary` is OFF by default. Set
+`SYNTHETIC_CANARY_ENABLED=true` + `ODOO_DB`/`ODOO_LOGIN`/`SYNTHETIC_ODOO_API_KEY`
+to enable it — `setup-monitoring.py` then seeds an unpublished `$0 SYNTHETIC-CANARY`
+product and the runner creates/sweeps a draft order each cycle (see
+`synthetic/README.md`).
+
+**Still deferred:** `ghost-content` (Ghost Content API key) — Ghost availability
+is already covered by the `ghost-*-admin` monitors + `ghost-down-warning`.
 
 ## Cost model
 

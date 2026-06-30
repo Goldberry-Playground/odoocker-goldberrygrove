@@ -33,10 +33,13 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from urllib import error as urlerror
 from urllib import request
+
+import canary
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 JOURNEY_DIR = SCRIPT_DIR / "journeys"
@@ -58,8 +61,12 @@ def _env(name: str, default: str = "") -> str:
     return os.environ.get(name, default)
 
 
-def run_journey(journey_file: str, *, tenant: str, odoo_base: str) -> tuple[int, float]:
-    """Run one Hurl journey. Returns (success 1/0, duration_ms)."""
+def run_journey(journey_file: str, *, tenant: str, odoo_base: str, extra_vars: dict | None = None) -> tuple[int, float]:
+    """Run one Hurl journey. Returns (success 1/0, duration_ms).
+
+    extra_vars (e.g. the canary's variant_id + api_key) are passed via a
+    temp variables-file rather than --variable so secrets stay out of argv.
+    """
     path = JOURNEY_DIR / journey_file
     cmd = [
         "hurl",
@@ -72,8 +79,15 @@ def run_journey(journey_file: str, *, tenant: str, odoo_base: str) -> tuple[int,
         f"odoo_base={odoo_base}",
         "--variable",
         f"tenant={tenant}",
-        str(path),
     ]
+    varfile_path = None
+    if extra_vars:
+        with tempfile.NamedTemporaryFile("w", suffix=".vars", delete=False) as varfile:
+            varfile.writelines(f"{k}={v}\n" for k, v in extra_vars.items())
+            varfile_path = varfile.name
+        cmd += ["--variables-file", varfile_path]
+    cmd.append(str(path))
+
     start = time.perf_counter()
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=float(MAX_TIME_S) + 10)
@@ -83,6 +97,9 @@ def run_journey(journey_file: str, *, tenant: str, odoo_base: str) -> tuple[int,
     except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
         rc = 1
         _log(f"    ✗ {journey_file} [{tenant}] runner error: {exc}")
+    finally:
+        if varfile_path:
+            os.unlink(varfile_path)
     duration_ms = (time.perf_counter() - start) * 1000.0
     return (1 if rc == 0 else 0), duration_ms
 
@@ -159,6 +176,17 @@ def main() -> None:
     env_label = _env("SYNTHETIC_ENV", "local")
     _log(f"=== synthetic run: tenants={tenants} odoo={odoo_base} env={env_label} ===")
 
+    # checkout-canary is opt-in (needs an Odoo API key) and adds the money-path
+    # write/auth journey. Resolve the shared canary variant once up front; if it
+    # can't be resolved, run the read/cart journeys only.
+    canary_vars = None
+    if canary.is_enabled():
+        variant_id = canary.resolve_variant_id()
+        if variant_id is not None:
+            canary_vars = {"variant_id": str(variant_id), "api_key": canary.api_key()}
+        else:
+            _log("  checkout-canary enabled but variant unresolved — skipping it this run")
+
     results: list[dict] = []
     for journey_name, journey_file in SHARED_JOURNEYS:
         success, dur = run_journey(journey_file, tenant="shared", odoo_base=odoo_base)
@@ -167,6 +195,16 @@ def main() -> None:
         for journey_name, journey_file in TENANT_JOURNEYS:
             success, dur = run_journey(journey_file, tenant=tenant, odoo_base=odoo_base)
             results.append({"journey": journey_name, "tenant": tenant, "success": success, "duration_ms": dur})
+        if canary_vars is not None:
+            success, dur = run_journey(
+                "checkout-canary.hurl", tenant=tenant, odoo_base=odoo_base, extra_vars=canary_vars
+            )
+            results.append({"journey": "checkout-canary", "tenant": tenant, "success": success, "duration_ms": dur})
+
+    # Sweep the draft orders the canary created (self-healing: also clears
+    # stragglers from any interrupted run).
+    if canary_vars is not None:
+        _log(f"  canary cleanup: removed {canary.cleanup_orders()} draft order(s)")
 
     passed = sum(r["success"] for r in results)
     _log(f"  {passed}/{len(results)} journeys passed")

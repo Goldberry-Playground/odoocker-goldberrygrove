@@ -28,11 +28,19 @@ supercronic (crontab, every 60s)
 | `health` | shared | `/health` → 200, `status==ok` | none |
 | `catalog` | per tenant | products list non-empty → detail has a variant price | none (reads) |
 | `cart-flow` | per tenant | add line → cart reflects it | a draft cart sale.order/run (Odoo expires these) |
+| `checkout-canary` | per tenant (opt-in) | create $0 order via bearer `/orders` → access_token gate (200 w/ token, 403 w/o) | a draft order/run, swept by XML-RPC cleanup |
 
-## Deferred to the next increment (need secrets / cleanup)
+## checkout-canary (the money path) — opt-in
 
-- **`ghost-content`** — Ghost Content API needs a per-tenant content key (secret plumbing).
-- **`checkout-canary`** — the money path. Needs (a) a bearer API key, (b) the `$0 SYNTHETIC-CANARY` SKU + test partner seeded by `setup-monitoring.py`, and (c) an order-cancel mechanism (`/orders` has no cancel endpoint, so cleanup is XML-RPC). Built as its own PR so the order-creating loop is reviewed carefully.
+OFF unless `SYNTHETIC_CANARY_ENABLED=true` + `ODOO_DB`/`ODOO_LOGIN`/`SYNTHETIC_ODOO_API_KEY` are set. It's the highest-value journey (proves orders can be created + the PII gate holds) but the only one that writes, so it's gated. Design (`canary.py` owns the XML-RPC):
+
+- **Shared $0 product.** `setup-monitoring.py` seeds one `SYNTHETIC-CANARY` product with `company_id=False` (visible to all tenants) and `website_published=False` (never in a storefront). One variant serves every tenant — no tenant→company mapping.
+- **Self-healing cleanup.** After each cycle the runner unlinks draft/sent orders whose partner email is `synthetic-canary@grove.invalid` — never confirmed orders, and `.invalid` can't collide with a real customer.
+- **Key handling.** The API key doubles as HTTP bearer + XML-RPC password; it's passed to Hurl via a temp variables-file (out of argv). Scope it to a least-privilege Odoo user.
+
+## Deferred to the next increment (need secrets)
+
+- **`ghost-content`** — Ghost Content API needs a per-tenant content key. Lower priority: Ghost *availability* is already covered by the `ghost-*-admin` monitors + `ghost-down-warning` alert; this would add content-level ("≥1 post") depth.
 
 ## Run / debug
 
