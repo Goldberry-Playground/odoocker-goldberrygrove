@@ -166,7 +166,22 @@ jobs:
           chmod 600 ~/.ssh/grove-qa-deploy
           # Sanity-check the key is well-formed (catches secret-mangling on the way through)
           if ! ssh-keygen -y -f ~/.ssh/grove-qa-deploy >/dev/null 2>&1; then
-            echo "::error::CI SSH private key is malformed after writing to disk. Check that GROVE_QA_CI_SSH_PRIVATE_KEY in Infisical preserved newlines correctly."
+            # Diagnostic info ONLY ON FAILURE — emits length + first-line shape
+            # (no key material) so the operator can pin the root cause without
+            # re-running with debug logging. Added after the 2026-06-30 01:33 UTC
+            # failure printed only "malformed" with zero context.
+            len=$(wc -c < ~/.ssh/grove-qa-deploy | tr -d ' ')
+            first_line_shape=$(head -1 ~/.ssh/grove-qa-deploy | sed 's/[a-zA-Z0-9+/=]/X/g' | head -c 40)
+            last_byte=$(tail -c 1 ~/.ssh/grove-qa-deploy | od -An -c | tr -d ' ')
+            echo "::error::CI SSH private key is malformed after writing to disk."
+            echo "  Diagnostic (safe -- no key material):"
+            echo "    bytes_written    = $len"
+            echo "    first_line_shape = '$first_line_shape'  (chars masked as X)"
+            echo "    last_byte_repr   = '$last_byte'  (should be '\\n')"
+            echo "  Likely causes:"
+            echo "    - Infisical returned empty/whitespace-only value (check secret in grove-odoocker/prod env)"
+            echo "    - Secret pasted with extra whitespace (probe via op CLI with byte count)"
+            echo "    - Key format wrong (must start with -----BEGIN OPENSSH PRIVATE KEY----- AND end with literal \\n)"
             exit 1
           fi
 

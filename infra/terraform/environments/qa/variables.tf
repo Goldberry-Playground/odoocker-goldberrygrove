@@ -46,16 +46,15 @@ variable "cloudflare_zone_name" {
 }
 
 variable "qa_subdomain" {
-  description = "Subdomain under the apex zone. Final FQDN is <qa_subdomain>.<cloudflare_zone_name> (default qa.gatheringatthegrove.com). All tenant URLs live under this delegated zone (qa.gatheringatthegrove.com itself = hub; qa-goldberry.<zone> = goldberry frontend; etc.)."
+  description = "Subdomain under the apex zone. Final FQDN is <qa_subdomain>.<cloudflare_zone_name> (default qa.gatheringatthegrove.com). All tenant URLs are served as <tenant>.qa.<apex> — the hub canonically lives at hub.qa.<apex> (NOT the apex itself), per ADR-006: the bare apex (qa.<apex>) is intentionally unrouted because RFC-6125 wildcards (*.qa.<apex>) don't cover the apex, and dropping it from Caddy lets us drop the apex-cert dependency entirely."
   type        = string
   default     = "qa"
 }
 
 variable "tenant_subdomains" {
-  description = "Per-tenant subdomain prefixes under the qa zone. Each one gets a CNAME → the qa apex A record."
+  description = "Per-tenant subdomain prefixes under the qa zone. Each one gets a CNAME → the qa apex A record. NOTE: `hub` CNAME exists in live DO DNS but is intentionally NOT in this list — the record was added outside TF and is managed as drift until a separate PR runs `terraform import` to bring it under management. See ADR-006 for the rationale (apex is unrouted; hub serves at hub.qa.<apex>)."
   type        = list(string)
   default     = ["goldberry", "ggg", "nursery", "odoo"]
-  # qa.gatheringatthegrove.com itself = hub (apex A record handles it)
 }
 
 variable "region" {
