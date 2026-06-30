@@ -17,14 +17,10 @@ env:
   PYTHON_VERSION: "3.12"
 
 jobs:
-  # Audit 2026-06-29 #4: catch workflow injection + YAML schema errors across
-  # all .github/workflows/*.yml files. Cheap (~5s). actionlint embeds
-  # shellcheck for inline `run:` blocks; we disable that here (via empty
-  # `-shellcheck=`) because the standalone `shellcheck` job below covers
-  # the standalone scripts AND because the inline-shellcheck findings on
-  # existing workflows are predominantly style-level (SC2015 A&&B||C, SC2086
-  # quoting in operator scripts) — surfaced as advisory in CI logs, fixed
-  # incrementally rather than gating this PR.
+  # Audit 2026-06-29 #4: catch workflow injection + YAML schema errors +
+  # embedded shellcheck findings on inline `run:` blocks. Cheap (~5s).
+  # Dial-up 2026-06-29: dropped `-shellcheck=` after PR #127 cleared all
+  # the inline-block findings — embedded shellcheck is safe to re-enable.
   actionlint:
     name: actionlint (all workflows)
     runs-on: ubuntu-latest
@@ -34,24 +30,23 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Run actionlint
         uses: docker://rhysd/actionlint:1.7.7
+        # actionlint shells out to shellcheck internally; shellcheck reads
+        # SHELLCHECK_OPTS from its env. `-S warning` filters out info/style
+        # findings so only warning+ gates the build — matches the threshold
+        # of the standalone `shellcheck` job below. Dial down to `-S style`
+        # once the codebase is style-clean.
+        env:
+          SHELLCHECK_OPTS: -S warning
         with:
-          args: -color -shellcheck=
+          args: -color
 
   # Audit 2026-06-29 #5: shellcheck the operator scripts we rely on
   # (qa-teardown-droplet, cleanup-acme-txts, caddy-prefer-prod-cert, etc).
-  # Catches eval-class bugs (SC2294) and quoting issues that would only
-  # surface in CI logs.
-  #
-  # SHELLCHECK_OPTS:
-  #   -e SC1091 — don't follow sourced files (DO Spaces creds etc.)
-  #   --severity=error — surface warnings/info as advisory output without
-  #     gating CI on them. The repo has 9 pre-existing style-level findings
-  #     (SC2059, SC2329, SC2001, SC2015, SC2116, SC2155, SC2034) that should
-  #     be addressed incrementally in focused PRs, not as part of introducing
-  #     the linter itself. Once those are cleaned up, dial threshold back
-  #     down to `warning` then `style` to enforce the cleaner baseline.
+  # Dial-up 2026-06-29: severity raised error → warning after PR #127
+  # fixed all warning-level findings. Next dial-up after style-level
+  # findings are cleaned up: severity → style.
   shellcheck:
-    name: shellcheck (scripts/, error-only)
+    name: shellcheck (scripts/)
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -63,7 +58,7 @@ jobs:
           SHELLCHECK_OPTS: -e SC1091
         with:
           scandir: ./scripts
-          severity: error
+          severity: warning
 
   no-tracked-env-files:
     name: Reject tracked .env files
