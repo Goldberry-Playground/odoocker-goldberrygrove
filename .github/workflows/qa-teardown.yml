@@ -132,5 +132,14 @@ jobs:
                 color: $color
               }]
             }')
-          curl -fsS -X POST -H "Content-Type: application/json" \
-            -d "$PAYLOAD" "$DISCORD_OPS_WEBHOOK_URL" || true
+          # Audit fix 2026-06-29: gate the curl on a non-empty webhook URL.
+          # If Infisical fetch silently produced an empty string (auth glitch,
+          # missing secret, etc), `curl ... ""` would burn a real round-trip
+          # to an empty URL just to be swallowed by `|| true`.
+          if [ -n "${DISCORD_OPS_WEBHOOK_URL:-}" ]; then
+            curl -fsS -X POST -H "Content-Type: application/json" \
+              -d "$PAYLOAD" "$DISCORD_OPS_WEBHOOK_URL" || \
+              echo "::warning::Discord post failed (URL was set) — teardown ran regardless"
+          else
+            echo "::warning::DISCORD_OPS_WEBHOOK_URL is empty — skipping Discord post"
+          fi
