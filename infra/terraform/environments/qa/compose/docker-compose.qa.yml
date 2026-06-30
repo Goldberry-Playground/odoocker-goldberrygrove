@@ -174,8 +174,43 @@ services:
       GHOST_URL: https://qa-stub.example.com
       GHOST_CONTENT_KEY: qa-stub-no-ghost-key-yet
 
+  # -- qa_portal Postgres ------------------------------------------------------
+  # Co-located DB for the QA portal app. ISOLATED from the main grove network:
+  # joins ONLY qa_portal_net, so odoo/postgres/frontends cannot reach it. The
+  # portal app (deployed separately) joins qa_portal_net to connect at host
+  # `qa_portal_pg`. No host port published (intentional -- unreachable from
+  # outside the droplet). Password rotates per droplet recreate; qa-deploy.yml
+  # reads the value after grove-ready and pushes the constructed
+  # postgresql://... URL to Infisical at grove-odoo/prod/qa-portal/.
+  qa_portal_pg:
+    image: postgres:16
+    container_name: qa_portal_pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: qa_portal
+      POSTGRES_USER: qa_portal_app
+      POSTGRES_PASSWORD: ${QA_PORTAL_PG_PASSWORD}
+    volumes:
+      - qa_portal_pgdata:/var/lib/postgresql/data
+    networks:
+      - qa_portal_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U qa_portal_app -d qa_portal"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+networks:
+  default:
+    name: grove-qa_default   # implicit network for the main stack (existing behavior)
+  qa_portal_net:
+    name: qa_portal_net      # explicit name (no project prefix) so the portal
+                             # app's compose can join via `external: true` with
+                             # the same literal name
+
 volumes:
   caddy-data:    # LE account + certs; per-droplet (dies with droplet)
   caddy-config:
   postgres-data:
   odoo-filestore:
+  qa_portal_pgdata:

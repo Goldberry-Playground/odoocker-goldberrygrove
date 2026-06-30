@@ -347,6 +347,85 @@ jobs:
           echo "::error::droplet didn't signal grove-ready within 20 min -- stack likely broken. SSH in via ~/.ssh/grove-qa-admin and check /var/log/cloud-init-output.log + docker ps."
           exit 1
 
+      # Post-deploy: sync qa_portal_pg URL to Infisical.
+      #
+      # qa_portal_pg is a co-located Postgres container (defined in compose +
+      # cloud-init); its password is randomized at first boot and lives only in
+      # /etc/grove/.env on the droplet. The Grove QA portal app (deployed
+      # separately) reads QA_PORTAL_DATABASE_URL from Infisical at runtime, so
+      # we need to push the freshly-constructed URL after every droplet recreate.
+      #
+      # The constructed URL uses container name `qa_portal_pg` as the host (not
+      # the droplet IP) because it's resolved from inside the same Docker network
+      # (qa_portal_net) the portal app joins. sslmode=disable is correct here:
+      # traffic stays on the docker bridge inside one droplet, never touches a
+      # network interface, and bare postgres:16 has no TLS configured anyway.
+      #
+      # Idempotent: `infisical secrets set` upserts by name. Password rotation
+      # per deploy is expected — the portal app must re-fetch on each deploy.
+      #
+      # ONE-TIME PREREQUISITE: the /qa-portal folder must exist in Infisical
+      # under grove-odoo / prod (create via Infisical UI; the API call below
+      # writes the secret AT this path but doesn't create the path itself).
+      - name: Post-deploy - push QA_PORTAL_DATABASE_URL to Infisical
+        timeout-minutes: 3
+        env:
+          DROPLET_IP: ${{ steps.tf_outputs.outputs.droplet_ip }}
+          # INFISICAL_TOKEN was set by the secrets-action step at the top of this
+          # job. The CLI consumes the same token via env var — no re-auth needed.
+          INFISICAL_TOKEN: ${{ env.INFISICAL_TOKEN }}
+        run: |
+          SSH="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i ~/.ssh/grove-qa-deploy root@$DROPLET_IP"
+
+          # Install Infisical CLI on the runner (~3 sec; the official installer
+          # script just downloads the binary + chmod +x).
+          curl -1sLf 'https://artifacts-cli.infisical.com/setup.deb.sh' | sudo -E bash
+          sudo apt-get install -y infisical
+
+          # Read the rotated password from the droplet's /etc/grove/.env. grep + cut
+          # to avoid sourcing the file (which would expose other secrets in this
+          # workflow's env). Quote-strip just in case (the .env line shouldn't
+          # have quotes but defense-in-depth).
+          QPPW=$($SSH "grep '^QA_PORTAL_PG_PASSWORD=' /etc/grove/.env | cut -d= -f2-" 2>/dev/null | tr -d '"' | tr -d "'")
+          if [ -z "$QPPW" ]; then
+            echo "::error::Could not read QA_PORTAL_PG_PASSWORD from /etc/grove/.env on droplet."
+            echo "  This means either: (a) cloud-init didn't substitute the placeholder,"
+            echo "  (b) the .env file is missing the QA_PORTAL_PG_PASSWORD line, or"
+            echo "  (c) SSH access broke between grove-ready and here."
+            echo "  SSH to debug: ssh -i ~/.ssh/grove-qa-admin root@$DROPLET_IP"
+            exit 1
+          fi
+
+          # Construct the URL. Container name `qa_portal_pg` is the host because
+          # this URL is consumed from INSIDE qa_portal_net (the portal app's
+          # container side), not from outside the droplet.
+          URL="postgresql://qa_portal_app:${QPPW}@qa_portal_pg:5432/qa_portal?sslmode=disable"
+
+          # Push to Infisical. --silent + redirect prevents the value from being
+          # echoed in CI logs (the CLI normally prints the set value on success).
+          # Path /qa-portal must exist; see prerequisite note above.
+          infisical secrets set "QA_PORTAL_DATABASE_URL=$URL" \
+            --token="$INFISICAL_TOKEN" \
+            --projectId="850603f8-e175-4c38-9038-97a1e69d72e6" \
+            --env="prod" \
+            --path="/qa-portal" \
+            --silent >/dev/null 2>&1
+
+          # Verify by re-reading: just confirm the secret exists at the path with
+          # a plausible length (URL should be ~95-110 chars for our scheme). We
+          # do NOT echo the value — only the length, which leaks no key material.
+          LEN=$(infisical secrets get QA_PORTAL_DATABASE_URL \
+            --token="$INFISICAL_TOKEN" \
+            --projectId="850603f8-e175-4c38-9038-97a1e69d72e6" \
+            --env="prod" \
+            --path="/qa-portal" \
+            --plain 2>/dev/null | wc -c | tr -d ' ')
+          if [ "$LEN" -lt 80 ]; then
+            echo "::error::Infisical write appears to have failed: read-back length=$LEN bytes (expected ~95-110)."
+            exit 1
+          fi
+          echo "  ✓ QA_PORTAL_DATABASE_URL pushed to grove-odoo/prod/qa-portal (read-back length=$LEN bytes)"
+
       # Post-deploy: bootstrap observability config (per ADR-007 addendum Phase 1.5).
       # Idempotent script POSTs openobserve/{monitors,alerts,dashboards}.json +
       # keep/{providers,workflows}.yml to the OpenObserve + Keep instances on the
