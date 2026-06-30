@@ -52,6 +52,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      actions: read       # scripts/discord-status.sh queries gh run history for recovery/streak detection
 
     env:
       # Default TTL when triggered by cron (workflow_dispatch input overrides)
@@ -152,44 +153,44 @@ jobs:
           [ "$WITH_CF_INPUT" = "true" ] && args+=("--with-cloudflare")
           bash scripts/qa-teardown-all.sh "${args[@]}"
 
+      # Heartbeat: always post, even on clean runs (count=0). Per Josh's
+      # 2026-06-30 ask -- silent cron runs leave him without signal that the
+      # sweeper is even running. The helper distinguishes "ran clean" (HEARTBEAT
+      # variant, quiet blue) from "reaped N droplets" (NORMAL variant, gray).
       - name: Post Discord notification
-        if: always() && steps.identify.outputs.expired_count != '0'
+        if: always()
         timeout-minutes: 1
         env:
-          # DISCORD_OPS_WEBHOOK_URL fetched by Infisical step at job start
-          STATUS: ${{ job.status }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # gh CLI run-history lookup in helper
           COUNT: ${{ steps.identify.outputs.expired_count }}
           TTL: ${{ env.TTL_DAYS }}
           DRY: ${{ github.event.inputs.dry_run }}
         run: |
-          if [ "$STATUS" = "success" ]; then COLOR=10070709; ICON="🪦"; else COLOR=15158332; ICON="🚨"; fi
-          if [ "$DRY" = "true" ]; then PREFIX="[DRY-RUN] "; else PREFIX=""; fi
-
-          # Build expired-list summary (safe -- only TF/DO-generated content)
-          if [ -f /tmp/expired.txt ]; then
+          # Build expired-list as a field (safe -- only TF/DO-generated content)
+          FIELD_ARGS=()
+          if [ -f /tmp/expired.txt ] && [ -s /tmp/expired.txt ]; then
             DETAILS=$(awk -F'|' '{print "- "$2" (id="$1", ip="$3", created "$4")"}' /tmp/expired.txt | head -20)
-          else
-            DETAILS="(none)"
+            FIELD_ARGS+=(--field "Destroyed=$DETAILS")
           fi
 
-          PAYLOAD=$(jq -n \
-            --arg title "${ICON} ${PREFIX}QA TTL Sweeper -- ${STATUS}" \
-            --arg desc "$COUNT droplet(s) past TTL of ${TTL}d destroyed:"$'\n'"$DETAILS" \
-            --arg run_url "$RUN_URL" \
-            --argjson color "$COLOR" \
-            '{
-              username: "🧪 Grove QA",
-              embeds: [{ title: $title, description: $desc, url: $run_url, color: $color }]
-            }')
-
-          # Audit fix 2026-06-29: gate the curl on a non-empty webhook URL.
-          # If Infisical fetch silently produced an empty string, `curl ... ""`
-          # would burn a real round-trip to an empty URL.
-          if [ -n "${DISCORD_OPS_WEBHOOK_URL:-}" ]; then
-            curl -fsS -X POST -H "Content-Type: application/json" \
-              -d "$PAYLOAD" "$DISCORD_OPS_WEBHOOK_URL" || \
-              echo "::warning::Discord post failed (URL was set) -- but teardown ran regardless"
+          # Distinguish "no droplets past TTL" (heartbeat) from "reaped N" (normal).
+          # Both are success outcomes; HEARTBEAT just gives a quieter visual.
+          HEARTBEAT_FLAG=""
+          if [ "${COUNT:-0}" = "0" ]; then
+            HEARTBEAT_FLAG="--heartbeat"
+            DESC="Ran clean. No droplets past TTL of ${TTL}d."
           else
-            echo "::warning::DISCORD_OPS_WEBHOOK_URL is empty -- skipping Discord post"
+            PREFIX=""
+            [ "$DRY" = "true" ] && PREFIX="[DRY-RUN] "
+            DESC="${PREFIX}${COUNT} droplet(s) past TTL of ${TTL}d destroyed."
           fi
+
+          bash scripts/discord-status.sh \
+            --status="${{ job.status }}" \
+            --workflow=qa-ttl-sweeper.yml \
+            --branch="${{ github.ref_name }}" \
+            --run-url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --title="QA TTL Sweeper" \
+            --description="$DESC" \
+            $HEARTBEAT_FLAG \
+            "${FIELD_ARGS[@]}"
