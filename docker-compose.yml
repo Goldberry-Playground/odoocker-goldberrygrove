@@ -18,6 +18,19 @@ services:
         - USE_S3
         - USE_SENTRY
     tty: true
+    # Wait for Postgres to actually accept connections before Odoo's
+    # entrypoint runs. Odoo's in-container `wait-for-psql.py --timeout=30`
+    # was the ONLY ordering guard; on a cold boot the postgres first-run
+    # initdb + /docker-entrypoint-initdb.d (create template DB, unaccent,
+    # users) does not accept TCP connections and can exceed 30s. When it
+    # does, wait-for-psql exits non-zero -> `set -e` aborts the entrypoint
+    # -> with `restart: 'no'` (CI smoke, sandbox) the container stays dead
+    # and never comes online. `condition: service_healthy` makes compose
+    # hold Odoo until the postgres healthcheck below passes, so the 30s
+    # wait starts against an already-ready DB. (GOL-22)
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
       - odoo-data:${DATA_DIR}
       - ./odoo/extra-addons:${EXTRA_ADDONS}
@@ -103,6 +116,19 @@ services:
       - PGADMING_DB_NAME
       - PGADMING_DB_USER
       - PGADMIN_DB_PASSWORD
+    # `-h 127.0.0.1` forces a TCP probe. During the postgres first-run
+    # init phase the temporary server listens on the unix socket ONLY
+    # (listen_addresses=''), so a TCP probe correctly reports "not ready"
+    # until the real server is up — avoiding a false-healthy that would
+    # let Odoo start mid-init. pg_isready needs no password (it only
+    # checks that the server is accepting connections). POSTGRES_USER is
+    # provided by this service's environment block above.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$$POSTGRES_USER\""]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
     networks:
       - internal
     profiles: [$POSTGRES_PROFILES]
