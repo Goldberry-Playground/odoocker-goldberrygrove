@@ -83,8 +83,15 @@ services:
       - "5080"
     networks:
       - internal
+    # 2026-07-01: healthcheck uses /dev/tcp instead of wget/curl. The
+    # OpenObserve image is scratch-based and ships NEITHER wget nor curl,
+    # so the previous ["CMD","wget"...] healthcheck ran into
+    # 'exec: "wget": executable file not found in $PATH' every 30s and
+    # marked the container UNHEALTHY -- which blocked Caddy from starting
+    # (caddy depends_on service_healthy). /dev/tcp is a bash built-in that
+    # works in any image with bash (which openobserve has).
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:5080/healthz"]
+      test: ["CMD-SHELL", "bash -c ': > /dev/tcp/localhost/5080'"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -107,8 +114,9 @@ services:
       - "8080"
     networks:
       - internal
+    # Same /dev/tcp pattern as openobserve -- avoids wget/curl PATH dep.
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthcheck"]
+      test: ["CMD-SHELL", "bash -c ': > /dev/tcp/localhost/8080'"]
       interval: 30s
       timeout: 5s
       retries: 3

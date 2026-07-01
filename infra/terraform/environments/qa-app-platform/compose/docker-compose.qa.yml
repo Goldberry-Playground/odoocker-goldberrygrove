@@ -55,6 +55,14 @@ services:
       LIST_DB: "false"   # hide the DB selector since we have one fixed DB
     volumes:
       - odoo-filestore:/var/lib/odoo
+      # CRITICAL: the grove-odoo image's odoorc.sh reads /.env INSIDE the
+      # container to substitute placeholders into /etc/odoo/odoo.conf.
+      # Without this bind-mount, DB_HOST/DB_PORT/DB_PASSWORD/ADMIN_PASSWD
+      # stay as literal ${VAR} strings and Odoo crashes on boot with
+      # 'invalid integer value "${DB_PORT}" for connection option "port"'.
+      # Same requirement the monolith QA compose has (verified 2026-07-01
+      # by inspecting the running monolith droplet + comparing outputs).
+      - /etc/grove/.env:/.env:ro
     networks:
       - grove
 
