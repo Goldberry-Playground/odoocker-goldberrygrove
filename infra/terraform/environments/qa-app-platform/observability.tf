@@ -29,7 +29,7 @@ resource "digitalocean_droplet" "obs" {
   tags   = concat(local.tags, ["role-observability"])
 
   ssh_keys = [
-    digitalocean_ssh_key.qa_deploy.fingerprint,
+    data.digitalocean_ssh_key.qa_deploy.fingerprint,
     data.digitalocean_ssh_key.qa_admin.fingerprint,
   ]
 

@@ -78,9 +78,28 @@ resource "digitalocean_domain" "qa" {
 # out-of-band admin key). See environments/qa/main.tf for the full rationale
 # on long-lived vs ephemeral.
 
-resource "digitalocean_ssh_key" "qa_deploy" {
-  name       = "grove-qa-l3-deploy"
-  public_key = var.ci_ssh_public_key
+## CI SSH key — SHARED with the monolith QA env.
+#
+# Rationale (learned via 2026-06-30 first-apply failure): DO's API enforces
+# uniqueness on SSH KEY CONTENT (fingerprint), not name. The monolith QA env
+# already uploaded this public key as `grove-qa-deploy`. Trying to add the
+# SAME key material under a different name (`grove-qa-l3-deploy`) returns
+# `422 SSH Key is already in use on your account`.
+#
+# Options considered:
+#   (a) Generate a new keypair for Level 3 -- adds a secret to 1P + Infisical
+#       for zero benefit (both envs share the same operator workflow).
+#   (b) Reference the monolith's key via data source -- SAME key, SAME
+#       fingerprint, SAME private key on the runner. No new secret needed.
+#
+# Went with (b) -- var.ci_ssh_public_key's description ALREADY says "same
+# key as monolith", so this aligns with the stated intent.
+#
+# NOTE: var.ci_ssh_public_key becomes vestigial here (kept for backward
+# compatibility with existing tfvars). The default value matches the
+# monolith's key so no operator workflow changes.
+data "digitalocean_ssh_key" "qa_deploy" {
+  name = "grove-qa-deploy"
 }
 
 # qa_admin is managed OUT OF BAND. TF references via data source so it's
@@ -194,7 +213,7 @@ resource "digitalocean_droplet" "odoo" {
   tags   = local.tags
 
   ssh_keys = [
-    digitalocean_ssh_key.qa_deploy.fingerprint,
+    data.digitalocean_ssh_key.qa_deploy.fingerprint,
     data.digitalocean_ssh_key.qa_admin.fingerprint,
   ]
 

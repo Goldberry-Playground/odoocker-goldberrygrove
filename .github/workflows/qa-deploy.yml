@@ -98,6 +98,16 @@ jobs:
             echo "AWS_SECRET_ACCESS_KEY=$SPACES_SECRET_ACCESS_KEY"
           } >> "$GITHUB_ENV"
 
+      # Hardening (Tier 1 PR): verify every Infisical-fetched secret has the
+      # expected byte-shape. Catches empty strings (auth glitch), trailing
+      # whitespace (GH secret-scrubber), and wrong-format values (operator
+      # error) at fetch time -- instead of 20 min later when downstream ops
+      # fail with confusing errors (401 from DO, malformed SSH key, curl 000
+      # to Discord). Emits length + first-byte-shape only; no key material.
+      - name: Pre-flight - verify secret shapes
+        timeout-minutes: 1
+        run: bash scripts/check-secret-shapes.sh
+
       # Fail fast if any of the grove-* images at the requested tags aren't
       # anonymously pullable from GHCR. Catches the "private package" failure
       # that wasted ~20 min on 2026-06-24 before cloud-init's silent death
@@ -240,6 +250,19 @@ jobs:
       # mode and works regardless of whether taint ran.
       #
       # ACME endpoint: workflow_dispatch input use_staging_acme=true passes
+      # Hardening (Tier 1 PR): probe DO API for resource-uniqueness conflicts
+      # that TF plan cannot detect (SSH-key fingerprint duplicates, orphan
+      # droplets from previous partial applies). Would have caught the
+      # 2026-06-30 Level 3 first-apply 422 SSH key error at plan time
+      # instead of at apply-in-progress time (where it silently skipped the
+      # 11 downstream resources).
+      - name: Pre-flight - DO API uniqueness probe
+        timeout-minutes: 2
+        working-directory: ${{ github.workspace }}
+        env:
+          DIGITALOCEAN_TOKEN: ${{ env.DIGITALOCEAN_TOKEN }}
+        run: bash scripts/preflight-do-uniqueness.sh infra/terraform/environments/qa
+
       # the LE staging URL (no rate limits, browser warnings). Otherwise
       # var.acme_endpoint defaults to LE prod (real certs).
       - name: Terraform apply
@@ -256,6 +279,17 @@ jobs:
             terraform apply -input=false -auto-approve
           fi
 
+      # Hardening (Tier 1 PR): assert TF state has at least the expected
+      # resource count. Would have caught the 2026-06-30 partial-apply
+      # (TF exit 0 but 9 resources missing) within 1 sec of apply completion,
+      # 12 hours before URLs failed. Expected value 8 = current monolith QA
+      # minimum (domain + droplet + volume + volume_attachment + firewall +
+      # 3 NS records + apex A). Bump upward when adding resources; the
+      # check is fail-loud on any regression that removes resources.
+      - name: Post-apply - verify TF state resource count
+        timeout-minutes: 1
+        run: bash scripts/verify-tf-state-count.sh infra/terraform/environments/qa 8
+
       # Run even if Terraform apply failed — if a droplet got created before
       # the failure, we still want its IP in the Discord post so the operator
       # can SSH in and debug. `terraform output` returns empty on missing
@@ -270,6 +304,34 @@ jobs:
           QA_URLS_JSON=$(terraform output -json qa_urls 2>/dev/null || echo "")
           echo "droplet_ip=$DROPLET_IP" >> "$GITHUB_OUTPUT"
           echo "qa_urls=$QA_URLS_JSON" >> "$GITHUB_OUTPUT"
+
+      # Hardening (Tier 1 PR): actively verify DNS records reached DO's
+      # authoritative NS and are visible to public resolvers. Would have
+      # caught 2026-06-30's "TF said records were created but zone shows
+      # 3 NS + 1 SOA only" issue within 2 min of apply, instead of at
+      # grove-ready-sentinel time 20 min later (or 12 hours later when
+      # nobody noticed until a URL probe). Polls 8.8.8.8, 1.1.1.1, 9.9.9.9;
+      # ANY of them returning a valid A record = propagated. 180s timeout
+      # comfortably covers the typical propagation window (~5-30s) plus
+      # a large safety margin.
+      - name: Post-apply - verify DNS records propagated
+        timeout-minutes: 4
+        env:
+          QA_URLS: ${{ steps.tf_outputs.outputs.qa_urls }}
+        run: |
+          # Extract hostnames from the qa_urls JSON output. On TF apply
+          # failure the output is empty -- skip DNS verify in that case.
+          if [ -z "$QA_URLS" ]; then
+            echo "  (no qa_urls output from TF -- skipping DNS verify)"
+            exit 0
+          fi
+          hosts=$(echo "$QA_URLS" | jq -r 'to_entries[] | .value | sub("https?://";"") | sub("/.*";"")' | sort -u | tr '\n' ' ')
+          if [ -z "$hosts" ]; then
+            echo "  (qa_urls didn't parse to hostnames -- skipping DNS verify)"
+            exit 0
+          fi
+          # shellcheck disable=SC2086  # intentional word-splitting on $hosts
+          bash scripts/wait-for-dns.sh 180 $hosts
 
       # Poll the droplet for the cloud-init grove-ready sentinel via SSH.
       # Three-way check per iteration:
