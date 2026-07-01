@@ -22,7 +22,7 @@
 #   DIGITALOCEAN_TOKEN_TEARDOWN same
 #   CLOUDFLARE_API_TOKEN       CF token (40 chars ASCII alphanumeric)
 #   DISCORD_OPS_WEBHOOK_URL    https://discord.com/api/webhooks/<id>/<token>
-#   GROVE_QA_CI_SSH_PRIVATE_KEY  PEM starting with -----BEGIN OPENSSH PRIVATE KEY-----
+#   GROVE_QA_CI_SSH_PRIVATE_KEY  PEM starting with the standard OpenSSH PEM header
 #   SPACES_ACCESS_KEY_ID       20-char DO Spaces key
 #   SPACES_SECRET_ACCESS_KEY   43-char DO Spaces secret
 #
@@ -90,9 +90,13 @@ probe CLOUDFLARE_API_TOKEN 35 45
 # Total length ~120 chars.
 probe DISCORD_OPS_WEBHOOK_URL 100 140 "https://discord.com/api/webhooks/"
 
-# OpenSSH private key PEM: starts with "-----BEGIN OPENSSH PRIVATE KEY-----"
+# OpenSSH private key PEM: starts with the standard PEM header.
 # Typical ed25519 key: ~400 bytes. RSA can be 1600+. Accept range.
-probe GROVE_QA_CI_SSH_PRIVATE_KEY 300 3000 "-----BEGIN OPENSSH PRIVATE KEY-----"
+# Literal PEM header extracted to a variable so gitleaks:allow can whitelist
+# THIS specific benign string without leaving no-op annotation garbage in
+# the probe call's shell argument.
+OPENSSH_PEM_HEADER='-----BEGIN OPENSSH PRIVATE KEY-----' # gitleaks:allow
+probe GROVE_QA_CI_SSH_PRIVATE_KEY 300 3000 "$OPENSSH_PEM_HEADER"
 
 # DO Spaces credentials
 probe SPACES_ACCESS_KEY_ID 18 22
