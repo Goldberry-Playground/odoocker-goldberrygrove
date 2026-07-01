@@ -147,6 +147,6 @@ resource "cloudflare_record" "assets" {
   name    = var.assets_subdomain
   type    = "CNAME"
   value   = digitalocean_cdn.assets.endpoint
-  ttl     = 1  # 1 = "Auto" in Cloudflare, follows their edge TTL
+  ttl     = 1    # 1 = "Auto" in Cloudflare, follows their edge TTL
   proxied = true # keeps traffic behind Cloudflare's WAF
 }
