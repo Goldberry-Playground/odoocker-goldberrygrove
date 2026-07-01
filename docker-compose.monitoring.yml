@@ -39,7 +39,7 @@ services:
   # Synthetic HTTP monitors, native alerting (built-in Slack/Discord/webhook
   # outputs), dashboards, Parquet-on-S3 storage.
   openobserve:
-    image: public.ecr.aws/zinclabs/openobserve:${OPENOBSERVE_TAG:-v0.17.2}
+    image: public.ecr.aws/zinclabs/openobserve:${OPENOBSERVE_TAG:-v0.16.0}
     restart: unless-stopped
     environment:
       # Auth — root user provisioned on first boot.

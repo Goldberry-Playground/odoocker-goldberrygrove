@@ -107,9 +107,9 @@ variable "obs_droplet_size" {
 }
 
 variable "openobserve_tag" {
-  description = "OpenObserve image tag (public.ecr.aws/zinclabs/openobserve:<tag>). Match the version pinned in docker-compose.monitoring.yml so behavior is consistent across local + Level 3."
+  description = "OpenObserve image tag (public.ecr.aws/zinclabs/openobserve:<tag>). Verified via manual `docker pull` from the obs droplet on 2026-07-01 -- v0.16.0 pulls; the previous default v0.17.2 does not exist on ECR Public (`not found` from Docker daemon). Bump this in sync with docker-compose.monitoring.yml when upgrading, and verify the tag pulls before bumping."
   type        = string
-  default     = "v0.17.2"
+  default     = "v0.16.0"
 }
 
 variable "keep_tag" {
