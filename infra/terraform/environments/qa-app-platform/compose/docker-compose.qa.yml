@@ -2,12 +2,12 @@
 #
 # DIFFERS FROM THE MONOLITH QA (environments/qa/compose/docker-compose.qa.yml):
 #   - NO postgres service (offloaded to DO Managed PG; Odoo connects via env)
-#   - NO frontend services (moved to DO App Platform — Phase 2)
-#   - ONE Caddy site (just Odoo) — no per-tenant routing
+#   - NO frontend services (moved to DO App Platform - Phase 2)
+#   - ONE Caddy site (just Odoo) - no per-tenant routing
 #
 # Two services only: caddy (TLS termination + reverse proxy to odoo) and
 # odoo (Odoo 19 with custom modules baked in via the grove-odoo image).
-# Postgres health-gate (PR #129) is irrelevant here — Odoo connects to
+# Postgres health-gate (PR #129) is irrelevant here - Odoo connects to
 # Managed PG over private VPC network; that connection is always ready
 # before Odoo starts.
 
@@ -24,7 +24,7 @@ services:
       - caddy-config:/config           # Caddy's own state (not certs)
     environment:
       DO_API_TOKEN: ${DO_API_TOKEN}    # DNS-01 ACME challenge under qa-l3 zone
-      ACME_CA: ${ACME_CA}              # LE prod or staging — set in /etc/grove/.env
+      ACME_CA: ${ACME_CA}              # LE prod or staging - set in /etc/grove/.env
     networks:
       - grove
     depends_on:

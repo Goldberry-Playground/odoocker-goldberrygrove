@@ -26,9 +26,22 @@
 set -euo pipefail
 
 DEFAULT_FILES=(
+  # monolith QA
   "infra/terraform/environments/qa/cloud-init.yaml.tpl"
   "infra/terraform/environments/qa/compose/docker-compose.qa.yml"
   "infra/terraform/environments/qa/compose/Caddyfile.tpl"
+  # Level 3 (ADR-007) -- added 2026-07-01 after Level 3 first-boot failed
+  # exactly this way: em-dashes + arrows + box-drawing in cloud-init.yaml.tpl
+  # caused YAML #x0080 parse error at cloud-init time. The droplet booted +
+  # ran DO's default base config, but cloud-init SKIPPED the user_data's
+  # write_files/runcmd blocks entirely -- no docker, no /etc/grove, no compose.
+  # Only diagnosed via SSH after 25+ min of watching URLs return 000.
+  "infra/terraform/environments/qa-app-platform/cloud-init.yaml.tpl"
+  "infra/terraform/environments/qa-app-platform/cloud-init-obs.yaml.tpl"
+  "infra/terraform/environments/qa-app-platform/compose/docker-compose.qa.yml"
+  "infra/terraform/environments/qa-app-platform/compose/docker-compose.obs.yml"
+  "infra/terraform/environments/qa-app-platform/compose/Caddyfile.tpl"
+  "infra/terraform/environments/qa-app-platform/compose/Caddyfile-obs.tpl"
 )
 
 if [ -n "${FILES:-}" ]; then

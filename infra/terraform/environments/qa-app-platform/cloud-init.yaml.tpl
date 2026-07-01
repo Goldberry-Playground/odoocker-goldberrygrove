@@ -30,14 +30,14 @@ packages:
   - postgresql-client       # smoke-test connectivity to Managed PG (psql)
   - lsb-release
 
-# Persistent Caddy /data volume — same pattern as monolith QA (ADR-005 PR-A).
+# Persistent Caddy /data volume - same pattern as monolith QA (ADR-005 PR-A).
 # Bind via LABEL=data so the device name doesn't matter and re-attaches
 # survive reboot. The systemd mount unit options retry on transient failures.
 mounts:
   - ["LABEL=data", "/mnt/caddy-data", "ext4", "defaults,nofail,noatime,discard,x-systemd.device-timeout=120,x-systemd.mount-timeout=30", "0", "2"]
 
 write_files:
-  # /etc/grove/.env — consumed by docker compose. Mode 0644 (not 0600)
+  # /etc/grove/.env - consumed by docker compose. Mode 0644 (not 0600)
   # because grove-odoo's entrypoint.sh + odoorc.sh run as the non-root
   # `odoo` user inside the container and need to read this file to
   # substitute placeholders into /etc/odoo/odoo.conf. Same documented
@@ -60,13 +60,13 @@ write_files:
       # Randomized at boot via the runcmd step below; placeholder here.
       ODOO_ADMIN_PASSWORD=__ODOO_ADMIN_PASSWORD__
 
-      # Caddy DNS-01 ACME — single hostname (odoo.${qa_zone}), so the
+      # Caddy DNS-01 ACME - single hostname (odoo.${qa_zone}), so the
       # rate-limit class that motivated the monolith's multi-issuer
       # fallback (ADR-005 PR-D) is essentially non-applicable here.
       DO_API_TOKEN=${do_token_for_caddy}
       ACME_CA=${acme_endpoint}
 
-  # Compose YAML — base64-encoded so cloud-init's YAML parser never sees
+  # Compose YAML - base64-encoded so cloud-init's YAML parser never sees
   # its content (avoids the embedded-block-scalar parse failures we hit
   # repeatedly on the monolith).
   - path: /etc/grove/docker-compose.yml
@@ -74,43 +74,43 @@ write_files:
     encoding: b64
     content: ${compose_yml_b64}
 
-  # Caddyfile (already templated by TF for $${QA_ZONE} → qa-l3.<apex>)
+  # Caddyfile (already templated by TF for $${QA_ZONE} -> qa-l3.<apex>)
   - path: /etc/grove/Caddyfile
     permissions: "0644"
     encoding: b64
     content: ${caddyfile_tpl_b64}
 
 runcmd:
-  # ── Docker install (official convenience script — same approach as monolith)
+  # -- Docker install (official convenience script - same approach as monolith)
   - curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
   - sh /tmp/get-docker.sh
   - usermod -aG docker root
   - systemctl enable docker
   - systemctl start docker
 
-  # ── Randomize Odoo admin password (sed-substitute the placeholder)
+  # -- Randomize Odoo admin password (sed-substitute the placeholder)
   - OAPW=$(openssl rand -hex 16) && sed -i "s|__ODOO_ADMIN_PASSWORD__|$OAPW|" /etc/grove/.env
 
-  # ── Smoke-test Managed PG connectivity BEFORE starting the stack.
+  # -- Smoke-test Managed PG connectivity BEFORE starting the stack.
   # `pg_isready` returns 0 only if PG is accepting connections. The Managed
   # PG cluster is provisioned by TF before this droplet is created, so it
-  # SHOULD be ready instantly — but cluster state lags resource creation by
+  # SHOULD be ready instantly - but cluster state lags resource creation by
   # ~1-2 min sometimes. Loop with timeout.
   - |
     . /etc/grove/.env
     for i in $(seq 1 60); do
       if pg_isready -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -t 5 >/dev/null 2>&1; then
-        echo "✓ Managed PG ready after $i polls" | tee -a /var/log/grove-qa-l3-up.log
+        echo "[ok] Managed PG ready after $i polls" | tee -a /var/log/grove-qa-l3-up.log
         break
       fi
       [ $i -eq 60 ] && { echo "::error::Managed PG not ready after 5 min"; exit 1; }
       sleep 5
     done
 
-  # ── Bring up the compose stack
+  # -- Bring up the compose stack
   - cd /etc/grove && docker compose --env-file /etc/grove/.env up -d > /var/log/grove-qa-l3-up.log 2>&1
 
-  # ── Grove-ready sentinel — touched once Caddy is serving 200/303 on /.
+  # -- Grove-ready sentinel - touched once Caddy is serving 200/303 on /.
   # qa-deploy-l3 workflow polls this file via SSH (same pattern as monolith
   # qa-deploy.yml). Touched only if the sentinel curl succeeds, so the
   # workflow can detect failures by sentinel absence + log inspection.
@@ -119,7 +119,7 @@ runcmd:
       code=$(curl -sk -o /dev/null -w '%%{http_code}' --max-time 5 "https://odoo.${qa_zone}/" || echo 000)
       if [ "$code" = "200" ] || [ "$code" = "303" ] || [ "$code" = "302" ]; then
         touch /var/lib/cloud/instance/grove-ready
-        echo "✓ grove-ready sentinel touched (HTTP $code)" >> /var/log/grove-qa-l3-up.log
+        echo "[ok] grove-ready sentinel touched (HTTP $code)" >> /var/log/grove-qa-l3-up.log
         exit 0
       fi
       sleep 5

@@ -27,7 +27,7 @@
 # when needed for scripts/setup-monitoring.py runs OR for the OpenObserve UI
 # admin login. They're written to /etc/grove-obs/.env mode 0600 (the obs
 # compose runs under root inside the container, so no non-root reader needs
-# this file — unlike the Odoo droplet's /etc/grove/.env which is 0644 for
+# this file - unlike the Odoo droplet's /etc/grove/.env which is 0644 for
 # its non-root container user).
 
 ssh_pwauth: false
@@ -46,7 +46,7 @@ packages:
   - lsb-release
 
 write_files:
-  # /etc/grove-obs/.env — populated by runcmd below (placeholders here get
+  # /etc/grove-obs/.env - populated by runcmd below (placeholders here get
   # sed-substituted at boot). Mode 0600 because obs containers run as root
   # internally and only root on the droplet ever reads this file.
   - path: /etc/grove-obs/.env
@@ -67,7 +67,7 @@ write_files:
       OPENOBSERVE_ROOT_EMAIL=admin@grove.local
       OPENOBSERVE_ROOT_PASSWORD=__OPENOBSERVE_ROOT_PASSWORD__
 
-      # Keep secrets — webhook token validates OpenObserve→Keep bridge
+      # Keep secrets - webhook token validates OpenObserve->Keep bridge
       # POSTs; NEXTAUTH_SECRET signs Keep's frontend session cookies.
       KEEP_WEBHOOK_TOKEN=__KEEP_WEBHOOK_TOKEN__
       KEEP_NEXTAUTH_SECRET=__KEEP_NEXTAUTH_SECRET__
@@ -87,14 +87,14 @@ write_files:
     content: ${caddyfile_tpl_b64}
 
 runcmd:
-  # ── Docker install (same approach as Odoo droplet)
+  # -- Docker install (same approach as Odoo droplet)
   - curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
   - sh /tmp/get-docker.sh
   - usermod -aG docker root
   - systemctl enable docker
   - systemctl start docker
 
-  # ── Randomize all secrets in /etc/grove-obs/.env. Each placeholder gets
+  # -- Randomize all secrets in /etc/grove-obs/.env. Each placeholder gets
   # a fresh value at boot; the file is mode 0600 so only root reads it.
   - MNU=$(openssl rand -hex 12) && sed -i "s|__MINIO_ROOT_USER__|grove-minio-$MNU|" /etc/grove-obs/.env
   - MNP=$(openssl rand -hex 24) && sed -i "s|__MINIO_ROOT_PASSWORD__|$MNP|" /etc/grove-obs/.env
@@ -102,10 +102,10 @@ runcmd:
   - KWT=$(openssl rand -hex 32) && sed -i "s|__KEEP_WEBHOOK_TOKEN__|$KWT|" /etc/grove-obs/.env
   - KNS=$(openssl rand -hex 32) && sed -i "s|__KEEP_NEXTAUTH_SECRET__|$KNS|" /etc/grove-obs/.env
 
-  # ── Bring up the obs stack
+  # -- Bring up the obs stack
   - cd /etc/grove-obs && docker compose --env-file /etc/grove-obs/.env up -d > /var/log/grove-obs-up.log 2>&1
 
-  # ── Grove-ready sentinel — touched once OpenObserve is responding on its
+  # -- Grove-ready sentinel - touched once OpenObserve is responding on its
   # public URL. Same pattern as the Odoo droplet so qa-deploy-l3.yml (Phase 2)
   # can poll for readiness over SSH.
   - |
@@ -113,7 +113,7 @@ runcmd:
       code=$(curl -sk -o /dev/null -w '%%{http_code}' --max-time 5 "https://oo.${qa_zone}/healthz" || echo 000)
       if [ "$code" = "200" ]; then
         touch /var/lib/cloud/instance/grove-obs-ready
-        echo "✓ grove-obs-ready sentinel touched (HTTP $code)" >> /var/log/grove-obs-up.log
+        echo "[ok] grove-obs-ready sentinel touched (HTTP $code)" >> /var/log/grove-obs-up.log
         exit 0
       fi
       sleep 5
