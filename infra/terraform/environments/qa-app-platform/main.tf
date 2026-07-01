@@ -143,6 +143,27 @@ resource "digitalocean_database_db" "odoo" {
   name       = "odoo"
 }
 
+# The 'postgres' database that Odoo's wait-for-psql.py probes on startup.
+#
+# 2026-07-01 discovery: Odoo's official image entrypoint runs a
+# wait-for-psql.py script that hardcodes `dbname='postgres'` in its
+# psycopg2.connect() call. Container-based Postgres (like the monolith QA
+# uses) auto-creates the 'postgres' database on first init, so the probe
+# succeeds. DO Managed Postgres does NOT auto-create 'postgres' -- it
+# creates 'defaultdb' + whatever databases are declared via TF.
+#
+# Without this resource, Odoo boots -> odoorc.sh substitutes placeholders
+# fine -> wait-for-psql.py can't connect to nonexistent 'postgres' DB ->
+# entrypoint aborts -> container restart loop. Adding it here lets the
+# probe succeed without changing anything in the grove-odoo image.
+#
+# Safe: the 'postgres' database is empty and only used for the connectivity
+# probe. Odoo's actual data lives in digitalocean_database_db.odoo.
+resource "digitalocean_database_db" "postgres_probe" {
+  cluster_id = digitalocean_database_cluster.pg.id
+  name       = "postgres"
+}
+
 resource "digitalocean_database_user" "odoo" {
   cluster_id = digitalocean_database_cluster.pg.id
   name       = "odoo"

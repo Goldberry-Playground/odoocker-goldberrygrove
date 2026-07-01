@@ -83,19 +83,17 @@ services:
       - "5080"
     networks:
       - internal
-    # 2026-07-01: healthcheck uses /dev/tcp instead of wget/curl. The
-    # OpenObserve image is scratch-based and ships NEITHER wget nor curl,
-    # so the previous ["CMD","wget"...] healthcheck ran into
-    # 'exec: "wget": executable file not found in $PATH' every 30s and
-    # marked the container UNHEALTHY -- which blocked Caddy from starting
-    # (caddy depends_on service_healthy). /dev/tcp is a bash built-in that
-    # works in any image with bash (which openobserve has).
-    healthcheck:
-      test: ["CMD-SHELL", "bash -c ': > /dev/tcp/localhost/5080'"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
+    # 2026-07-01: NO healthcheck. The OpenObserve image is scratch-based
+    # (distroless) -- no bash, no wget, no curl, no sh, no netstat. Every
+    # candidate healthcheck test hit `executable file not found in $PATH`
+    # and marked the container UNHEALTHY, which blocked Caddy from starting
+    # (chain: caddy depends_on -> keep-frontend depends_on -> keep-backend
+    # depends_on service_healthy). With no healthcheck, Docker considers
+    # the container "healthy enough" the moment its main process is running,
+    # so depends_on can use service_started downstream. If OpenObserve
+    # actually fails, docker's `restart: unless-stopped` will loop the
+    # container; external monitoring (OpenObserve itself, once bootstrapped)
+    # is the right layer for HTTP-level health, not a Docker healthcheck.
 
   # -- Keep - alert routing + workflow engine --------------------------------
   keep-backend:
@@ -114,20 +112,16 @@ services:
       - "8080"
     networks:
       - internal
-    # Same /dev/tcp pattern as openobserve -- avoids wget/curl PATH dep.
-    healthcheck:
-      test: ["CMD-SHELL", "bash -c ': > /dev/tcp/localhost/8080'"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 60s
+    # No healthcheck (same rationale as openobserve above). The keep-api
+    # image is also minimal; safer to skip healthchecks and use
+    # service_started semantics for depends_on.
 
   keep-frontend:
     image: us-central1-docker.pkg.dev/keephq/keep/keep-ui:${KEEP_TAG}
     restart: unless-stopped
     depends_on:
       keep-backend:
-        condition: service_healthy
+        condition: service_started
     environment:
       API_URL: http://keep-backend:8080
       NEXTAUTH_SECRET: ${KEEP_NEXTAUTH_SECRET}
@@ -158,7 +152,7 @@ services:
       - internal
     depends_on:
       openobserve:
-        condition: service_healthy
+        condition: service_started
       keep-frontend:
         condition: service_started
 

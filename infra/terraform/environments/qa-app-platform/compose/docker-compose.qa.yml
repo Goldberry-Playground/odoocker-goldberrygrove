@@ -48,6 +48,15 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       DB_NAME: ${DB_NAME}
       ADMIN_PASSWD: ${ODOO_ADMIN_PASSWORD}
+      # APP_ENV drives the entrypoint's mode switch:
+      #   qa       -- init once, don't --update on restart (testers keep data)
+      #   staging  -- --update=all on every start (mirror prod behavior)
+      #   debug    -- python3 -m debugpy (for VSCode debugging)
+      #   testing  -- runs --test-tags + exits
+      # If unset, entrypoint hits `[: =: unary operator expected` from
+      # `if [ ${APP_ENV} = 'debug' ]` and crashes. Learned 2026-07-01 by
+      # SSH'ing in mid-crash-loop.
+      APP_ENV: "qa"
       # PROXY_MODE=true tells Odoo to trust X-Forwarded-* headers (which
       # Caddy sets). Without this, Odoo's CSRF + URL generation breaks
       # when behind a reverse proxy.
