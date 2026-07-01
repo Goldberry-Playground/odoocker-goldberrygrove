@@ -29,8 +29,8 @@ keep.${QA_ZONE} {
 		dns digitalocean {env.DO_API_TOKEN}
 	}
 
-	# Keep API at /api/* → keep-backend:8080
-	# Keep UI at everything else → keep-frontend:3000
+	# Keep API at /api/* -> keep-backend:8080
+	# Keep UI at everything else -> keep-frontend:3000
 	# Frontend reverse-proxies API calls; this split lets the frontend
 	# fetch from same-origin without CORS.
 	handle /api/* {

@@ -4,7 +4,7 @@
 # Key differences:
 #   - MinIO runs INLINE on this droplet (not on the Odoo droplet's network
 #     via `gatheratthegrove_internal: external: true` like the local stack).
-#     This is the ADR-007 addendum decision for QA — bundle MinIO for low
+#     This is the ADR-007 addendum decision for QA - bundle MinIO for low
 #     volume, defer the swap to DO Spaces until prod or sustained volume
 #     warrants the +$5/mo.
 #   - Caddy is added in front of both UIs for TLS (admin-only at the
@@ -12,10 +12,10 @@
 #     plugin the Odoo droplet uses).
 
 services:
-  # ── MinIO — Parquet storage for OpenObserve ───────────────────────────────
+  # -- MinIO - Parquet storage for OpenObserve -------------------------------
   # Single-node, single-user. ~200MB RAM, ~50MB image. Data persists in a
   # named volume; on droplet recreate the data is lost (acceptable for QA
-  # observability — alert history isn't load-bearing across droplet
+  # observability - alert history isn't load-bearing across droplet
   # lifecycle). Swap for DO Spaces if data persistence matters.
   s3:
     image: quay.io/minio/minio:${MINIO_TAG:-RELEASE.2025-04-22T22-12-26Z}
@@ -35,7 +35,7 @@ services:
       retries: 3
       start_period: 30s
 
-  # ── MinIO bucket bootstrap — create the openobserve-data bucket on first run
+  # -- MinIO bucket bootstrap - create the openobserve-data bucket on first run
   # Idempotent: mc mb -p succeeds whether or not the bucket already exists.
   # Without this, OpenObserve's first Parquet write would fail with
   # "bucket does not exist".
@@ -49,13 +49,13 @@ services:
     entrypoint: |
       sh -c "
         mc mb -p local/openobserve-data || true
-        echo '✓ openobserve-data bucket ready'
+        echo '[ok] openobserve-data bucket ready'
       "
     networks:
       - internal
     restart: "no"
 
-  # ── OpenObserve — single-binary observability platform ────────────────────
+  # -- OpenObserve - single-binary observability platform --------------------
   # Synthetic HTTP monitors, native alerting (built-in Discord output),
   # logs/metrics/traces ingestion via OTLP, Parquet-on-S3 storage.
   openobserve:
@@ -90,7 +90,7 @@ services:
       retries: 3
       start_period: 30s
 
-  # ── Keep — alert routing + workflow engine ────────────────────────────────
+  # -- Keep - alert routing + workflow engine --------------------------------
   keep-backend:
     image: us-central1-docker.pkg.dev/keephq/keep/keep-api:${KEEP_TAG}
     restart: unless-stopped
@@ -131,7 +131,7 @@ services:
     networks:
       - internal
 
-  # ── Caddy — TLS for the two UIs ───────────────────────────────────────────
+  # -- Caddy - TLS for the two UIs -------------------------------------------
   # Same grove-caddy image the Odoo droplet uses (DO DNS-01 plugin baked in).
   caddy:
     image: ghcr.io/goldberry-playground/grove-caddy:${CADDY_TAG:-latest}
