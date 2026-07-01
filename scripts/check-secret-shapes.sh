@@ -20,7 +20,8 @@
 # Env checked (all optional; skipped if unset):
 #   DIGITALOCEAN_TOKEN         DO PAT (73 bytes: "dop_v1_<64-hex>")
 #   DIGITALOCEAN_TOKEN_TEARDOWN same
-#   CLOUDFLARE_API_TOKEN       CF token (40 chars ASCII alphanumeric)
+#   CLOUDFLARE_API_TOKEN       CF token: legacy 40-char alphanumeric OR
+#                              modern prefixed format like cfut_<...> (~53 chars)
 #   DISCORD_OPS_WEBHOOK_URL    https://discord.com/api/webhooks/<id>/<token>
 #   GROVE_QA_CI_SSH_PRIVATE_KEY  PEM starting with the standard OpenSSH PEM header
 #   SPACES_ACCESS_KEY_ID       20-char DO Spaces key
@@ -83,8 +84,15 @@ echo "== Secret shape probes =="
 probe DIGITALOCEAN_TOKEN 60 90 "dop_"
 probe DIGITALOCEAN_TOKEN_TEARDOWN 60 90 "dop_"
 
-# Cloudflare API tokens: 40 ASCII alphanumeric chars
-probe CLOUDFLARE_API_TOKEN 35 45
+# Cloudflare API tokens: two shapes coexist in the wild.
+#   - Legacy: 40 pure ASCII alphanumeric chars
+#   - Modern: prefixed like cfut_<...> at ~53 chars (User API Token page in
+#     dashboard hands these out post-2025)
+# Range 35-70 accepts both without becoming so loose it lets a webhook URL
+# (120+ chars) or a PEM key (400+) sneak through. If CF ever ships a wider
+# format, widen this to match — do NOT drop the upper bound, it's what
+# catches wrong-value-pasted mistakes.
+probe CLOUDFLARE_API_TOKEN 35 70
 
 # Discord webhook URL: https://discord.com/api/webhooks/<id_18-20_digits>/<token_68_chars>
 # Total length ~120 chars.
