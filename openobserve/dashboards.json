@@ -91,6 +91,55 @@
       ],
       "public_share_enabled": true,
       "refresh_interval_seconds": 60
+    },
+    {
+      "name": "Grove CostOps",
+      "description": "DigitalOcean spend at a glance — account MTD/balance actuals + per-resource derived cost from the cost-bridge (spec §6). Sorted-by-cost resource table = the trim candidates by spend. The full 'cost × utilization' rightsizing join lands when the OTel Collector ships USE metrics (APM/infra §3); until then, rank trim candidates by cost alone.",
+      "_query_note": "Queries target the OTLP metric streams emitted by cost/do_billing_bridge.py (value field + attribute columns env/type/name/size). Exact OpenObserve OTLP column names are pending live validation — adjust after the first COST_BRIDGE_ENABLED=true run.",
+      "rows": [
+        {
+          "title": "Spend overview",
+          "panels": [
+            {
+              "title": "Month-to-date spend ($)",
+              "type": "stat",
+              "query": "SELECT value AS mtd FROM cost_account_month_to_date ORDER BY _timestamp DESC LIMIT 1",
+              "unit": "currency"
+            },
+            {
+              "title": "Account balance ($)",
+              "type": "stat",
+              "query": "SELECT value AS balance FROM cost_account_balance ORDER BY _timestamp DESC LIMIT 1",
+              "unit": "currency"
+            },
+            {
+              "title": "Estimated total ($/mo)",
+              "type": "stat",
+              "query": "SELECT SUM(value) AS total FROM cost_resource_monthly_estimate WHERE _timestamp > NOW() - INTERVAL '90 minutes'",
+              "unit": "currency"
+            },
+            {
+              "title": "Month-to-date spend trend",
+              "type": "timeseries",
+              "query": "SELECT value AS mtd, _timestamp FROM cost_account_month_to_date WHERE _timestamp > NOW() - INTERVAL '30 days'",
+              "unit": "currency"
+            }
+          ]
+        },
+        {
+          "title": "Cost by resource (trim candidates — highest spend first)",
+          "panels": [
+            {
+              "title": "Estimated monthly cost by resource",
+              "type": "table",
+              "query": "SELECT name, type, size, value AS monthly_usd FROM cost_resource_monthly_estimate WHERE _timestamp > NOW() - INTERVAL '90 minutes' ORDER BY value DESC",
+              "unit": "currency"
+            }
+          ]
+        }
+      ],
+      "public_share_enabled": false,
+      "refresh_interval_seconds": 300
     }
   ]
 }
