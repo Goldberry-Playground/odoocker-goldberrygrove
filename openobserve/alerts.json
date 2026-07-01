@@ -172,6 +172,100 @@
       "runbook_key": "ghost-content-empty",
       "_message_template": "[{tenant}] SYNTHETIC ghost-content failing — Ghost Content API returned no posts (key rotated/invalid or blog empty). The tenant /blog page will fail. Runbook: docs/RUNBOOKS.md#ghost-content-empty",
       "_note": "Only fires when SYNTHETIC_GHOST_ENABLED=true. Content-level depth beyond the ghost-*-admin availability monitors; warning (Ghost is content-only, doesn't break commerce)."
+    },
+    {
+      "name": "droplet-cpu-warning",
+      "stream": "system_cpu_utilization",
+      "trigger_condition": "avg(system_cpu_utilization) > 0.70 over 10m",
+      "severity": "warning",
+      "destination": "keep-webhook",
+      "runbook_key": "droplet-cpu",
+      "_message_template": "USE — droplet CPU >70% for 10m. Identify the hot container via docker_stats. Runbook: docs/RUNBOOKS.md#droplet-cpu",
+      "_note": "USE metric from the OTel Collector (hostmetrics). Utilization is a 0-1 fraction. Stream/field name pending live validation."
+    },
+    {
+      "name": "droplet-cpu-critical",
+      "stream": "system_cpu_utilization",
+      "trigger_condition": "avg(system_cpu_utilization) > 0.90 over 10m",
+      "severity": "critical",
+      "destination": "keep-webhook",
+      "runbook_key": "droplet-cpu",
+      "_message_template": "USE — droplet CPU >90% for 10m. Imminent thrash risk. Restart non-critical containers or scale. Runbook: docs/RUNBOOKS.md#droplet-cpu"
+    },
+    {
+      "name": "container-ram-warning",
+      "stream": "container_memory_percent",
+      "trigger_condition": "container_memory_percent > 80 for 5m (any container)",
+      "severity": "warning",
+      "destination": "keep-webhook",
+      "runbook_key": "container-ram",
+      "_message_template": "USE — [{container_name}] memory >80% of limit for 5m. Odoo workers most likely. Runbook: docs/RUNBOOKS.md#container-ram"
+    },
+    {
+      "name": "container-ram-critical",
+      "stream": "container_memory_percent",
+      "trigger_condition": "container_memory_percent > 95 for 5m (any container)",
+      "severity": "critical",
+      "destination": "keep-webhook",
+      "runbook_key": "container-ram",
+      "_message_template": "USE — [{container_name}] memory >95% of limit — OOM kill imminent. Restart it. Runbook: docs/RUNBOOKS.md#container-ram"
+    },
+    {
+      "name": "disk-data-warning",
+      "stream": "system_filesystem_utilization",
+      "trigger_condition": "system_filesystem_utilization{mountpoint~=/data|/} > 0.75",
+      "severity": "warning",
+      "destination": "keep-webhook",
+      "runbook_key": "disk-data",
+      "_message_template": "USE — data filesystem >75% full. MinIO objects or Postgres WAL growing. Clean up or add volume. Runbook: docs/RUNBOOKS.md#disk-data"
+    },
+    {
+      "name": "disk-data-critical",
+      "stream": "system_filesystem_utilization",
+      "trigger_condition": "system_filesystem_utilization{mountpoint~=/data|/} > 0.90",
+      "severity": "critical",
+      "destination": "keep-webhook",
+      "runbook_key": "disk-data",
+      "_message_template": "USE — data filesystem >90% full — near-full kills MinIO writes + Postgres WAL. Immediate action. Runbook: docs/RUNBOOKS.md#disk-data",
+      "_note": "Tighter than typical (75/90) because MinIO + Postgres WAL fail silently-then-catastrophically when the volume fills. postgres-connections + the RED latency/5xx alerts need the postgresql receiver + Beyla (follow-ups)."
+    },
+    {
+      "name": "odoo-orders-latency-warning",
+      "stream": "http_server_request_duration",
+      "trigger_condition": "p95(http_server_request_duration) where url_path='/grove/api/v1/orders' > 3s over 5m",
+      "severity": "warning",
+      "destination": "keep-webhook",
+      "runbook_key": "odoo-latency",
+      "_message_template": "RED — Odoo /orders p95 >3s over 5m. Check Postgres connections + slow query log. Runbook: docs/RUNBOOKS.md#odoo-latency",
+      "_note": "RED metric from Beyla eBPF (Odoo). Metric stream/field names (http_server_request_duration, url_path) pending live validation on first Beyla run."
+    },
+    {
+      "name": "odoo-orders-latency-critical",
+      "stream": "http_server_request_duration",
+      "trigger_condition": "p95(http_server_request_duration) where url_path='/grove/api/v1/orders' > 8s over 5m",
+      "severity": "critical",
+      "destination": "keep-webhook",
+      "runbook_key": "odoo-latency",
+      "_message_template": "RED — Odoo /orders p95 >8s — orders timing out. Check Postgres locks; restart Odoo if no DB cause. Runbook: docs/RUNBOOKS.md#odoo-latency"
+    },
+    {
+      "name": "odoo-products-latency-warning",
+      "stream": "http_server_request_duration",
+      "trigger_condition": "p95(http_server_request_duration) where url_path='/grove/api/v1/products' > 1s over 5m",
+      "severity": "warning",
+      "destination": "keep-webhook",
+      "runbook_key": "odoo-latency",
+      "_message_template": "RED — Odoo /products p95 >1s. Cache miss or Postgres scan; check KeyDB hit rate. Runbook: docs/RUNBOOKS.md#odoo-latency"
+    },
+    {
+      "name": "odoo-error-rate-warning",
+      "stream": "http_server_request_duration",
+      "trigger_condition": "count(http.response.status_code>=500) / count(*) on Odoo > 1% over 5m",
+      "severity": "warning",
+      "destination": "keep-webhook",
+      "runbook_key": "odoo-error-rate",
+      "_message_template": "RED — Odoo 5xx rate >1% over 5m. Check Odoo worker logs for Python exceptions. Runbook: docs/RUNBOOKS.md#odoo-error-rate",
+      "_note": "Beyla RED. nextjs-* latency/5xx alerts need Next.js instrumentation.ts (grove-sites) — separate PR."
     }
   ]
 }
