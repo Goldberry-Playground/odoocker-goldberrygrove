@@ -163,6 +163,12 @@ Alerts: `cost-budget-warning`/`-critical` (vs `COST_MONTHLY_BUDGET`) and
 + a read-only `DO_API_TOKEN` (no-op locally). **Sprint 2** adds Infracost
 (pre-merge `$/mo` delta on Terraform PRs) as the shift-left complement.
 
+**Rightsizing:** the **Grove CostOps** dashboard's *Rightsizing* row correlates
+droplet cost (cost-bridge) with droplet/container utilization (OTel Collector USE
+metrics) — high cost + low use = a downsize candidate. A single computed
+`cost × utilization` JOIN is a follow-up once the metric stream/field names are
+confirmed live.
+
 ## APM / Infra — OTel Collector (USE metrics)
 
 The `otel-collector` container (contrib image) scrapes **host** CPU/RAM/disk
