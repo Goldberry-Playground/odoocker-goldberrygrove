@@ -87,6 +87,43 @@
       "runbook_key": "ssl-expiring",
       "_message_template": "[{host}] SSL cert expires in {days_remaining} days. Runbook: docs/RUNBOOKS.md#ssl-expiring",
       "_deferred": "Local has no real certs. SSL monitors will fail-to-evaluate locally; alert is meaningful only once M2 droplet exists with real certs."
+    },
+    {
+      "name": "synthetic-health-critical",
+      "stream": "synthetic_journey_success",
+      "trigger_condition": "journey='health' success==0 for >2 consecutive runs",
+      "severity": "critical",
+      "destination": "keep-webhook",
+      "runbook_key": "odoo-down",
+      "_message_template": "SYNTHETIC health failing — grove_headless /health is down (Odoo API unreachable or module unloaded). All storefront commerce fails. Runbook: docs/RUNBOOKS.md#odoo-down",
+      "_note": "Tier-1 synthetic (Hurl). Queries the synthetic_journey_success metric stream emitted by the synthetic-runner, not a built-in monitor."
+    },
+    {
+      "name": "synthetic-cart-critical",
+      "stream": "synthetic_journey_success",
+      "trigger_condition": "journey='cart-flow' success==0 for >2 consecutive runs (any tenant)",
+      "severity": "critical",
+      "destination": "keep-webhook",
+      "runbook_key": "cart-broken",
+      "_message_template": "[{tenant}] SYNTHETIC cart-flow failing — add-to-cart → cart-get broke. The money path is degraded. Runbook: docs/RUNBOOKS.md#cart-broken"
+    },
+    {
+      "name": "synthetic-catalog-warning",
+      "stream": "synthetic_journey_success",
+      "trigger_condition": "journey='catalog' success==0 for >2 consecutive runs (any tenant)",
+      "severity": "warning",
+      "destination": "keep-webhook",
+      "runbook_key": "catalog-empty",
+      "_message_template": "[{tenant}] SYNTHETIC catalog failing — product list/detail returned no usable data. Storefront may show empty shop. Runbook: docs/RUNBOOKS.md#catalog-empty"
+    },
+    {
+      "name": "synthetic-latency-warning",
+      "stream": "synthetic_journey_duration_ms",
+      "trigger_condition": "p95(duration_ms) > 3000 over 5m (any journey/tenant)",
+      "severity": "warning",
+      "destination": "keep-webhook",
+      "runbook_key": "synthetic-slow",
+      "_message_template": "[{tenant}] SYNTHETIC {journey} slow — p95 {duration_ms}ms over 5m (threshold 3000ms). Backend degrading. Runbook: docs/RUNBOOKS.md#synthetic-slow"
     }
   ]
 }

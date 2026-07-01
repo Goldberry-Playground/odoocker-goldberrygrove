@@ -108,6 +108,34 @@ Two layers:
 
 After editing, `make monitoring-setup`.
 
+## Synthetic Tier-1 (Hurl)
+
+Beyond the built-in OpenObserve monitors (shallow HTTP/TCP/SSL up-checks), the
+`synthetic-runner` container runs **multi-step Hurl journeys** against the live
+`grove_headless` API every 60s (supercronic) and ships pass/fail + latency to
+OpenObserve as OTLP metrics. See `synthetic/README.md` for the full design.
+
+| Journey | Scope | Proves |
+|---|---|---|
+| `health` | shared | grove_headless API up |
+| `catalog` | per tenant | products list + detail (with price) work |
+| `cart-flow` | per tenant | add-to-cart → cart reflects the line (BFF↔Odoo write path) |
+
+Metrics emitted (queried by the `synthetic-*` alert rules in `alerts.json`):
+- `synthetic_journey_success` — gauge 1/0, tags `{journey, tenant, tier=api, env}`
+- `synthetic_journey_duration_ms` — gauge ms
+
+```bash
+# Journeys live in synthetic/journeys/*.hurl (edit + the runner picks them up
+# on its next minute). Add/remove journeys in synthetic/run.py's journey lists.
+# Unit-test the metric shipper without the stack:
+python3 synthetic/test_run.py
+```
+
+**Deferred to the next increment** (need secrets / order cleanup): `ghost-content`
+(Ghost Content API key) and `checkout-canary` (bearer key + `$0 SYNTHETIC-CANARY`
+seed + XML-RPC order cancel — there's no `/orders` cancel endpoint).
+
 ## Cost model
 
 - **Local:** $0. OpenObserve + Keep + MinIO all self-hosted.
