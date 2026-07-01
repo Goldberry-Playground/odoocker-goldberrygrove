@@ -39,12 +39,17 @@ provider "digitalocean" {
 
 # AWS provider aliased to the DO Spaces S3 endpoint -- used only for
 # bucket_cors_configuration (DO provider doesn't expose CORS natively).
-# Uses the assets_rw key created below.
+#
+# 2026-07-01: DOES NOT use the TF-created assets_rw key (that created a
+# chicken-and-egg: newly-created key returns 403 on CORS PUT within the
+# same apply run). Instead, this uses the BOOTSTRAP Spaces key already
+# in the operator's env via SPACES_ACCESS_KEY_ID / SPACES_SECRET_ACCESS_KEY
+# (fed by .env.op). Same key that talks to grove-tf-state backend.
+# AWS provider reads AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY env vars by
+# default -- .env.op maps those to the bootstrap Spaces key.
 provider "aws" {
-  alias      = "spaces"
-  region     = "us-east-1"
-  access_key = digitalocean_spaces_key.assets_rw.access_key
-  secret_key = digitalocean_spaces_key.assets_rw.secret_key
+  alias  = "spaces"
+  region = "us-east-1"
 
   skip_credentials_validation = true
   skip_metadata_api_check     = true
@@ -126,21 +131,31 @@ resource "aws_s3_bucket_cors_configuration" "assets" {
 }
 
 # ---- DO CDN endpoint -------------------------------------------------------
-# Fronts the bucket at the assets.<zone> hostname. DO's CDN handles TLS +
-# global edge cache. TTL controls how long the edge holds each object;
-# upload-assets.sh can override per-object via Cache-Control headers when
-# an image needs to invalidate faster than TTL.
+# Fronts the bucket at the DO-provisioned CDN endpoint. TTL controls how
+# long the edge holds each object; upload-assets.sh can override per-object
+# via Cache-Control headers when an image needs to invalidate faster.
+#
+# 2026-07-01: NO custom_domain set. Adding one requires a certificate,
+# which DO auto-provisions via LE -- but LE needs the DNS record to
+# resolve at the custom_domain FIRST, which creates a chicken-and-egg
+# during initial apply (`certificate ID missing` error).
+#
+# Instead: Cloudflare's proxied CNAME (below) terminates TLS at Cloudflare's
+# edge (its universal cert covers assets.gatheringatthegrove.com), then
+# proxies to the DO CDN's raw endpoint. DO CDN sees requests hitting its
+# raw .cdn.digitaloceanspaces.com hostname (which has its own valid
+# DO-provisioned cert). No custom cert coordination needed.
 
 resource "digitalocean_cdn" "assets" {
-  origin           = digitalocean_spaces_bucket.assets.bucket_domain_name
-  ttl              = var.cdn_ttl_seconds
-  certificate_name = null # Use DO-managed cert for the custom_domain below
-  custom_domain    = local.assets_fqdn
+  origin = digitalocean_spaces_bucket.assets.bucket_domain_name
+  ttl    = var.cdn_ttl_seconds
 }
 
 # ---- Cloudflare CNAME → CDN endpoint ---------------------------------------
-# Point assets.<zone> at the CDN. Cloudflare handles the outermost TLS +
-# WAF; DO CDN handles the edge cache + origin fetch from the bucket.
+# Point assets.<zone> at the CDN's raw endpoint. Cloudflare handles the
+# outermost TLS (universal cert) + WAF; DO CDN handles the edge cache +
+# origin fetch from the bucket. Proxy is essential -- without it, browsers
+# would see the DO CDN hostname's cert (mismatch with assets.<zone>).
 
 resource "cloudflare_record" "assets" {
   zone_id = data.cloudflare_zone.apex.id
@@ -148,5 +163,5 @@ resource "cloudflare_record" "assets" {
   type    = "CNAME"
   value   = digitalocean_cdn.assets.endpoint
   ttl     = 1    # 1 = "Auto" in Cloudflare, follows their edge TTL
-  proxied = true # keeps traffic behind Cloudflare's WAF
+  proxied = true # keeps traffic behind Cloudflare's WAF + terminates TLS
 }
