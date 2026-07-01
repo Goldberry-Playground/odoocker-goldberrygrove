@@ -121,8 +121,12 @@ services:
       # so the hub can pull editorial content from a designated Ghost
       # instance independent of any tenant's blog. Note "_API_" in the
       # key name (different from tenants' GHOST_CONTENT_KEY).
-      HUB_GHOST_URL: https://goldberrygrove.farm
-      HUB_GHOST_CONTENT_API_KEY: ${GHOST_KEY_GOLDBERRY}
+      # Points at the QA-local ghost-goldberry container (Phase C, 2026-07-01)
+      # so hub's editorial pull doesn't couple QA to prod goldberrygrove.farm.
+      # Content keys are seeded per-droplet via scripts/setup_ghost_integration.py
+      # after first boot -- see docs/GHOST.md.
+      HUB_GHOST_URL: http://ghost-goldberry:2368
+      HUB_GHOST_CONTENT_API_KEY: ${GHOST_KEY_GOLDBERRY:-qa-stub-no-ghost-key-yet}
 
   # Tenants' tenant.secrets.ts uses requireEnv() which THROWS in production
   # on empty/missing values (not just missing). Empty defaults in source
@@ -145,9 +149,11 @@ services:
       # Calls to Odoo authenticated endpoints will fail at runtime until a
       # real key is issued and seeded into Infisical / .env.
       ODOO_API_KEY: qa-stub-no-odoo-api-key-yet
-      GHOST_URL: https://goldberrygrove.farm
-      # Falls back to placeholder when Infisical GHOST_KEY_GOLDBERRY is unset
-      # (which it currently is -- Ghost not deployed in QA).
+      # Phase C (2026-07-01): points at QA-local ghost-goldberry container.
+      # Content key is seeded after first boot via setup_ghost_integration.py
+      # + `infisical secrets set GHOST_KEY_GOLDBERRY=...`; falls back to stub
+      # so requireEnv() passes on a fresh droplet before the seed step runs.
+      GHOST_URL: http://ghost-goldberry:2368
       GHOST_CONTENT_KEY: ${GHOST_KEY_GOLDBERRY:-qa-stub-no-ghost-key-yet}
 
   ggg:
@@ -158,10 +164,10 @@ services:
       NEXT_PUBLIC_QA_BANNER: "QA Environment"
       ODOO_URL: http://odoo:8069
       ODOO_API_KEY: qa-stub-no-odoo-api-key-yet
-      # No Ghost for GGG yet -- placeholders satisfy requireEnv(). Frontend's
-      # /blog route will render empty state once it tries to fetch.
-      GHOST_URL: https://qa-stub.example.com
-      GHOST_CONTENT_KEY: qa-stub-no-ghost-key-yet
+      # Phase C (2026-07-01): points at QA-local ghost-ggg container.
+      # Same seed flow as goldberry (see docs/GHOST.md).
+      GHOST_URL: http://ghost-ggg:2369
+      GHOST_CONTENT_KEY: ${GHOST_KEY_GGG:-qa-stub-no-ghost-key-yet}
 
   nursery:
     image: ghcr.io/goldberry-playground/grove-nursery:${NURSERY_TAG}
@@ -171,8 +177,60 @@ services:
       NEXT_PUBLIC_QA_BANNER: "QA Environment"
       ODOO_URL: http://odoo:8069
       ODOO_API_KEY: qa-stub-no-odoo-api-key-yet
-      GHOST_URL: https://qa-stub.example.com
-      GHOST_CONTENT_KEY: qa-stub-no-ghost-key-yet
+      # Phase C (2026-07-01): points at QA-local ghost-nursery container.
+      # Same seed flow as goldberry (see docs/GHOST.md).
+      GHOST_URL: http://ghost-nursery:2370
+      GHOST_CONTENT_KEY: ${GHOST_KEY_NURSERY:-qa-stub-no-ghost-key-yet}
+
+  # -- Ghost CMS instances (one per tenant) -----------------------------------
+  # Phase C, 2026-07-01: split the previous "one Ghost per QA droplet" model
+  # into three, mirroring what local + sandbox have had via override.grove.yml.
+  # SQLite backend + a per-tenant Docker volume; ephemeral (dies with the
+  # droplet, which is the intended QA behavior -- content is for testing,
+  # not for keeps). Ports internal only; the storefronts talk to Ghost over
+  # the default grove-qa_default network via container hostname + Content API.
+  # Public HTTPS is intentionally NOT exposed -- Caddy has no Ghost vhost.
+  # Image is pinned by digest to match local + sandbox for uniformity.
+  ghost-goldberry:
+    image: ghost:5-alpine@sha256:a0506f3f05f5bdc6c950c5113cdcdb1e1f96fbf15f6dc0a39fc093c25348bdb5
+    restart: unless-stopped
+    environment:
+      url: http://ghost-goldberry:2368
+      database__client: sqlite3
+      database__connection__filename: /var/lib/ghost/content/data/ghost.db
+      NODE_ENV: production
+    volumes:
+      - ghost-goldberry-data:/var/lib/ghost/content
+    expose:
+      - "2368"
+
+  ghost-ggg:
+    image: ghost:5-alpine@sha256:a0506f3f05f5bdc6c950c5113cdcdb1e1f96fbf15f6dc0a39fc093c25348bdb5
+    restart: unless-stopped
+    environment:
+      url: http://ghost-ggg:2369
+      database__client: sqlite3
+      database__connection__filename: /var/lib/ghost/content/data/ghost.db
+      NODE_ENV: production
+      server__port: "2369"
+    volumes:
+      - ghost-ggg-data:/var/lib/ghost/content
+    expose:
+      - "2369"
+
+  ghost-nursery:
+    image: ghost:5-alpine@sha256:a0506f3f05f5bdc6c950c5113cdcdb1e1f96fbf15f6dc0a39fc093c25348bdb5
+    restart: unless-stopped
+    environment:
+      url: http://ghost-nursery:2370
+      database__client: sqlite3
+      database__connection__filename: /var/lib/ghost/content/data/ghost.db
+      NODE_ENV: production
+      server__port: "2370"
+    volumes:
+      - ghost-nursery-data:/var/lib/ghost/content
+    expose:
+      - "2370"
 
   # -- qa_portal Postgres ------------------------------------------------------
   # Co-located DB for the QA portal app. ISOLATED from the main grove network:
@@ -214,3 +272,9 @@ volumes:
   postgres-data:
   odoo-filestore:
   qa_portal_pgdata:
+  # Ephemeral per Phase C -- Ghost content resets on droplet recreate. When we
+  # need durability, move these onto the same block volume that hosts caddy-data
+  # (see docs/ADR/005-qa-cert-resilience-stack.md for the pattern).
+  ghost-goldberry-data:
+  ghost-ggg-data:
+  ghost-nursery-data:
