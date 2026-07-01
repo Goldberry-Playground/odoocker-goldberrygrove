@@ -139,6 +139,12 @@ services:
       OPENOBSERVE_OTLP_METRICS_URL: ${OPENOBSERVE_OTLP_METRICS_URL:-http://openobserve:5080/api/default/v1/metrics}
       OPENOBSERVE_ROOT_EMAIL: ${OPENOBSERVE_ROOT_EMAIL}
       OPENOBSERVE_ROOT_PASSWORD: ${OPENOBSERVE_ROOT_PASSWORD}
+      # checkout-canary (opt-in money-path journey + XML-RPC seed/cleanup)
+      SYNTHETIC_CANARY_ENABLED: ${SYNTHETIC_CANARY_ENABLED:-false}
+      ODOO_XMLRPC_URL: ${ODOO_XMLRPC_URL:-http://odoo:8069}
+      ODOO_DB: ${ODOO_DB:-}
+      ODOO_LOGIN: ${ODOO_LOGIN:-}
+      SYNTHETIC_ODOO_API_KEY: ${SYNTHETIC_ODOO_API_KEY:-}
     networks:
       - internal
 
