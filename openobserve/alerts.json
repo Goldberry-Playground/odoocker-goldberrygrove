@@ -172,6 +172,62 @@
       "runbook_key": "ghost-content-empty",
       "_message_template": "[{tenant}] SYNTHETIC ghost-content failing — Ghost Content API returned no posts (key rotated/invalid or blog empty). The tenant /blog page will fail. Runbook: docs/RUNBOOKS.md#ghost-content-empty",
       "_note": "Only fires when SYNTHETIC_GHOST_ENABLED=true. Content-level depth beyond the ghost-*-admin availability monitors; warning (Ghost is content-only, doesn't break commerce)."
+    },
+    {
+      "name": "droplet-cpu-warning",
+      "stream": "system_cpu_utilization",
+      "trigger_condition": "avg(system_cpu_utilization) > 0.70 over 10m",
+      "severity": "warning",
+      "destination": "keep-webhook",
+      "runbook_key": "droplet-cpu",
+      "_message_template": "USE — droplet CPU >70% for 10m. Identify the hot container via docker_stats. Runbook: docs/RUNBOOKS.md#droplet-cpu",
+      "_note": "USE metric from the OTel Collector (hostmetrics). Utilization is a 0-1 fraction. Stream/field name pending live validation."
+    },
+    {
+      "name": "droplet-cpu-critical",
+      "stream": "system_cpu_utilization",
+      "trigger_condition": "avg(system_cpu_utilization) > 0.90 over 10m",
+      "severity": "critical",
+      "destination": "keep-webhook",
+      "runbook_key": "droplet-cpu",
+      "_message_template": "USE — droplet CPU >90% for 10m. Imminent thrash risk. Restart non-critical containers or scale. Runbook: docs/RUNBOOKS.md#droplet-cpu"
+    },
+    {
+      "name": "container-ram-warning",
+      "stream": "container_memory_percent",
+      "trigger_condition": "container_memory_percent > 80 for 5m (any container)",
+      "severity": "warning",
+      "destination": "keep-webhook",
+      "runbook_key": "container-ram",
+      "_message_template": "USE — [{container_name}] memory >80% of limit for 5m. Odoo workers most likely. Runbook: docs/RUNBOOKS.md#container-ram"
+    },
+    {
+      "name": "container-ram-critical",
+      "stream": "container_memory_percent",
+      "trigger_condition": "container_memory_percent > 95 for 5m (any container)",
+      "severity": "critical",
+      "destination": "keep-webhook",
+      "runbook_key": "container-ram",
+      "_message_template": "USE — [{container_name}] memory >95% of limit — OOM kill imminent. Restart it. Runbook: docs/RUNBOOKS.md#container-ram"
+    },
+    {
+      "name": "disk-data-warning",
+      "stream": "system_filesystem_utilization",
+      "trigger_condition": "system_filesystem_utilization{mountpoint~=/data|/} > 0.75",
+      "severity": "warning",
+      "destination": "keep-webhook",
+      "runbook_key": "disk-data",
+      "_message_template": "USE — data filesystem >75% full. MinIO objects or Postgres WAL growing. Clean up or add volume. Runbook: docs/RUNBOOKS.md#disk-data"
+    },
+    {
+      "name": "disk-data-critical",
+      "stream": "system_filesystem_utilization",
+      "trigger_condition": "system_filesystem_utilization{mountpoint~=/data|/} > 0.90",
+      "severity": "critical",
+      "destination": "keep-webhook",
+      "runbook_key": "disk-data",
+      "_message_template": "USE — data filesystem >90% full — near-full kills MinIO writes + Postgres WAL. Immediate action. Runbook: docs/RUNBOOKS.md#disk-data",
+      "_note": "Tighter than typical (75/90) because MinIO + Postgres WAL fail silently-then-catastrophically when the volume fills. postgres-connections + the RED latency/5xx alerts need the postgresql receiver + Beyla (follow-ups)."
     }
   ]
 }

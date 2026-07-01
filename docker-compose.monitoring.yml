@@ -177,5 +177,28 @@ services:
     networks:
       - internal
 
+  # ── otel-collector — USE/infra metrics → OpenObserve ──────────────────────
+  # Scrapes host CPU/RAM/disk (hostmetrics via /hostfs) + per-container CPU/RAM
+  # (docker_stats via the socket) and ships OTLP metrics to OpenObserve. These
+  # are the USE metrics the CostOps rightsizing dashboard joins with cost.
+  # See otel/README.md. Contrib image = the receivers/basicauth extension.
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:${OTELCOL_TAG:-0.115.0}
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol/config.yaml"]
+    depends_on:
+      - openobserve
+    environment:
+      OPENOBSERVE_OTLP_BASE: ${OPENOBSERVE_OTLP_BASE:-http://openobserve:5080/api/default}
+      OPENOBSERVE_ROOT_EMAIL: ${OPENOBSERVE_ROOT_EMAIL}
+      OPENOBSERVE_ROOT_PASSWORD: ${OPENOBSERVE_ROOT_PASSWORD}
+      COST_ENV: ${COST_ENV:-${SYNTHETIC_ENV:-local}}
+    volumes:
+      - ./otel/otelcol-config.yaml:/etc/otelcol/config.yaml:ro
+      - /:/hostfs:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - internal
+
 volumes:
   keep-data:

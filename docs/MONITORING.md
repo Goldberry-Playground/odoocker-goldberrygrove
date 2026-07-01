@@ -163,6 +163,22 @@ Alerts: `cost-budget-warning`/`-critical` (vs `COST_MONTHLY_BUDGET`) and
 + a read-only `DO_API_TOKEN` (no-op locally). **Sprint 2** adds Infracost
 (pre-merge `$/mo` delta on Terraform PRs) as the shift-left complement.
 
+## APM / Infra — OTel Collector (USE metrics)
+
+The `otel-collector` container (contrib image) scrapes **host** CPU/RAM/disk
+(`hostmetrics` via `/hostfs`) + **per-container** CPU/RAM (`docker_stats` via the
+socket) and ships OTLP metrics to OpenObserve. Config: `otel/otelcol-config.yaml`.
+
+These are the **USE** metrics that complete the CostOps rightsizing view — joined
+with the cost-bridge's `cost_resource_monthly_estimate`, `cost × low-utilization`
+finally becomes "what to trim." Alerts added: `droplet-cpu-{warning,critical}`,
+`container-ram-{warning,critical}`, `disk-data-{warning,critical}`.
+
+Always on (reuses the OpenObserve root creds; no extra secret). Point
+`OPENOBSERVE_OTLP_BASE` at the obs-droplet URL in QA/prod. **Follow-ups:** the
+`postgresql` receiver (documented-optional in the config → `postgres-connections`
+alert) and Beyla eBPF for the RED latency/5xx alerts.
+
 ## Cost model
 
 - **Local:** $0. OpenObserve + Keep + MinIO all self-hosted.
