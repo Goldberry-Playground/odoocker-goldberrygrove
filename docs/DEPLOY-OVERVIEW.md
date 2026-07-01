@@ -69,12 +69,20 @@ operator merges PR to main
     └─ post-deploy: Discord URL list
 ```
 
-Public URLs after deploy:
+Public URLs after deploy (monolith QA):
 - `https://hub.qa.gatheringatthegrove.com` (hub frontend)
 - `https://goldberry.qa.gatheringatthegrove.com` (tenant)
 - `https://ggg.qa.gatheringatthegrove.com` (tenant)
 - `https://nursery.qa.gatheringatthegrove.com` (tenant)
 - `https://odoo.qa.gatheringatthegrove.com` (Odoo admin)
+
+**Dual-run notice (as of 2026-07-01):** Level 3 QA env is running in parallel at `qa-l3.gatheringatthegrove.com` (per ADR-007). Level 3 URLs currently serving:
+
+- `https://odoo.qa-l3.gatheringatthegrove.com` (Odoo on the tiny Level 3 droplet, backed by DO Managed Postgres)
+- `https://oo.qa-l3.gatheringatthegrove.com` (OpenObserve UI — admin-only via firewall allowlist)
+- `https://keep.qa-l3.gatheringatthegrove.com` (Keep alert-routing UI — admin-only)
+
+Level 3 Phase 2 (App Platform specs for the 4 frontends) is next. Once Phase 4 DNS cutover completes, the monolith URLs above retire and their `qa.` hostnames re-point at Level 3.
 
 ### QA fast iteration — soft restart without full deploy
 
