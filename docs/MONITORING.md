@@ -142,6 +142,23 @@ product and the runner creates/sweeps a draft order each cycle (see
 **Still deferred:** `ghost-content` (Ghost Content API key) — Ghost availability
 is already covered by the `ghost-*-admin` monitors + `ghost-down-warning`.
 
+## CostOps (DO billing bridge)
+
+The `cost-bridge` container polls the DigitalOcean API hourly and ships **cost as
+metrics** into the same OpenObserve pane as the USE/utilization data, so
+`cost_resource_monthly_estimate × low-utilization` becomes a **rightsizing /
+"what to trim"** view. See `cost/README.md` for the design; spec §6.
+
+| Metric | Meaning |
+|---|---|
+| `cost_account_month_to_date` / `_balance` / `_month_to_date_usage` | The **actual** aggregate truth from DO's balance API |
+| `cost_resource_monthly_estimate{type,name,size,env}` | Per-resource **derived** cost = live inventory × static price list |
+
+Alerts: `cost-budget-warning`/`-critical` (vs `COST_MONTHLY_BUDGET`) and
+`cost-anomaly-warning`. **Opt-in + cloud-only** — set `COST_BRIDGE_ENABLED=true`
++ a read-only `DO_API_TOKEN` (no-op locally). **Sprint 2** adds Infracost
+(pre-merge `$/mo` delta on Terraform PRs) as the shift-left complement.
+
 ## Cost model
 
 - **Local:** $0. OpenObserve + Keep + MinIO all self-hosted.

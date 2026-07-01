@@ -134,6 +134,34 @@
       "runbook_key": "checkout-broken",
       "_message_template": "[{tenant}] SYNTHETIC checkout-canary failing — the /orders bearer endpoint or the access_token gate is broken. Orders cannot be created. Runbook: docs/RUNBOOKS.md#checkout-broken",
       "_note": "Only fires when SYNTHETIC_CANARY_ENABLED=true (the canary journey runs). Tests the money-path write + the PII access_token gate end-to-end."
+    },
+    {
+      "name": "cost-budget-warning",
+      "stream": "cost_account_month_to_date",
+      "trigger_condition": "cost_account_month_to_date > 0.8 * COST_MONTHLY_BUDGET",
+      "severity": "warning",
+      "destination": "keep-webhook",
+      "runbook_key": "cost-budget",
+      "_message_template": "COST — month-to-date spend ${mtd} is >80% of the ${budget}/mo budget. Review the rightsizing dashboard. Runbook: docs/RUNBOOKS.md#cost-budget",
+      "_note": "CostOps (DO billing bridge). Threshold uses COST_MONTHLY_BUDGET from .env.monitoring; disabled when budget=0. Only fires when COST_BRIDGE_ENABLED=true."
+    },
+    {
+      "name": "cost-budget-critical",
+      "stream": "cost_account_month_to_date",
+      "trigger_condition": "cost_account_month_to_date > COST_MONTHLY_BUDGET",
+      "severity": "critical",
+      "destination": "keep-webhook",
+      "runbook_key": "cost-budget",
+      "_message_template": "COST — month-to-date spend ${mtd} has EXCEEDED the ${budget}/mo budget. Runbook: docs/RUNBOOKS.md#cost-budget"
+    },
+    {
+      "name": "cost-anomaly-warning",
+      "stream": "cost_account_month_to_date_usage",
+      "trigger_condition": "day-over-day cost_account_month_to_date_usage delta > 2x trailing-7d avg daily delta",
+      "severity": "warning",
+      "destination": "keep-webhook",
+      "runbook_key": "cost-anomaly",
+      "_message_template": "COST — daily spend spiked >2x baseline (a resource was scaled/added?). Check cost_resource_monthly_estimate for the mover. Runbook: docs/RUNBOOKS.md#cost-anomaly"
     }
   ]
 }
