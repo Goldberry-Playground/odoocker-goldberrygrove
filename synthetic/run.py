@@ -61,6 +61,20 @@ def _env(name: str, default: str = "") -> str:
     return os.environ.get(name, default)
 
 
+def ghost_vars_for(tenant: str) -> dict | None:
+    """Per-tenant Ghost Content API url+key from env, or None if not configured.
+
+    Opt-in: SYNTHETIC_GHOST_ENABLED=true + GHOST_URL_<TENANT> / GHOST_KEY_<TENANT>
+    (e.g. GHOST_URL_GOLDBERRY). The content key is passed to Hurl via a
+    variables-file (out of argv).
+    """
+    if _env("SYNTHETIC_GHOST_ENABLED", "false").strip().lower() != "true":
+        return None
+    t = tenant.upper()
+    url, key = _env(f"GHOST_URL_{t}"), _env(f"GHOST_KEY_{t}")
+    return {"ghost_url": url, "ghost_key": key} if url and key else None
+
+
 def run_journey(journey_file: str, *, tenant: str, odoo_base: str, extra_vars: dict | None = None) -> tuple[int, float]:
     """Run one Hurl journey. Returns (success 1/0, duration_ms).
 
@@ -195,6 +209,10 @@ def main() -> None:
         for journey_name, journey_file in TENANT_JOURNEYS:
             success, dur = run_journey(journey_file, tenant=tenant, odoo_base=odoo_base)
             results.append({"journey": journey_name, "tenant": tenant, "success": success, "duration_ms": dur})
+        gvars = ghost_vars_for(tenant)
+        if gvars is not None:
+            success, dur = run_journey("ghost-content.hurl", tenant=tenant, odoo_base=odoo_base, extra_vars=gvars)
+            results.append({"journey": "ghost-content", "tenant": tenant, "success": success, "duration_ms": dur})
         if canary_vars is not None:
             success, dur = run_journey(
                 "checkout-canary.hurl", tenant=tenant, odoo_base=odoo_base, extra_vars=canary_vars

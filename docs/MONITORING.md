@@ -121,6 +121,7 @@ OpenObserve as OTLP metrics. See `synthetic/README.md` for the full design.
 | `catalog` | per tenant | products list + detail (with price) work |
 | `cart-flow` | per tenant | add-to-cart → cart reflects the line (BFF↔Odoo write path) |
 | `checkout-canary` | per tenant (opt-in) | $0 order via bearer `/orders` + access_token gate; draft swept via XML-RPC |
+| `ghost-content` | per tenant (opt-in) | Ghost Content API v5 returns ≥1 published post |
 
 Metrics emitted (queried by the `synthetic-*` alert rules in `alerts.json`):
 - `synthetic_journey_success` — gauge 1/0, tags `{journey, tenant, tier=api, env}`
@@ -139,8 +140,11 @@ to enable it — `setup-monitoring.py` then seeds an unpublished `$0 SYNTHETIC-C
 product and the runner creates/sweeps a draft order each cycle (see
 `synthetic/README.md`).
 
-**Still deferred:** `ghost-content` (Ghost Content API key) — Ghost availability
-is already covered by the `ghost-*-admin` monitors + `ghost-down-warning`.
+**Opt-in content journey:** `ghost-content` is OFF by default. Set
+`SYNTHETIC_GHOST_ENABLED=true` + per-tenant `GHOST_URL_<TENANT>`/`GHOST_KEY_<TENANT>`
+(read-only Content API keys) to check each blog has published posts — content
+depth beyond the `ghost-*-admin` availability monitors. **Synthetic Tier-1 is
+now complete** (health, catalog, cart-flow, checkout-canary, ghost-content).
 
 ## CostOps (DO billing bridge)
 

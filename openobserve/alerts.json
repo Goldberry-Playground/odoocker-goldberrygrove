@@ -162,6 +162,16 @@
       "destination": "keep-webhook",
       "runbook_key": "cost-anomaly",
       "_message_template": "COST — daily spend spiked >2x baseline (a resource was scaled/added?). Check cost_resource_monthly_estimate for the mover. Runbook: docs/RUNBOOKS.md#cost-anomaly"
+    },
+    {
+      "name": "synthetic-ghost-content-warning",
+      "stream": "synthetic_journey_success",
+      "trigger_condition": "journey='ghost-content' success==0 for >2 consecutive runs (any tenant)",
+      "severity": "warning",
+      "destination": "keep-webhook",
+      "runbook_key": "ghost-content-empty",
+      "_message_template": "[{tenant}] SYNTHETIC ghost-content failing — Ghost Content API returned no posts (key rotated/invalid or blog empty). The tenant /blog page will fail. Runbook: docs/RUNBOOKS.md#ghost-content-empty",
+      "_note": "Only fires when SYNTHETIC_GHOST_ENABLED=true. Content-level depth beyond the ghost-*-admin availability monitors; warning (Ghost is content-only, doesn't break commerce)."
     }
   ]
 }
