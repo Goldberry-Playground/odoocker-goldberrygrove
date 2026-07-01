@@ -145,6 +145,14 @@ services:
       ODOO_DB: ${ODOO_DB:-}
       ODOO_LOGIN: ${ODOO_LOGIN:-}
       SYNTHETIC_ODOO_API_KEY: ${SYNTHETIC_ODOO_API_KEY:-}
+      # ghost-content (opt-in per-tenant Ghost Content API checks)
+      SYNTHETIC_GHOST_ENABLED: ${SYNTHETIC_GHOST_ENABLED:-false}
+      GHOST_URL_GOLDBERRY: ${GHOST_URL_GOLDBERRY:-}
+      GHOST_KEY_GOLDBERRY: ${GHOST_KEY_GOLDBERRY:-}
+      GHOST_URL_GGG: ${GHOST_URL_GGG:-}
+      GHOST_KEY_GGG: ${GHOST_KEY_GGG:-}
+      GHOST_URL_NURSERY: ${GHOST_URL_NURSERY:-}
+      GHOST_KEY_NURSERY: ${GHOST_KEY_NURSERY:-}
     networks:
       - internal
 

@@ -29,6 +29,7 @@ supercronic (crontab, every 60s)
 | `catalog` | per tenant | products list non-empty → detail has a variant price | none (reads) |
 | `cart-flow` | per tenant | add line → cart reflects it | a draft cart sale.order/run (Odoo expires these) |
 | `checkout-canary` | per tenant (opt-in) | create $0 order via bearer `/orders` → access_token gate (200 w/ token, 403 w/o) | a draft order/run, swept by XML-RPC cleanup |
+| `ghost-content` | per tenant (opt-in) | Ghost Content API v5 returns ≥1 published post | none (reads) |
 
 ## checkout-canary (the money path) — opt-in
 
@@ -38,9 +39,11 @@ OFF unless `SYNTHETIC_CANARY_ENABLED=true` + `ODOO_DB`/`ODOO_LOGIN`/`SYNTHETIC_O
 - **Self-healing cleanup.** After each cycle the runner unlinks draft/sent orders whose partner email is `synthetic-canary@grove.invalid` — never confirmed orders, and `.invalid` can't collide with a real customer.
 - **Key handling.** The API key doubles as HTTP bearer + XML-RPC password; it's passed to Hurl via a temp variables-file (out of argv). Scope it to a least-privilege Odoo user.
 
-## Deferred to the next increment (need secrets)
+## ghost-content — opt-in
 
-- **`ghost-content`** — Ghost Content API needs a per-tenant content key. Lower priority: Ghost *availability* is already covered by the `ghost-*-admin` monitors + `ghost-down-warning` alert; this would add content-level ("≥1 post") depth.
+OFF unless `SYNTHETIC_GHOST_ENABLED=true` + per-tenant `GHOST_URL_<TENANT>` / `GHOST_KEY_<TENANT>` (read-only Content API keys). Checks each tenant's blog has published posts — content-level depth beyond the `ghost-*-admin` availability monitors, catching a rotated/invalid key or empty blog that would break `/blog` even though Ghost is "up". Missing a tenant's pair just skips that tenant; the key is passed to Hurl via a variables-file (out of argv).
+
+**Synthetic Tier-1 is now complete** — all six journeys (health, catalog, cart-flow, checkout-canary, ghost-content) are implemented.
 
 ## Run / debug
 
