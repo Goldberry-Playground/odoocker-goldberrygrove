@@ -20,6 +20,15 @@ extensions:
       password: ${env:OPENOBSERVE_ROOT_PASSWORD}
 
 receivers:
+  # OTLP in — receives RED metrics + traces from Beyla (agent → collector →
+  # backend). Internal network, no auth needed here; the Collector's exporter
+  # adds OpenObserve auth downstream.
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
   # Host CPU/RAM/disk/filesystem/network. root_path=/hostfs reads the host's
   # /proc + /sys mounted read-only by the compose service.
   hostmetrics:
@@ -81,8 +90,12 @@ service:
   extensions: [basicauth/openobserve]
   pipelines:
     metrics:
-      receivers: [hostmetrics, docker_stats]
+      receivers: [hostmetrics, docker_stats, otlp]
       processors: [resourcedetection, resource, batch]
+      exporters: [otlphttp/openobserve]
+    traces:
+      receivers: [otlp]
+      processors: [resource, batch]
       exporters: [otlphttp/openobserve]
   telemetry:
     logs:

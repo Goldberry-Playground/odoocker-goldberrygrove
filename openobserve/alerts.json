@@ -228,6 +228,44 @@
       "runbook_key": "disk-data",
       "_message_template": "USE — data filesystem >90% full — near-full kills MinIO writes + Postgres WAL. Immediate action. Runbook: docs/RUNBOOKS.md#disk-data",
       "_note": "Tighter than typical (75/90) because MinIO + Postgres WAL fail silently-then-catastrophically when the volume fills. postgres-connections + the RED latency/5xx alerts need the postgresql receiver + Beyla (follow-ups)."
+    },
+    {
+      "name": "odoo-orders-latency-warning",
+      "stream": "http_server_request_duration",
+      "trigger_condition": "p95(http_server_request_duration) where url_path='/grove/api/v1/orders' > 3s over 5m",
+      "severity": "warning",
+      "destination": "keep-webhook",
+      "runbook_key": "odoo-latency",
+      "_message_template": "RED — Odoo /orders p95 >3s over 5m. Check Postgres connections + slow query log. Runbook: docs/RUNBOOKS.md#odoo-latency",
+      "_note": "RED metric from Beyla eBPF (Odoo). Metric stream/field names (http_server_request_duration, url_path) pending live validation on first Beyla run."
+    },
+    {
+      "name": "odoo-orders-latency-critical",
+      "stream": "http_server_request_duration",
+      "trigger_condition": "p95(http_server_request_duration) where url_path='/grove/api/v1/orders' > 8s over 5m",
+      "severity": "critical",
+      "destination": "keep-webhook",
+      "runbook_key": "odoo-latency",
+      "_message_template": "RED — Odoo /orders p95 >8s — orders timing out. Check Postgres locks; restart Odoo if no DB cause. Runbook: docs/RUNBOOKS.md#odoo-latency"
+    },
+    {
+      "name": "odoo-products-latency-warning",
+      "stream": "http_server_request_duration",
+      "trigger_condition": "p95(http_server_request_duration) where url_path='/grove/api/v1/products' > 1s over 5m",
+      "severity": "warning",
+      "destination": "keep-webhook",
+      "runbook_key": "odoo-latency",
+      "_message_template": "RED — Odoo /products p95 >1s. Cache miss or Postgres scan; check KeyDB hit rate. Runbook: docs/RUNBOOKS.md#odoo-latency"
+    },
+    {
+      "name": "odoo-error-rate-warning",
+      "stream": "http_server_request_duration",
+      "trigger_condition": "count(http.response.status_code>=500) / count(*) on Odoo > 1% over 5m",
+      "severity": "warning",
+      "destination": "keep-webhook",
+      "runbook_key": "odoo-error-rate",
+      "_message_template": "RED — Odoo 5xx rate >1% over 5m. Check Odoo worker logs for Python exceptions. Runbook: docs/RUNBOOKS.md#odoo-error-rate",
+      "_note": "Beyla RED. nextjs-* latency/5xx alerts need Next.js instrumentation.ts (grove-sites) — separate PR."
     }
   ]
 }
