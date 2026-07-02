@@ -8,6 +8,7 @@
 | Push a feature to QA for human testing | [`infra/terraform/environments/qa/README.md`](../infra/terraform/environments/qa/README.md) |
 | Deploy production | [`infra/terraform/environments/production/README.md`](../infra/terraform/environments/production/README.md) — **STUB / DEFERRED** (see below) |
 | Set up monitoring (OpenObserve + Keep) | [`docs/MONITORING.md`](./MONITORING.md) |
+| Seed Ghost content keys in a fresh QA droplet | [`docs/GHOST.md`](./GHOST.md) |
 | Understand the architecture | [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md) |
 
 ---
