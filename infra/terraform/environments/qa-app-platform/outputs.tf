@@ -67,3 +67,18 @@ output "hub_default_ingress" {
   description = "Ingress URL App Platform assigns to the hub app (grove-hub-qa-l3-<random>.ondigitalocean.app). Useful for verifying the app is responding before the custom-domain cert finishes provisioning."
   value       = digitalocean_app.hub.live_url
 }
+
+output "tenant_urls" {
+  description = "Public URLs of the tenant App Platform apps (goldberry / ggg / nursery)."
+  value       = { for k, _ in local.tenant_apps : k => "https://${k}.${local.qa_zone}" }
+}
+
+output "tenant_app_ids" {
+  description = "App Platform app IDs per tenant. Same uses as hub_app_id: doctl inspection, Keep routing, deploy-status polling."
+  value       = { for k, app in digitalocean_app.tenant : k => app.id }
+}
+
+output "tenant_default_ingresses" {
+  description = "Default *.ondigitalocean.app ingress URLs per tenant, for probing before the custom-domain cert finishes."
+  value       = { for k, app in digitalocean_app.tenant : k => app.live_url }
+}
