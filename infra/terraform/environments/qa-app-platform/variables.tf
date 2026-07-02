@@ -120,6 +120,26 @@ variable "keep_tag" {
 
 # === ACME endpoint (Caddy / Let's Encrypt) ===
 
+# === App Platform (Phase 2) ================================================
+
+variable "hub_image_tag" {
+  description = "Tag of the grove-hub image on GHCR (ghcr.io/goldberry-playground/grove-hub:<tag>) that App Platform pulls. 'latest' tracks grove-sites CI; pin to a SHA for reproducibility when locking a QA state for a debugging session. See infra/terraform/environments/qa/variables.tf for the same pattern in the monolith env."
+  type        = string
+  default     = "latest"
+}
+
+variable "grove_revalidate_secret" {
+  description = "Signed-webhook secret for grove-sites' /api/revalidate endpoint. Rotates whenever this TF applies with a new value; consumers (Odoo webhooks, Ghost webhooks) need to be re-seeded when it changes. Length must be >=32 chars; generate with `openssl rand -hex 32`. Read from GoldberryGrove Infra via TF_VAR_grove_revalidate_secret."
+  type        = string
+  sensitive   = true
+  validation {
+    condition     = length(var.grove_revalidate_secret) >= 32
+    error_message = "grove_revalidate_secret must be at least 32 characters (use `openssl rand -hex 32`)."
+  }
+}
+
+# === ACME endpoint (Caddy / Let's Encrypt) ==================================
+
 variable "acme_endpoint" {
   description = "ACME directory URL Caddy uses for cert issuance. Default = LE PROD. Set to LE STAGING when iterating heavily; matches the monolith QA env's pattern."
   type        = string

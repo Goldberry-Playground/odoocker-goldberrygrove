@@ -50,3 +50,20 @@ output "keep_url" {
   description = "Keep alert-routing UI URL (admin-only via firewall allowlist)."
   value       = "https://keep.${local.qa_zone}"
 }
+
+# === App Platform (Phase 2) outputs =========================================
+
+output "hub_url" {
+  description = "Public URL of the hub App Platform app. Users hit this; DO issues the cert + routes into the App Platform infra automatically once the custom domain propagates."
+  value       = "https://hub.${local.qa_zone}"
+}
+
+output "hub_app_id" {
+  description = "App Platform app ID for the hub. Used by post-deploy verification (doctl apps get <id>), Keep alert routing, and future scripts that need to poll deploy status."
+  value       = digitalocean_app.hub.id
+}
+
+output "hub_default_ingress" {
+  description = "Ingress URL App Platform assigns to the hub app (grove-hub-qa-l3-<random>.ondigitalocean.app). Useful for verifying the app is responding before the custom-domain cert finishes provisioning."
+  value       = digitalocean_app.hub.live_url
+}
