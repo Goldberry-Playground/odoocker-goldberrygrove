@@ -128,6 +128,12 @@ variable "hub_image_tag" {
   default     = "latest"
 }
 
+variable "tenant_image_tag" {
+  description = "Tag of the grove-goldberry / grove-ggg / grove-nursery images on GHCR that the tenant App Platform apps pull. One shared tag because grove-sites CI publishes all four images from the same commit -- pinning tenants to different tags would deploy skewed monorepo states."
+  type        = string
+  default     = "latest"
+}
+
 variable "grove_revalidate_secret" {
   description = "Signed-webhook secret for grove-sites' /api/revalidate endpoint. Rotates whenever this TF applies with a new value; consumers (Odoo webhooks, Ghost webhooks) need to be re-seeded when it changes. Length must be >=32 chars; generate with `openssl rand -hex 32`. Read from GoldberryGrove Infra via TF_VAR_grove_revalidate_secret."
   type        = string

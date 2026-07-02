@@ -142,3 +142,115 @@ resource "digitalocean_app" "hub" {
     }
   }
 }
+
+# ── Tenant storefronts ──────────────────────────────────────────────────────
+#
+# Same shape as the hub PoC above (validated 2026-07-02: GHCR pull worked,
+# app ACTIVE + HTTP 200 within ~2 min of apply), stamped out per tenant via
+# for_each. The original plan was one PR per tenant to keep first-apply risk
+# surgical -- the hub PoC retired that risk, so all three land together.
+#
+# Env-var shape mirrors the monolith QA compose (environments/qa/compose/
+# docker-compose.qa.yml): tenants read ODOO_URL (not the hub's
+# GROVE_ODOO_URL) and their tenant.secrets.ts requireEnv() throws on
+# empty values in production, so Ghost/Odoo-key placeholders use the same
+# qa-stub-* sentinels. Ghost stays stubbed until the L3 Ghost story lands
+# (per-tenant droplet Ghost is monolith-QA-only for now -- see docs/GHOST.md).
+#
+# All three tenant images listen on container port 3001 (ENV PORT=3001 in
+# each Dockerfile); only the hub differs (3000).
+
+locals {
+  tenant_apps = {
+    goldberry = { image = "grove-goldberry" }
+    ggg       = { image = "grove-ggg" }
+    nursery   = { image = "grove-nursery" }
+  }
+}
+
+resource "digitalocean_app" "tenant" {
+  for_each = local.tenant_apps
+
+  spec {
+    name   = "grove-${each.key}-qa-l3"
+    region = "nyc"
+
+    service {
+      name               = each.key
+      instance_size_slug = "apps-s-1vcpu-0.5gb"
+      instance_count     = 1
+      http_port          = 3001
+
+      image {
+        registry_type = "GHCR"
+        registry      = "goldberry-playground"
+        repository    = each.value.image
+        tag           = var.tenant_image_tag
+        deploy_on_push {
+          enabled = true
+        }
+      }
+
+      health_check {
+        http_path             = "/"
+        initial_delay_seconds = 30
+        period_seconds        = 30
+        timeout_seconds       = 5
+        success_threshold     = 1
+        failure_threshold     = 3
+      }
+
+      env {
+        key   = "ODOO_URL"
+        value = "https://odoo.${local.qa_zone}"
+        scope = "RUN_AND_BUILD_TIME"
+      }
+
+      # No real per-tenant Odoo API key issued yet (same state as monolith
+      # QA). requireEnv() passes; authenticated Odoo calls fail at runtime
+      # until a real key is seeded.
+      env {
+        key   = "ODOO_API_KEY"
+        value = "qa-stub-no-odoo-api-key-yet"
+        scope = "RUN_AND_BUILD_TIME"
+      }
+
+      env {
+        key   = "GHOST_URL"
+        value = "https://qa-stub.example.com"
+        scope = "RUN_AND_BUILD_TIME"
+      }
+
+      env {
+        key   = "GHOST_CONTENT_KEY"
+        value = "qa-stub-no-ghost-key-yet"
+        scope = "RUN_AND_BUILD_TIME"
+      }
+
+      env {
+        key   = "NEXT_TELEMETRY_DISABLED"
+        value = "1"
+        scope = "RUN_AND_BUILD_TIME"
+      }
+
+      env {
+        key   = "NEXT_PUBLIC_QA_BANNER"
+        value = "QA (Level 3)"
+        scope = "BUILD_TIME"
+      }
+    }
+
+    domain {
+      name = "${each.key}.${local.qa_zone}"
+      type = "PRIMARY"
+      zone = digitalocean_domain.qa.name
+    }
+
+    alert {
+      rule = "DEPLOYMENT_FAILED"
+    }
+    alert {
+      rule = "DOMAIN_FAILED"
+    }
+  }
+}
