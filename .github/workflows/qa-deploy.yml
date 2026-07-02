@@ -354,22 +354,50 @@ jobs:
       #   "failed to solve"            -> build-time failure (e.g. xcaddy)
       #
       # Generous outer deadline: first-time cloud-init + xcaddy build + DNS-01
-      # cert provisioning can take 12-15 min on a cold droplet.
+      # cert provisioning can typically take 12-15 min on a cold droplet.
+      # Widened 2026-07-01 from 20 -> 30 min after a nyc3 slow-boot event
+      # where SSH sentinel didn't fire until ~23 min into cloud-init but the
+      # stack was actually healthy (hub.qa was serving 200). The 10-min
+      # buffer above the 12-15 min happy-path duration absorbs DO region
+      # congestion / apt mirror latency without generating false alerts.
       - name: Wait for stack ready (cloud-init grove-ready sentinel)
-        timeout-minutes: 20
+        timeout-minutes: 30
         env:
           DROPLET_IP: ${{ steps.tf_outputs.outputs.droplet_ip }}
         run: |
           NOW=$(date +%s)
-          DEADLINE=$(( NOW + 1200 ))   # 20 min
+          DEADLINE=$(( NOW + 1800 ))   # 30 min
           SSH="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i ~/.ssh/grove-qa-deploy root@$DROPLET_IP"
 
+          # HTTPS backup probe target. Uses --resolve to bypass any
+          # DNS-propagation delay after a droplet recreate — we hit the
+          # fresh droplet IP directly, but Caddy receives the request with
+          # the right SNI so it serves the hub.qa vhost + cert.
+          HUB_HOST="hub.qa.gatheringatthegrove.com"
+
           while [ "$(date +%s)" -lt "$DEADLINE" ]; do
-            # (1) happy path
+            # (1) happy path -- canonical sentinel via SSH
             if $SSH "test -f /var/lib/cloud/instance/grove-ready" 2>/dev/null; then
-              echo "  ✓ stack ready"
+              echo "  ✓ stack ready (SSH sentinel: /var/lib/cloud/instance/grove-ready present)"
               exit 0
             fi
+
+            # (1b) backup probe -- HTTPS on hub.qa. Added 2026-07-01 after
+            # a slow-boot event where the droplet was serving traffic ~3
+            # min before the SSH sentinel would have fired. If Caddy is
+            # answering with a real cert on hub.qa's vhost, the stack is
+            # functionally healthy regardless of SSH lag. `-k` accepts
+            # staging certs (the auto-upgrader promotes those later).
+            HTTP_CODE=$(curl -sk -o /dev/null -w '%{http_code}' \
+              --resolve "${HUB_HOST}:443:${DROPLET_IP}" \
+              --connect-timeout 5 --max-time 10 \
+              "https://${HUB_HOST}/" 2>/dev/null || echo "000")
+            case "$HTTP_CODE" in
+              200|301|302|303|307|308)
+                echo "  ✓ stack ready (HTTPS probe: hub.qa returned ${HTTP_CODE} — SSH sentinel not yet ready, but the stack is serving)"
+                exit 0
+                ;;
+            esac
 
             # (2) sad path -- known error patterns
             ERR=$($SSH "
@@ -399,15 +427,17 @@ jobs:
                 echo '(cloud-init in apt/docker install stage; compose-up not started yet)'
               fi
             " 2>/dev/null || echo "(SSH not yet responding; droplet may still be booting)")
-            echo "  [$(date -u +%H:%M:%S)] ${PROGRESS}"
+            echo "  [$(date -u +%H:%M:%S)] ${PROGRESS} — HTTPS probe: ${HTTP_CODE}"
             sleep 30
           done
 
-          # Hard fail when the sentinel never fires -- otherwise the workflow
-          # declares success despite the stack being down. Discord then posts
-          # URLs that resolve to nothing. Per code review 2026-06-24:
+          # Hard fail when NEITHER probe fires within 30 min -- otherwise the
+          # workflow declares success despite the stack being down. Discord
+          # then posts URLs that resolve to nothing. Per code review 2026-06-24:
           # truthful CI status > continuing through a likely-broken deploy.
-          echo "::error::droplet didn't signal grove-ready within 20 min -- stack likely broken. SSH in via ~/.ssh/grove-qa-admin and check /var/log/cloud-init-output.log + docker ps."
+          echo "::error::droplet didn't signal ready within 30 min via EITHER probe (SSH sentinel + HTTPS on ${HUB_HOST}) -- stack likely broken."
+          echo "  Debug: ssh -i ~/.ssh/grove-qa-admin root@${DROPLET_IP}"
+          echo "  Then check: /var/log/cloud-init-output.log, docker ps, and 'docker logs caddy'"
           exit 1
 
       # Post-deploy: sync qa_portal_pg URL to Infisical.
