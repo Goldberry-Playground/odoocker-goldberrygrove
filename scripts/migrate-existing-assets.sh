@@ -85,9 +85,19 @@ for pair in "${PAIRS[@]}"; do
     continue
   fi
 
-  # Upload the whole directory recursively.
-  # upload-assets.sh handles recursion + CDN purge for each file.
-  if ! "$UPLOAD_SCRIPT" "$tenant" "$src/" 2>&1; then
+  # Upload each CHILD of public/ separately so remote paths come out as
+  # <tenant>/photos/... rather than <tenant>/public/photos/... --
+  # assetPath() in grove-sites emits URLs WITHOUT the public/ segment.
+  # (First migration run on 2026-07-02 hit this: passing the public/ dir
+  # itself made upload-assets.sh default the remote prefix to "public".)
+  tenant_fail=0
+  for child in "$src"/*; do
+    [ -e "$child" ] || continue
+    if ! "$UPLOAD_SCRIPT" "$tenant" "$child" 2>&1; then
+      tenant_fail=1
+    fi
+  done
+  if [ "$tenant_fail" != "0" ]; then
     echo "::error::Upload failed for tenant $tenant" >&2
     fail=1
   fi
