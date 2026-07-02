@@ -7,8 +7,8 @@ The new QA shape from [ADR-007](../../../../docs/ADR/007-level-3-app-platform-mi
 | Phase | Scope | Status |
 |---|---|---|
 | **1** | TF scaffold: Managed PG + Odoo droplet + Caddy + DNS + firewall + volume | ✅ merged (#133) |
-| **1.5** | Observability droplet + OpenObserve + Keep + inline MinIO | ✅ this PR |
-| **2** | App Platform app specs (4 PRs, one per frontend) | ⏳ pending |
+| **1.5** | Observability droplet + OpenObserve + Keep + inline MinIO | ✅ merged |
+| **2** | App Platform app specs (4 PRs, one per frontend) | 🚧 in progress — hub PoC in this PR; goldberry/ggg/nursery to follow |
 | **3** | Soak validation (~2 weeks both envs running) | ⏳ pending |
 | **4** | DNS cutover (qa-l3 → qa subdomain) | ⏳ pending |
 | **5** | Decommission monolith QA env | ⏳ pending |
@@ -23,7 +23,8 @@ Phase 1 lands the **bones** of the env. Nothing in this PR is applied yet — ap
 | `variables.tf` | All inputs; sensitive ones flow via `TF_VAR_*` from 1Password |
 | `main.tf` | Odoo droplet, Managed PG cluster, SSH keys, DNS, firewall, Caddy volume |
 | `observability.tf` | Obs droplet + DNS for oo/keep subdomains + obs firewall |
-| `outputs.tf` | Droplet IPs, Odoo URL, OpenObserve URL, Keep URL, PG cluster ID |
+| `apps.tf` | App Platform apps (Phase 2). Starts with hub; other 3 frontends follow. |
+| `outputs.tf` | Droplet IPs, Odoo URL, OpenObserve URL, Keep URL, PG cluster ID, App URLs |
 | `cloud-init.yaml.tpl` | Stripped to Odoo + Caddy only; wires Managed PG via env |
 | `cloud-init-obs.yaml.tpl` | Obs droplet bring-up: docker + MinIO + OpenObserve + Keep + Caddy |
 | `compose/docker-compose.qa.yml` | Two services: caddy + odoo. No postgres, no frontends |
