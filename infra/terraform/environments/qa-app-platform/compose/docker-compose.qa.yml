@@ -48,6 +48,17 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       DB_NAME: ${DB_NAME}
       ADMIN_PASSWD: ${ODOO_ADMIN_PASSWORD}
+      # Mode selector for the image's entrypoint dispatcher. REQUIRED: with
+      # APP_ENV unset every branch test errors ("unary operator expected"),
+      # nothing execs, and the container restart-loops on exit 1. The 'qa'
+      # branch is purpose-built for this env: --init=base bootstraps a fresh
+      # Managed-PG database on first boot and no-ops afterwards; no
+      # --update=all on restarts. Discovered 2026-07-04 -- the first L3
+      # droplet only ever ran via hand-applied fixes, so this compose had
+      # never actually booted Odoo unassisted.
+      APP_ENV: qa
+      WORKERS: "2"
+      LIST_DB: "false"
       # PROXY_MODE=true tells Odoo to trust X-Forwarded-* headers (which
       # Caddy sets). Without this, Odoo's CSRF + URL generation breaks
       # when behind a reverse proxy.
@@ -55,6 +66,14 @@ services:
       LIST_DB: "false"   # hide the DB selector since we have one fixed DB
     volumes:
       - odoo-filestore:/var/lib/odoo
+      # LOAD-BEARING (2026-07-04): the grove-odoo image's entrypoint runs
+      # /odoorc.sh (which substitutes the literal placeholder strings in
+      # /etc/odoo/odoo.conf) ONLY when /.env exists in the container.
+      # Without this mount Odoo crash-loops on a raw dollar-brace DB_PORT
+      # ("invalid integer value"). The monolith compose carried this mount;
+      # this env's first droplet was hand-patched instead, and the fix
+      # evaporated on the first recreate. Same lesson, now in code.
+      - /etc/grove/.env:/.env:ro
     networks:
       - grove
 

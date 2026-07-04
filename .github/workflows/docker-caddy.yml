@@ -15,7 +15,7 @@ name: Docker -- Caddy w/ DO DNS plugin
 # main pushes + tags :latest and :<sha>.
 #
 # Resulting image: ghcr.io/goldberry-playground/grove-caddy:{latest,<sha>}
-# Consumed by: infra/terraform/environments/qa/compose/docker-compose.qa.yml
+# Consumed by: infra/terraform/environments/qa-app-platform/compose/docker-compose.qa.yml
 #
 # FIRST-PUBLISH NOTE: GHCR packages are private by default. The very first
 # push from main will create the package private. Make it public via:
@@ -29,12 +29,12 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - "infra/terraform/environments/qa/compose/caddy.Dockerfile"
+      - "infra/terraform/environments/qa-app-platform/compose/caddy.Dockerfile"
       - ".github/workflows/docker-caddy.yml"
   push:
     branches: [main]
     paths:
-      - "infra/terraform/environments/qa/compose/caddy.Dockerfile"
+      - "infra/terraform/environments/qa-app-platform/compose/caddy.Dockerfile"
       - ".github/workflows/docker-caddy.yml"
 
 concurrency:
@@ -54,7 +54,7 @@ jobs:
     env:
       TEST_TAG: test-${{ github.run_id }}
       IMAGE_NAME: ghcr.io/goldberry-playground/grove-caddy
-      DOCKERFILE: infra/terraform/environments/qa/compose/caddy.Dockerfile
+      DOCKERFILE: infra/terraform/environments/qa-app-platform/compose/caddy.Dockerfile
 
     steps:
       - name: Checkout
@@ -71,7 +71,7 @@ jobs:
         uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
         timeout-minutes: 1
         with:
-          dockerfile: infra/terraform/environments/qa/compose/caddy.Dockerfile
+          dockerfile: infra/terraform/environments/qa-app-platform/compose/caddy.Dockerfile
           failure-threshold: warning
 
       - name: Set up Docker Buildx
@@ -82,7 +82,7 @@ jobs:
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
         timeout-minutes: 10
         with:
-          context: infra/terraform/environments/qa/compose
+          context: infra/terraform/environments/qa-app-platform/compose
           file: ${{ env.DOCKERFILE }}
           load: true
           tags: ${{ env.IMAGE_NAME }}:${{ env.TEST_TAG }}

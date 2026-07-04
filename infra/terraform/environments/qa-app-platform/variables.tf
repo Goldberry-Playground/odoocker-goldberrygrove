@@ -39,9 +39,9 @@ variable "cloudflare_zone_name" {
 }
 
 variable "qa_subdomain" {
-  description = "Subdomain under the apex zone. Final FQDN is <qa_subdomain>.<cloudflare_zone_name>. Distinct from the monolith QA's `qa` subdomain during the parallel-cutover window — uses `qa-l3` so both envs serve simultaneously without DNS conflict. The eventual cutover (ADR-007 Phase 4) flips the existing `qa` records over and this env's subdomain returns to plain `qa`."
+  description = "Subdomain under the apex zone. Final FQDN is <qa_subdomain>.<cloudflare_zone_name>. Was `qa-l3` during the ADR-007 parallel-cutover window; flipped to plain `qa` at the accelerated Phase 4 cutover (2026-07-04) once the monolith env released the qa zone. Changing this re-keys EVERYTHING: the delegated zone, NS records, App Platform domains, droplet DNS + Caddy vhosts (droplet replacements!) -- treat as a migration, not a knob."
   type        = string
-  default     = "qa-l3"
+  default     = "qa"
 }
 
 variable "region" {

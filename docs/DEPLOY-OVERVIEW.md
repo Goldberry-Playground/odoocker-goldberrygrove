@@ -77,13 +77,9 @@ Public URLs after deploy (monolith QA):
 - `https://nursery.qa.gatheringatthegrove.com` (tenant)
 - `https://odoo.qa.gatheringatthegrove.com` (Odoo admin)
 
-**Dual-run notice (as of 2026-07-01):** Level 3 QA env is running in parallel at `qa-l3.gatheringatthegrove.com` (per ADR-007). Level 3 URLs currently serving:
+**Cutover complete (accelerated Phase 4, 2026-07-04):** the `qa.` hostnames above are served by the **Level 3 env** (`infra/terraform/environments/qa-app-platform/`) — App Platform frontends + Managed Postgres + tiny Odoo droplet + obs droplet. The `qa-l3.*` hostnames are retired. Admin URLs live on the same plain zone: `odoo.qa.*`, `oo.qa.*`, `keep.qa.*` (latter two firewall-allowlisted).
 
-- `https://odoo.qa-l3.gatheringatthegrove.com` (Odoo on the tiny Level 3 droplet, backed by DO Managed Postgres)
-- `https://oo.qa-l3.gatheringatthegrove.com` (OpenObserve UI — admin-only via firewall allowlist)
-- `https://keep.qa-l3.gatheringatthegrove.com` (Keep alert-routing UI — admin-only)
-
-Level 3 Phase 2 (App Platform specs for the 4 frontends) is next. Once Phase 4 DNS cutover completes, the monolith URLs above retire and their `qa.` hostnames re-point at Level 3.
+The monolith is fully torn down (2026-07-04): droplet destroyed, TF state emptied, env directory + all pipeline workflows deleted. Frontend deploys no longer go through this repo at all: grove-sites CI pushes images to GHCR and the App Platform apps auto-redeploy (`deploy_on_push`); the Odoo/obs droplets redeploy via `terraform apply` in the qa-app-platform env.
 
 ### QA fast iteration — soft restart without full deploy
 
