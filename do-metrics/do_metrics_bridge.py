@@ -188,8 +188,14 @@ def ship(payload: dict) -> None:
 
 
 def main() -> None:
-    if not is_enabled():
-        _log("do-metrics bridge disabled (DO_METRICS_ENABLED!=true or DO_API_TOKEN unset) — no-op")
+    # Fail loud on the enable-but-misconfigured case: a silent no-op here would
+    # leave the do_app_* streams empty and their alerts permanently silent, with
+    # nothing in the logs to explain why.
+    if _env("DO_METRICS_ENABLED", "false").strip().lower() != "true":
+        _log("do-metrics bridge disabled (DO_METRICS_ENABLED!=true) — no-op")
+        return
+    if not _env("DO_API_TOKEN"):
+        _log("✗ DO_METRICS_ENABLED=true but DO_API_TOKEN is unset — misconfigured; no app metrics produced")
         return
     env_label = _env("COST_ENV", "local")
     lookback = int(_env("DO_METRICS_LOOKBACK_SECONDS", "600") or "600")
