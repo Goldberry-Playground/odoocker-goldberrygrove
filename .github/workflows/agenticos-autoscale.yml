@@ -1,0 +1,287 @@
+name: AgenticOS Autoscale (vertical resize)
+
+# Human-gated vertical resize for the AgenticOS control-plane droplet (id 572389418).
+# The realistic "autoscale" for a single stateful box: scheduled REMINDERS + one-click
+# workflow_dispatch resize, reversible (--resize-disk=false). See GOL-55 / GOL-51 plan
+# and docs/ADR/009-human-gated-vertical-autoscale.md.
+#
+# Governance (ADR-009 / "no autonomous prod apply"):
+#   * workflow_dispatch  -> APPLIES the resize. The click IS the human gate. This is the
+#                           Tier-0/Tier-1 one-click path linked from Discord capacity alerts.
+#   * schedule           -> NOTIFY ONLY by default. Posts a Discord reminder with a one-click
+#                           link. It applies autonomously ONLY if BOTH:
+#                             - repo variable AUTOSCALE_SCHEDULED_APPLY == 'true', AND
+#                             - the `agenticos-resize` Environment has a required reviewer
+#                               (so even the "autonomous" path still pauses for a human).
+#
+# Tier ladder + blast-radius pin live in infra/autoscale/agenticos-tiers.json.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tier:
+        description: "Target tier (from infra/autoscale/agenticos-tiers.json). Ignored if 'size' is set."
+        type: choice
+        options: ["busy", "base", "quiet"]
+        default: "busy"
+      size:
+        description: "Optional explicit DO size slug override (must be in the allowlist). Leave blank to use 'tier'."
+        type: string
+        default: ""
+      reason:
+        description: "Why (market day, launch, quiet-period trim, incident). Shown in the Discord summary + DO audit."
+        type: string
+        default: "manual resize"
+  schedule:
+    # Reminder cadence (UTC). Notify-only unless AUTOSCALE_SCHEDULED_APPLY=true.
+    # Market days at the Grove skew to weekends — pre-warm Fri evening, trim Sun night.
+    - cron: "0 20 * * 5"   # Fri 20:00 UTC — "scale UP for the weekend?" reminder
+    - cron: "0 4  * * 1"   # Mon 04:00 UTC — "scale DOWN, weekend's over?" reminder
+
+permissions: {}
+
+concurrency:
+  # Never let two resizes race on the same droplet (a resize needs power-off/on).
+  group: agenticos-autoscale
+  cancel-in-progress: false
+
+jobs:
+  # ── Scheduled reminder path — notify only (default) ─────────────────────────
+  remind:
+    name: Scheduled reminder (notify-only)
+    if: github.event_name == 'schedule' && vars.AUTOSCALE_SCHEDULED_APPLY != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      INFISICAL_PROJECT_SLUG: grove-odoocker-qu8p
+      INFISICAL_ENV_SLUG: prod
+      INFISICAL_IDENTITY_ID: c502a60d-4b37-4e15-9fd7-8186c80c2ad0
+    steps:
+      - name: Checkout (for tier config)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        timeout-minutes: 2
+      - name: Fetch secrets from Infisical (OIDC)
+        uses: Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995 # v1.0.16
+        timeout-minutes: 2
+        with:
+          method: oidc
+          identity-id: ${{ env.INFISICAL_IDENTITY_ID }}
+          project-slug: ${{ env.INFISICAL_PROJECT_SLUG }}
+          env-slug: ${{ env.INFISICAL_ENV_SLUG }}
+          secret-path: /
+          export-type: env
+      - name: Decide direction from cron
+        id: dir
+        run: |
+          # Fri pre-warm -> UP (busy); Mon post-weekend -> DOWN (base).
+          if [ "${{ github.event.schedule }}" = "0 20 * * 5" ]; then
+            echo "tier=busy"  >> "$GITHUB_OUTPUT"
+            echo "verb=scale UP for the weekend" >> "$GITHUB_OUTPUT"
+          else
+            echo "tier=base"  >> "$GITHUB_OUTPUT"
+            echo "verb=scale DOWN (weekend over)" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Post Discord reminder with one-click link
+        timeout-minutes: 1
+        env:
+          DISPATCH_URL: ${{ github.server_url }}/${{ github.repository }}/actions/workflows/agenticos-autoscale.yml
+          TIER: ${{ steps.dir.outputs.tier }}
+          VERB: ${{ steps.dir.outputs.verb }}
+        run: |
+          PAYLOAD=$(jq -n \
+            --arg url "$DISPATCH_URL" \
+            --arg tier "$TIER" \
+            --arg verb "$VERB" \
+            '{
+              username: "📐 AgenticOS Autoscale",
+              embeds: [{
+                title: ("Reminder: " + $verb + "?"),
+                description: ("Scheduled prompt to consider a **" + $tier + "**-tier resize of the AgenticOS droplet.\nThis is notify-only — no change was made.\n\n**One-click:** open the workflow, click **Run workflow**, pick tier `" + $tier + "`."),
+                url: $url,
+                color: 15844367,
+                fields: [
+                  {name: "Droplet", value: "agenticos (572389418)", inline: true},
+                  {name: "Suggested tier", value: $tier, inline: true},
+                  {name: "Run it", value: ("[▶ Open workflow_dispatch](" + $url + ")"), inline: false}
+                ]
+              }]
+            }')
+          curl -fsS -X POST -H "Content-Type: application/json" \
+            -d "$PAYLOAD" "$DISCORD_OPS_WEBHOOK_URL"
+
+  # ── Apply path — dispatch always; schedule only when explicitly opted in ─────
+  resize:
+    name: Resize AgenticOS droplet
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'schedule' && vars.AUTOSCALE_SCHEDULED_APPLY == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Environment exists for deployment tracking + OPTIONAL dual-control. With no required
+    # reviewer configured it is truly one-click; add a reviewer in the GitHub UI to enforce
+    # dual-control (mandatory for the scheduled-apply opt-in). No code change needed either way.
+    environment: agenticos-resize
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      INFISICAL_PROJECT_SLUG: grove-odoocker-qu8p
+      INFISICAL_ENV_SLUG: prod
+      INFISICAL_IDENTITY_ID: c502a60d-4b37-4e15-9fd7-8186c80c2ad0
+      DROPLET_ID: "572389418"
+      TIER_CONFIG: infra/autoscale/agenticos-tiers.json
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        timeout-minutes: 2
+
+      - name: Fetch secrets from Infisical (OIDC)
+        uses: Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995 # v1.0.16
+        timeout-minutes: 2
+        with:
+          method: oidc
+          identity-id: ${{ env.INFISICAL_IDENTITY_ID }}
+          project-slug: ${{ env.INFISICAL_PROJECT_SLUG }}
+          env-slug: ${{ env.INFISICAL_ENV_SLUG }}
+          secret-path: /
+          export-type: env
+
+      - name: Install doctl
+        uses: digitalocean/action-doctl@135ac0aa0eed4437d547c6f12c364d3006b42824 # v2.5.1
+        timeout-minutes: 2
+        with:
+          token: ${{ env.DIGITALOCEAN_TOKEN }}
+
+      - name: Resolve target size from tier config
+        id: target
+        env:
+          IN_TIER: ${{ github.event.inputs.tier }}
+          IN_SIZE: ${{ github.event.inputs.size }}
+        run: |
+          set -euo pipefail
+          CFG="$TIER_CONFIG"
+
+          # Blast-radius pin: config droplet id must match the hard-coded id.
+          CFG_ID=$(jq -r '.droplet.id' "$CFG")
+          if [ "$CFG_ID" != "$DROPLET_ID" ]; then
+            echo "::error::Config droplet id ($CFG_ID) != pinned id ($DROPLET_ID). Refusing." ; exit 1
+          fi
+
+          # Scheduled-apply opt-in has no inputs; default to scale_up_tier.
+          TIER="${IN_TIER:-}"
+          if [ -z "$TIER" ] && [ -z "${IN_SIZE:-}" ]; then
+            TIER=$(jq -r '.defaults.scale_up_tier' "$CFG")
+            echo "No inputs (scheduled apply) — defaulting to tier '$TIER'."
+          fi
+
+          if [ -n "${IN_SIZE:-}" ]; then
+            TARGET="$IN_SIZE"
+            echo "Explicit size override: $TARGET"
+          else
+            TARGET=$(jq -r --arg t "$TIER" '.tiers[$t].size // empty' "$CFG")
+            if [ -z "$TARGET" ]; then
+              echo "::error::Unknown tier '$TIER' — not in $CFG." ; exit 1
+            fi
+          fi
+
+          # Allowlist guard.
+          if ! jq -e --arg s "$TARGET" '.allowlist | index($s)' "$CFG" >/dev/null; then
+            echo "::error::Target size '$TARGET' is not in the allowlist. Refusing." ; exit 1
+          fi
+
+          TARGET_DISK=$(jq -r --arg s "$TARGET" '[.tiers[] | select(.size==$s)][0].nominal_disk_gb // 0' "$CFG")
+          echo "target_size=$TARGET"       >> "$GITHUB_OUTPUT"
+          echo "target_disk=$TARGET_DISK"  >> "$GITHUB_OUTPUT"
+
+      - name: Read live droplet + reversibility guard
+        id: live
+        run: |
+          set -euo pipefail
+          # Confirm the droplet exists and read current size/disk.
+          JSON=$(doctl compute droplet get "$DROPLET_ID" --output json)
+          CUR_SIZE=$(echo "$JSON" | jq -r '.[0].size_slug')
+          CUR_DISK=$(echo "$JSON" | jq -r '.[0].disk')
+          CUR_MEM=$(echo "$JSON"  | jq -r '.[0].memory')
+          echo "Current: size=$CUR_SIZE disk=${CUR_DISK}GB mem=${CUR_MEM}MB"
+          echo "cur_size=$CUR_SIZE" >> "$GITHUB_OUTPUT"
+          echo "cur_disk=$CUR_DISK" >> "$GITHUB_OUTPUT"
+
+          TARGET_DISK="${{ steps.target.outputs.target_disk }}"
+          # --resize-disk=false keeps the current disk. Refuse any target whose nominal
+          # disk is smaller than the live disk (DO would reject; we fail fast & clearly).
+          if [ "$TARGET_DISK" -gt 0 ] && [ "$TARGET_DISK" -lt "$CUR_DISK" ]; then
+            echo "::error::Target nominal disk ${TARGET_DISK}GB < current disk ${CUR_DISK}GB. A --resize-disk=false resize cannot shrink disk. Refusing (not reversible / not allowed)."
+            exit 1
+          fi
+
+          if [ "$CUR_SIZE" = "${{ steps.target.outputs.target_size }}" ]; then
+            echo "noop=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "noop=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resize (reversible, CPU/RAM only)
+        id: apply
+        if: steps.live.outputs.noop != 'true'
+        run: |
+          set -euo pipefail
+          echo "Resizing $DROPLET_ID: ${{ steps.live.outputs.cur_size }} -> ${{ steps.target.outputs.target_size }} (disk unchanged)"
+          doctl compute droplet-action resize "$DROPLET_ID" \
+            --size "${{ steps.target.outputs.target_size }}" \
+            --resize-disk=false \
+            --wait
+          NEW=$(doctl compute droplet get "$DROPLET_ID" --format Size --no-header)
+          echo "New size: $NEW"
+          echo "new_size=$NEW" >> "$GITHUB_OUTPUT"
+
+      - name: Post Discord summary
+        if: always()
+        timeout-minutes: 1
+        env:
+          OUTCOME: ${{ job.status }}
+          NOOP: ${{ steps.live.outputs.noop }}
+          CUR: ${{ steps.live.outputs.cur_size }}
+          TARGET: ${{ steps.target.outputs.target_size }}
+          NEW: ${{ steps.apply.outputs.new_size }}
+          REASON: ${{ github.event.inputs.reason }}
+          ACTOR: ${{ github.actor }}
+          TRIGGER: ${{ github.event_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "$NOOP" = "true" ]; then
+            DESC="No change — droplet already at \`$CUR\`."
+            COLOR=9807270
+          elif [ "$OUTCOME" = "success" ]; then
+            DESC="Resized \`$CUR\` → \`${NEW:-$TARGET}\` (disk unchanged, reversible)."
+            COLOR=5763719
+          else
+            DESC="Resize **FAILED** (target \`$TARGET\`). Droplet left as-is; check the run."
+            COLOR=15548997
+          fi
+          PAYLOAD=$(jq -n \
+            --arg desc "$DESC" \
+            --arg reason "${REASON:-scheduled}" \
+            --arg actor "$ACTOR" \
+            --arg trigger "$TRIGGER" \
+            --arg run_url "$RUN_URL" \
+            --argjson color "$COLOR" \
+            '{
+              username: "📐 AgenticOS Autoscale",
+              embeds: [{
+                title: "AgenticOS resize",
+                description: $desc,
+                url: $run_url,
+                color: $color,
+                fields: [
+                  {name: "Droplet", value: "agenticos (572389418)", inline: true},
+                  {name: "Trigger", value: $trigger, inline: true},
+                  {name: "By", value: $actor, inline: true},
+                  {name: "Reason", value: $reason, inline: false}
+                ]
+              }]
+            }')
+          curl -fsS -X POST -H "Content-Type: application/json" \
+            -d "$PAYLOAD" "$DISCORD_OPS_WEBHOOK_URL"

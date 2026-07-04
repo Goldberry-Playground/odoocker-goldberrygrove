@@ -1,0 +1,43 @@
+{
+  "_comment": "AgenticOS vertical-resize tier ladder — source of truth for the human-gated autoscale workflow (.github/workflows/agenticos-autoscale.yml, GOL-55).",
+  "_lineage": "Read by the resize job at runtime. The workflow resolves a named tier -> DO size slug, guards the target against the allowlist + live droplet, then calls `doctl compute droplet-action resize --resize-disk=false --wait`. Changing a slug here is the ONLY supported way to change what the workflow can resize to.",
+  "_governance": "Human-gated only. `workflow_dispatch` (a person clicking Run, incl. the one-click link in Discord capacity alerts) is the sole apply path by default. The `schedule` trigger is notify-only unless repo variable AUTOSCALE_SCHEDULED_APPLY=true is set AND the `agenticos-resize` GitHub Environment has a required reviewer. No autonomous prod apply. See docs/ADR/009-human-gated-vertical-autoscale.md.",
+  "droplet": {
+    "id": 572389418,
+    "name": "agenticos",
+    "region": "nyc1",
+    "_note": "Hard-pinned. The workflow refuses to act on any other droplet id as a blast-radius guard."
+  },
+  "reversibility": {
+    "resize_disk": false,
+    "_rule": "With --resize-disk=false the disk never changes. A resize is therefore only allowed to a target plan whose nominal disk_gb is >= the droplet's CURRENT actual disk. The workflow fetches the live disk at runtime and refuses any target that would require shrinking the disk (DO would reject it anyway; we fail fast with a clear message). The safe reversible operating band is the set of tiers that share the current disk footprint.",
+    "_founder_band": "The intended day-to-day band is base <-> busy (scale up for market days / launches, back down when quiet). Both keep the current disk via --resize-disk=false, so the round-trip is fully reversible."
+  },
+  "tiers": {
+    "quiet": {
+      "size": "s-2vcpu-2gb",
+      "nominal_disk_gb": 60,
+      "monthly_usd": 18,
+      "_use": "Off-peak floor. Only reachable if the droplet's current disk is <= 60GB — needs P0 (GOL-53) confirmation of the live baseline before enabling."
+    },
+    "base": {
+      "size": "s-2vcpu-4gb",
+      "nominal_disk_gb": 80,
+      "monthly_usd": 24,
+      "_use": "Default steady-state after the P0 one-tier right-size. Recommended resting tier."
+    },
+    "busy": {
+      "size": "s-4vcpu-8gb",
+      "nominal_disk_gb": 160,
+      "monthly_usd": 48,
+      "_use": "Market days, launches, batch agent runs. Doubles vCPU + RAM. Keeps the current (smaller) disk via --resize-disk=false, so it round-trips back to base cleanly."
+    }
+  },
+  "defaults": {
+    "scale_up_tier": "busy",
+    "scale_down_tier": "base",
+    "_note": "Discord capacity alerts and the scheduled reminders link to workflow_dispatch pre-filled with these tiers."
+  },
+  "allowlist": ["s-2vcpu-2gb", "s-2vcpu-4gb", "s-4vcpu-8gb"],
+  "_todo_p0": "The exact live size slug + disk are UNVERIFIED from this environment (no DO token here — that grant is GOL-53/P0). On first execution, confirm with `doctl compute droplet get 572389418 --format Name,Memory,VCPUs,Disk,Size` and correct the ladder/allowlist if the baseline differs. The workflow's runtime guards make a wrong slug fail safe (refuse), not misfire."
+}
