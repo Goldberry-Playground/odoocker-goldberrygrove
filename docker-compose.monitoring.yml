@@ -121,5 +121,137 @@ services:
     networks:
       - internal
 
+  # ── synthetic-runner — Tier-1 Hurl journeys ───────────────────────────────
+  # supercronic runs the Hurl journeys every 60s against the live grove_headless
+  # API (Odoo by service-name DNS on this shared network) and ships pass/fail +
+  # latency to OpenObserve as OTLP metrics. The synthetic-* alert rules query
+  # those metric streams. See synthetic/README.md.
+  synthetic-runner:
+    build:
+      context: ./synthetic
+    restart: unless-stopped
+    depends_on:
+      - openobserve
+    environment:
+      SYNTHETIC_ODOO_BASE: ${SYNTHETIC_ODOO_BASE:-http://odoo:8069}
+      SYNTHETIC_TENANTS: ${SYNTHETIC_TENANTS:-goldberry,ggg,nursery}
+      SYNTHETIC_ENV: ${SYNTHETIC_ENV:-local}
+      OPENOBSERVE_OTLP_METRICS_URL: ${OPENOBSERVE_OTLP_METRICS_URL:-http://openobserve:5080/api/default/v1/metrics}
+      OPENOBSERVE_ROOT_EMAIL: ${OPENOBSERVE_ROOT_EMAIL}
+      OPENOBSERVE_ROOT_PASSWORD: ${OPENOBSERVE_ROOT_PASSWORD}
+      # checkout-canary (opt-in money-path journey + XML-RPC seed/cleanup)
+      SYNTHETIC_CANARY_ENABLED: ${SYNTHETIC_CANARY_ENABLED:-false}
+      ODOO_XMLRPC_URL: ${ODOO_XMLRPC_URL:-http://odoo:8069}
+      ODOO_DB: ${ODOO_DB:-}
+      ODOO_LOGIN: ${ODOO_LOGIN:-}
+      SYNTHETIC_ODOO_API_KEY: ${SYNTHETIC_ODOO_API_KEY:-}
+      # ghost-content (opt-in per-tenant Ghost Content API checks)
+      SYNTHETIC_GHOST_ENABLED: ${SYNTHETIC_GHOST_ENABLED:-false}
+      GHOST_URL_GOLDBERRY: ${GHOST_URL_GOLDBERRY:-}
+      GHOST_KEY_GOLDBERRY: ${GHOST_KEY_GOLDBERRY:-}
+      GHOST_URL_GGG: ${GHOST_URL_GGG:-}
+      GHOST_KEY_GGG: ${GHOST_KEY_GGG:-}
+      GHOST_URL_NURSERY: ${GHOST_URL_NURSERY:-}
+      GHOST_KEY_NURSERY: ${GHOST_KEY_NURSERY:-}
+    networks:
+      - internal
+
+  # ── cost-bridge — CostOps DO billing → OpenObserve ────────────────────────
+  # supercronic runs the DO billing bridge hourly: pulls account balance +
+  # resource inventory from the DigitalOcean API and ships cost as OTLP metrics.
+  # The cost-* alert rules query those streams. Opt-in (needs a DO token) and
+  # cloud-only — no-op locally. See cost/README.md.
+  cost-bridge:
+    build:
+      context: ./cost
+    restart: unless-stopped
+    depends_on:
+      - openobserve
+    environment:
+      COST_BRIDGE_ENABLED: ${COST_BRIDGE_ENABLED:-false}
+      DO_API_TOKEN: ${DO_API_TOKEN:-}
+      COST_ENV: ${COST_ENV:-${SYNTHETIC_ENV:-local}}
+      OPENOBSERVE_OTLP_METRICS_URL: ${OPENOBSERVE_OTLP_METRICS_URL:-http://openobserve:5080/api/default/v1/metrics}
+      OPENOBSERVE_ROOT_EMAIL: ${OPENOBSERVE_ROOT_EMAIL}
+      OPENOBSERVE_ROOT_PASSWORD: ${OPENOBSERVE_ROOT_PASSWORD}
+    networks:
+      - internal
+
+  # ── do-metrics-bridge — App Platform USE metrics → OpenObserve ────────────
+  # supercronic runs every 2 min: pulls CPU%/memory%/restart_count for each App
+  # Platform app from the DO Monitoring API and ships OTLP gauges. Closes the USE
+  # gap the Collector's docker_stats can't reach (frontends have no host/socket).
+  # The app-* alert rules query those streams. Opt-in (needs a DO token) and
+  # cloud-only — no-op locally. See do-metrics/README.md.
+  do-metrics-bridge:
+    build:
+      context: ./do-metrics
+    restart: unless-stopped
+    depends_on:
+      - openobserve
+    environment:
+      DO_METRICS_ENABLED: ${DO_METRICS_ENABLED:-false}
+      DO_API_TOKEN: ${DO_API_TOKEN:-}
+      COST_ENV: ${COST_ENV:-${SYNTHETIC_ENV:-local}}
+      DO_METRICS_LOOKBACK_SECONDS: ${DO_METRICS_LOOKBACK_SECONDS:-600}
+      OPENOBSERVE_OTLP_METRICS_URL: ${OPENOBSERVE_OTLP_METRICS_URL:-http://openobserve:5080/api/default/v1/metrics}
+      OPENOBSERVE_ROOT_EMAIL: ${OPENOBSERVE_ROOT_EMAIL}
+      OPENOBSERVE_ROOT_PASSWORD: ${OPENOBSERVE_ROOT_PASSWORD}
+    networks:
+      - internal
+
+  # ── otel-collector — USE/infra metrics → OpenObserve ──────────────────────
+  # Scrapes host CPU/RAM/disk (hostmetrics via /hostfs) + per-container CPU/RAM
+  # (docker_stats via the socket) and ships OTLP metrics to OpenObserve. These
+  # are the USE metrics the CostOps rightsizing dashboard joins with cost.
+  # See otel/README.md. Contrib image = the receivers/basicauth extension.
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:${OTELCOL_TAG:-0.115.0}
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol/config.yaml"]
+    depends_on:
+      - openobserve
+    environment:
+      OPENOBSERVE_OTLP_BASE: ${OPENOBSERVE_OTLP_BASE:-http://openobserve:5080/api/default}
+      OPENOBSERVE_ROOT_EMAIL: ${OPENOBSERVE_ROOT_EMAIL}
+      OPENOBSERVE_ROOT_PASSWORD: ${OPENOBSERVE_ROOT_PASSWORD}
+      COST_ENV: ${COST_ENV:-${SYNTHETIC_ENV:-local}}
+      # postgresql receiver (opt-in — unused until enabled in the config pipeline)
+      POSTGRES_ENDPOINT: ${POSTGRES_ENDPOINT:-}
+      POSTGRES_MONITOR_USER: ${POSTGRES_MONITOR_USER:-}
+      POSTGRES_MONITOR_PASSWORD: ${POSTGRES_MONITOR_PASSWORD:-}
+    volumes:
+      - ./otel/otelcol-config.yaml:/etc/otelcol/config.yaml:ro
+      - /:/hostfs:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - internal
+
+  # ── beyla — eBPF RED metrics for Odoo (zero-code) ─────────────────────────
+  # Grafana Beyla attaches eBPF probes to the Odoo process (by listen port,
+  # via pid:host) and emits RED metrics (rate/error/p50/p95/p99 per HTTP route)
+  # with ZERO Odoo code changes. Exports OTLP to the local otel-collector, which
+  # forwards to OpenObserve. Single sidecar — Odoo only (Managed Postgres has no
+  # kernel access; its stats come from the Collector's postgresql receiver).
+  # eBPF needs a Linux host + a compatible kernel; if it can't attach it logs
+  # and produces no metrics (never crashes the stack). See otel/README.md.
+  beyla:
+    image: grafana/beyla:${BEYLA_TAG:-1.9.4}
+    restart: unless-stopped
+    privileged: true
+    pid: host
+    depends_on:
+      - otel-collector
+    environment:
+      BEYLA_OPEN_PORT: "8069" # instrument the Odoo WSGI listener
+      OTEL_SERVICE_NAME: odoo
+      BEYLA_SERVICE_NAMESPACE: grove
+      BEYLA_METRICS_INTERVAL: 30s
+      BEYLA_OTEL_METRICS_FEATURES: application,application_span
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+    networks:
+      - internal
+
 volumes:
   keep-data:

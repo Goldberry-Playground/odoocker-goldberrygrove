@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -45,6 +46,22 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
 OPENOBSERVE_DIR = REPO_ROOT / "openobserve"
 KEEP_DIR = REPO_ROOT / "keep"
+SYNTHETIC_DIR = REPO_ROOT / "synthetic"
+
+
+def maybe_seed_canary() -> None:
+    """Seed the synthetic checkout-canary product (opt-in).
+
+    Delegates to synthetic/canary.py --seed (the single owner of the canary
+    XML-RPC logic). No-op unless SYNTHETIC_CANARY_ENABLED=true. Run before
+    monitors so the canary journey never fires without its product.
+    """
+    if get_env("SYNTHETIC_CANARY_ENABLED", "false").strip().lower() != "true":
+        _log("  checkout-canary disabled (SYNTHETIC_CANARY_ENABLED!=true) — skipping seed")
+        return
+    canary = SYNTHETIC_DIR / "canary.py"
+    rc = subprocess.run([sys.executable, str(canary), "--seed"], check=False).returncode
+    _log("  ✓ canary product seeded" if rc == 0 else f"  ⚠ canary seed failed (rc={rc})")
 
 
 def _log(*args: Any) -> None:
@@ -58,7 +75,7 @@ def require_env(name: str) -> str:
     val = os.environ.get(name)
     if not val:
         _log(f"ERROR: required env var {name} is not set.")
-        _log(f"  Source it from .env.monitoring or export it before running.")
+        _log("  Source it from .env.monitoring or export it before running.")
         sys.exit(1)
     return val
 
@@ -320,6 +337,7 @@ def main() -> None:
     wait_for(f"{keep_base_url().rsplit('/api/', 1)[0]}/healthcheck", 120, name="Keep")
 
     _log("\nStep 3/5: bootstrap OpenObserve")
+    maybe_seed_canary()
     oo_bootstrap_monitors()
     oo_bootstrap_alerts()
     oo_bootstrap_dashboards()
@@ -336,7 +354,7 @@ def main() -> None:
     _log("Verify Discord wiring:")
     _log("  curl -X POST http://localhost:8080/alerts/event/$KEEP_WEBHOOK_TOKEN \\")
     _log("    -H 'Content-Type: application/json' \\")
-    _log("    -d '{\"name\":\"test\",\"severity\":\"warning\",\"message\":\"connectivity check\"}'")
+    _log('    -d \'{"name":"test","severity":"warning","message":"connectivity check"}\'')
     _log("  → should appear in your Discord warning channel within 5s")
     _log("")
     _log("Run end-to-end kill-test:")

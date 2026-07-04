@@ -47,6 +47,7 @@ jobs:
     permissions:
       contents: read       # checkout
       id-token: write      # OIDC token for Infisical exchange
+      actions: read        # scripts/discord-status.sh queries gh run history for recovery/streak detection
 
     env:
       # ── Infisical identity assignment ──────────────────────────────────
@@ -96,6 +97,16 @@ jobs:
             echo "AWS_ACCESS_KEY_ID=$SPACES_ACCESS_KEY_ID"
             echo "AWS_SECRET_ACCESS_KEY=$SPACES_SECRET_ACCESS_KEY"
           } >> "$GITHUB_ENV"
+
+      # Hardening (Tier 1 PR): verify every Infisical-fetched secret has the
+      # expected byte-shape. Catches empty strings (auth glitch), trailing
+      # whitespace (GH secret-scrubber), and wrong-format values (operator
+      # error) at fetch time -- instead of 20 min later when downstream ops
+      # fail with confusing errors (401 from DO, malformed SSH key, curl 000
+      # to Discord). Emits length + first-byte-shape only; no key material.
+      - name: Pre-flight - verify secret shapes
+        timeout-minutes: 1
+        run: bash scripts/check-secret-shapes.sh
 
       # Fail fast if any of the grove-* images at the requested tags aren't
       # anonymously pullable from GHCR. Catches the "private package" failure
@@ -166,7 +177,22 @@ jobs:
           chmod 600 ~/.ssh/grove-qa-deploy
           # Sanity-check the key is well-formed (catches secret-mangling on the way through)
           if ! ssh-keygen -y -f ~/.ssh/grove-qa-deploy >/dev/null 2>&1; then
-            echo "::error::CI SSH private key is malformed after writing to disk. Check that GROVE_QA_CI_SSH_PRIVATE_KEY in Infisical preserved newlines correctly."
+            # Diagnostic info ONLY ON FAILURE — emits length + first-line shape
+            # (no key material) so the operator can pin the root cause without
+            # re-running with debug logging. Added after the 2026-06-30 01:33 UTC
+            # failure printed only "malformed" with zero context.
+            len=$(wc -c < ~/.ssh/grove-qa-deploy | tr -d ' ')
+            first_line_shape=$(head -1 ~/.ssh/grove-qa-deploy | sed 's/[a-zA-Z0-9+/=]/X/g' | head -c 40)
+            last_byte=$(tail -c 1 ~/.ssh/grove-qa-deploy | od -An -c | tr -d ' ')
+            echo "::error::CI SSH private key is malformed after writing to disk."
+            echo "  Diagnostic (safe -- no key material):"
+            echo "    bytes_written    = $len"
+            echo "    first_line_shape = '$first_line_shape'  (chars masked as X)"
+            echo "    last_byte_repr   = '$last_byte'  (should be '\\n')"
+            echo "  Likely causes:"
+            echo "    - Infisical returned empty/whitespace-only value (check secret in grove-odoocker/prod env)"
+            echo "    - Secret pasted with extra whitespace (probe via op CLI with byte count)"
+            echo "    - Key format wrong (must start with -----BEGIN OPENSSH PRIVATE KEY----- AND end with literal \\n)"
             exit 1
           fi
 
@@ -224,6 +250,19 @@ jobs:
       # mode and works regardless of whether taint ran.
       #
       # ACME endpoint: workflow_dispatch input use_staging_acme=true passes
+      # Hardening (Tier 1 PR): probe DO API for resource-uniqueness conflicts
+      # that TF plan cannot detect (SSH-key fingerprint duplicates, orphan
+      # droplets from previous partial applies). Would have caught the
+      # 2026-06-30 Level 3 first-apply 422 SSH key error at plan time
+      # instead of at apply-in-progress time (where it silently skipped the
+      # 11 downstream resources).
+      - name: Pre-flight - DO API uniqueness probe
+        timeout-minutes: 2
+        working-directory: ${{ github.workspace }}
+        env:
+          DIGITALOCEAN_TOKEN: ${{ env.DIGITALOCEAN_TOKEN }}
+        run: bash scripts/preflight-do-uniqueness.sh infra/terraform/environments/qa
+
       # the LE staging URL (no rate limits, browser warnings). Otherwise
       # var.acme_endpoint defaults to LE prod (real certs).
       - name: Terraform apply
@@ -240,6 +279,17 @@ jobs:
             terraform apply -input=false -auto-approve
           fi
 
+      # Hardening (Tier 1 PR): assert TF state has at least the expected
+      # resource count. Would have caught the 2026-06-30 partial-apply
+      # (TF exit 0 but 9 resources missing) within 1 sec of apply completion,
+      # 12 hours before URLs failed. Expected value 8 = current monolith QA
+      # minimum (domain + droplet + volume + volume_attachment + firewall +
+      # 3 NS records + apex A). Bump upward when adding resources; the
+      # check is fail-loud on any regression that removes resources.
+      - name: Post-apply - verify TF state resource count
+        timeout-minutes: 1
+        run: bash scripts/verify-tf-state-count.sh infra/terraform/environments/qa 8
+
       # Run even if Terraform apply failed — if a droplet got created before
       # the failure, we still want its IP in the Discord post so the operator
       # can SSH in and debug. `terraform output` returns empty on missing
@@ -254,6 +304,34 @@ jobs:
           QA_URLS_JSON=$(terraform output -json qa_urls 2>/dev/null || echo "")
           echo "droplet_ip=$DROPLET_IP" >> "$GITHUB_OUTPUT"
           echo "qa_urls=$QA_URLS_JSON" >> "$GITHUB_OUTPUT"
+
+      # Hardening (Tier 1 PR): actively verify DNS records reached DO's
+      # authoritative NS and are visible to public resolvers. Would have
+      # caught 2026-06-30's "TF said records were created but zone shows
+      # 3 NS + 1 SOA only" issue within 2 min of apply, instead of at
+      # grove-ready-sentinel time 20 min later (or 12 hours later when
+      # nobody noticed until a URL probe). Polls 8.8.8.8, 1.1.1.1, 9.9.9.9;
+      # ANY of them returning a valid A record = propagated. 180s timeout
+      # comfortably covers the typical propagation window (~5-30s) plus
+      # a large safety margin.
+      - name: Post-apply - verify DNS records propagated
+        timeout-minutes: 4
+        env:
+          QA_URLS: ${{ steps.tf_outputs.outputs.qa_urls }}
+        run: |
+          # Extract hostnames from the qa_urls JSON output. On TF apply
+          # failure the output is empty -- skip DNS verify in that case.
+          if [ -z "$QA_URLS" ]; then
+            echo "  (no qa_urls output from TF -- skipping DNS verify)"
+            exit 0
+          fi
+          hosts=$(echo "$QA_URLS" | jq -r 'to_entries[] | .value | sub("https?://";"") | sub("/.*";"")' | sort -u | tr '\n' ' ')
+          if [ -z "$hosts" ]; then
+            echo "  (qa_urls didn't parse to hostnames -- skipping DNS verify)"
+            exit 0
+          fi
+          # shellcheck disable=SC2086  # intentional word-splitting on $hosts
+          bash scripts/wait-for-dns.sh 180 $hosts
 
       # Poll the droplet for the cloud-init grove-ready sentinel via SSH.
       # Three-way check per iteration:
@@ -276,22 +354,50 @@ jobs:
       #   "failed to solve"            -> build-time failure (e.g. xcaddy)
       #
       # Generous outer deadline: first-time cloud-init + xcaddy build + DNS-01
-      # cert provisioning can take 12-15 min on a cold droplet.
+      # cert provisioning can typically take 12-15 min on a cold droplet.
+      # Widened 2026-07-01 from 20 -> 30 min after a nyc3 slow-boot event
+      # where SSH sentinel didn't fire until ~23 min into cloud-init but the
+      # stack was actually healthy (hub.qa was serving 200). The 10-min
+      # buffer above the 12-15 min happy-path duration absorbs DO region
+      # congestion / apt mirror latency without generating false alerts.
       - name: Wait for stack ready (cloud-init grove-ready sentinel)
-        timeout-minutes: 20
+        timeout-minutes: 30
         env:
           DROPLET_IP: ${{ steps.tf_outputs.outputs.droplet_ip }}
         run: |
           NOW=$(date +%s)
-          DEADLINE=$(( NOW + 1200 ))   # 20 min
+          DEADLINE=$(( NOW + 1800 ))   # 30 min
           SSH="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i ~/.ssh/grove-qa-deploy root@$DROPLET_IP"
 
+          # HTTPS backup probe target. Uses --resolve to bypass any
+          # DNS-propagation delay after a droplet recreate — we hit the
+          # fresh droplet IP directly, but Caddy receives the request with
+          # the right SNI so it serves the hub.qa vhost + cert.
+          HUB_HOST="hub.qa.gatheringatthegrove.com"
+
           while [ "$(date +%s)" -lt "$DEADLINE" ]; do
-            # (1) happy path
+            # (1) happy path -- canonical sentinel via SSH
             if $SSH "test -f /var/lib/cloud/instance/grove-ready" 2>/dev/null; then
-              echo "  ✓ stack ready"
+              echo "  ✓ stack ready (SSH sentinel: /var/lib/cloud/instance/grove-ready present)"
               exit 0
             fi
+
+            # (1b) backup probe -- HTTPS on hub.qa. Added 2026-07-01 after
+            # a slow-boot event where the droplet was serving traffic ~3
+            # min before the SSH sentinel would have fired. If Caddy is
+            # answering with a real cert on hub.qa's vhost, the stack is
+            # functionally healthy regardless of SSH lag. `-k` accepts
+            # staging certs (the auto-upgrader promotes those later).
+            HTTP_CODE=$(curl -sk -o /dev/null -w '%{http_code}' \
+              --resolve "${HUB_HOST}:443:${DROPLET_IP}" \
+              --connect-timeout 5 --max-time 10 \
+              "https://${HUB_HOST}/" 2>/dev/null || echo "000")
+            case "$HTTP_CODE" in
+              200|301|302|303|307|308)
+                echo "  ✓ stack ready (HTTPS probe: hub.qa returned ${HTTP_CODE} — SSH sentinel not yet ready, but the stack is serving)"
+                exit 0
+                ;;
+            esac
 
             # (2) sad path -- known error patterns
             ERR=$($SSH "
@@ -321,16 +427,97 @@ jobs:
                 echo '(cloud-init in apt/docker install stage; compose-up not started yet)'
               fi
             " 2>/dev/null || echo "(SSH not yet responding; droplet may still be booting)")
-            echo "  [$(date -u +%H:%M:%S)] ${PROGRESS}"
+            echo "  [$(date -u +%H:%M:%S)] ${PROGRESS} — HTTPS probe: ${HTTP_CODE}"
             sleep 30
           done
 
-          # Hard fail when the sentinel never fires -- otherwise the workflow
-          # declares success despite the stack being down. Discord then posts
-          # URLs that resolve to nothing. Per code review 2026-06-24:
+          # Hard fail when NEITHER probe fires within 30 min -- otherwise the
+          # workflow declares success despite the stack being down. Discord
+          # then posts URLs that resolve to nothing. Per code review 2026-06-24:
           # truthful CI status > continuing through a likely-broken deploy.
-          echo "::error::droplet didn't signal grove-ready within 20 min -- stack likely broken. SSH in via ~/.ssh/grove-qa-admin and check /var/log/cloud-init-output.log + docker ps."
+          echo "::error::droplet didn't signal ready within 30 min via EITHER probe (SSH sentinel + HTTPS on ${HUB_HOST}) -- stack likely broken."
+          echo "  Debug: ssh -i ~/.ssh/grove-qa-admin root@${DROPLET_IP}"
+          echo "  Then check: /var/log/cloud-init-output.log, docker ps, and 'docker logs caddy'"
           exit 1
+
+      # Post-deploy: sync qa_portal_pg URL to Infisical.
+      #
+      # qa_portal_pg is a co-located Postgres container (defined in compose +
+      # cloud-init); its password is randomized at first boot and lives only in
+      # /etc/grove/.env on the droplet. The Grove QA portal app (deployed
+      # separately) reads QA_PORTAL_DATABASE_URL from Infisical at runtime, so
+      # we need to push the freshly-constructed URL after every droplet recreate.
+      #
+      # The constructed URL uses container name `qa_portal_pg` as the host (not
+      # the droplet IP) because it's resolved from inside the same Docker network
+      # (qa_portal_net) the portal app joins. sslmode=disable is correct here:
+      # traffic stays on the docker bridge inside one droplet, never touches a
+      # network interface, and bare postgres:16 has no TLS configured anyway.
+      #
+      # Idempotent: `infisical secrets set` upserts by name. Password rotation
+      # per deploy is expected — the portal app must re-fetch on each deploy.
+      #
+      # ONE-TIME PREREQUISITE: the /qa-portal folder must exist in Infisical
+      # under grove-odoo / prod (create via Infisical UI; the API call below
+      # writes the secret AT this path but doesn't create the path itself).
+      - name: Post-deploy - push QA_PORTAL_DATABASE_URL to Infisical
+        timeout-minutes: 3
+        env:
+          DROPLET_IP: ${{ steps.tf_outputs.outputs.droplet_ip }}
+          # INFISICAL_TOKEN was set by the secrets-action step at the top of this
+          # job. The CLI consumes the same token via env var — no re-auth needed.
+          INFISICAL_TOKEN: ${{ env.INFISICAL_TOKEN }}
+        run: |
+          SSH="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i ~/.ssh/grove-qa-deploy root@$DROPLET_IP"
+
+          # Install Infisical CLI on the runner (~3 sec; the official installer
+          # script just downloads the binary + chmod +x).
+          curl -1sLf 'https://artifacts-cli.infisical.com/setup.deb.sh' | sudo -E bash
+          sudo apt-get install -y infisical
+
+          # Read the rotated password from the droplet's /etc/grove/.env. grep + cut
+          # to avoid sourcing the file (which would expose other secrets in this
+          # workflow's env). Quote-strip just in case (the .env line shouldn't
+          # have quotes but defense-in-depth).
+          QPPW=$($SSH "grep '^QA_PORTAL_PG_PASSWORD=' /etc/grove/.env | cut -d= -f2-" 2>/dev/null | tr -d '"' | tr -d "'")
+          if [ -z "$QPPW" ]; then
+            echo "::error::Could not read QA_PORTAL_PG_PASSWORD from /etc/grove/.env on droplet."
+            echo "  This means either: (a) cloud-init didn't substitute the placeholder,"
+            echo "  (b) the .env file is missing the QA_PORTAL_PG_PASSWORD line, or"
+            echo "  (c) SSH access broke between grove-ready and here."
+            echo "  SSH to debug: ssh -i ~/.ssh/grove-qa-admin root@$DROPLET_IP"
+            exit 1
+          fi
+
+          # Construct the URL. Container name `qa_portal_pg` is the host because
+          # this URL is consumed from INSIDE qa_portal_net (the portal app's
+          # container side), not from outside the droplet.
+          URL="postgresql://qa_portal_app:${QPPW}@qa_portal_pg:5432/qa_portal?sslmode=disable"
+
+          # Push to Infisical. --silent + redirect prevents the value from being
+          # echoed in CI logs (the CLI normally prints the set value on success).
+          # Path /qa-portal must exist; see prerequisite note above.
+          infisical secrets set "QA_PORTAL_DATABASE_URL=$URL" \
+            --token="$INFISICAL_TOKEN" \
+            --projectId="850603f8-e175-4c38-9038-97a1e69d72e6" \
+            --env="prod" \
+            --path="/qa-portal" \
+            --silent >/dev/null 2>&1
+
+          # Verify by re-reading: just confirm the secret exists at the path with
+          # a plausible length (URL should be ~95-110 chars for our scheme). We
+          # do NOT echo the value — only the length, which leaks no key material.
+          LEN=$(infisical secrets get QA_PORTAL_DATABASE_URL \
+            --token="$INFISICAL_TOKEN" \
+            --projectId="850603f8-e175-4c38-9038-97a1e69d72e6" \
+            --env="prod" \
+            --path="/qa-portal" \
+            --plain 2>/dev/null | wc -c | tr -d ' ')
+          if [ "$LEN" -lt 80 ]; then
+            echo "::error::Infisical write appears to have failed: read-back length=$LEN bytes (expected ~95-110)."
+            exit 1
+          fi
+          echo "  ✓ QA_PORTAL_DATABASE_URL pushed to grove-odoo/prod/qa-portal (read-back length=$LEN bytes)"
 
       # Post-deploy: bootstrap observability config (per ADR-007 addendum Phase 1.5).
       # Idempotent script POSTs openobserve/{monitors,alerts,dashboards}.json +
@@ -384,52 +571,30 @@ jobs:
         timeout-minutes: 1
         env:
           # DISCORD_OPS_WEBHOOK_URL set by Infisical fetch step at job start
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # required for gh CLI run-history lookup in helper
           QA_URLS: ${{ steps.tf_outputs.outputs.qa_urls }}
           DROPLET_IP: ${{ steps.tf_outputs.outputs.droplet_ip }}
-          STATUS: ${{ job.status }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           COMMIT_SHA: ${{ github.sha }}
           ACTOR: ${{ github.actor }}
-          # TTL info -- the QA droplet is auto-destroyed by qa-ttl-sweeper.yml
-          # after 4 days idle. Surface this in the Discord post so testers know
-          # when they need to push a fresh deploy or kick off a manual teardown.
           QA_TTL_DAYS: "4"
         run: |
-          # Build the per-URL field list. When TF apply failed earlier, QA_URLS
-          # is empty -- fall back to an empty array so jq --argjson doesn't choke
-          # on invalid JSON. The embed still posts (with no URL fields), making
-          # failures visible in Discord instead of cascading to a workflow crash.
-          if [ -z "$QA_URLS" ]; then
-            FIELDS='[]'
-          else
-            FIELDS=$(echo "$QA_URLS" | jq '[to_entries[] | {name: .key, value: .value, inline: false}]')
+          # Compose per-URL fields from TF outputs. On TF apply failure QA_URLS
+          # is empty — the helper still posts (with no URL fields), making the
+          # failure visible.
+          FIELD_ARGS=()
+          if [ -n "$QA_URLS" ]; then
+            while IFS= read -r line; do
+              FIELD_ARGS+=(--field "$line")
+            done < <(echo "$QA_URLS" | jq -r 'to_entries[] | "\(.key)=\(.value)"')
           fi
-          if [ "$STATUS" = "success" ]; then COLOR=5763719; ICON="🧪"; else COLOR=15158332; ICON="🚨"; fi
 
-          # Auto-teardown date (informational). Uses GNU date arithmetic
-          # (available on ubuntu-latest runners). Falls back gracefully if
-          # date math fails.
           EXPIRES=$(date -u -d "+${QA_TTL_DAYS} days" '+%Y-%m-%d %H:%M UTC' 2>/dev/null || echo "in ${QA_TTL_DAYS} days")
 
-          PAYLOAD=$(jq -n \
-            --arg title "$ICON QA Deploy -- $STATUS" \
-            --arg description "Commit \`$COMMIT_SHA\` by @$ACTOR. Droplet IP: $DROPLET_IP" \
-            --arg footer "Auto-teardown if idle past $EXPIRES (run \`qa-teardown.yml\` to destroy sooner; push to \`qa\` to reset the clock)" \
-            --arg run_url "$RUN_URL" \
-            --argjson color "$COLOR" \
-            --argjson fields "$FIELDS" \
-            '{
-              username: "🧪 Grove QA",
-              embeds: [{
-                title: $title,
-                description: $description,
-                url: $run_url,
-                color: $color,
-                fields: $fields,
-                footer: { text: $footer }
-              }]
-            }')
-
-          curl -fsS -X POST -H "Content-Type: application/json" \
-            -d "$PAYLOAD" "$DISCORD_OPS_WEBHOOK_URL" || \
-            echo "::warning::Discord post failed -- QA env is up regardless, URLs are in workflow logs"
+          bash scripts/discord-status.sh \
+            --status="${{ job.status }}" \
+            --workflow=qa-deploy.yml \
+            --branch="${{ github.ref_name }}" \
+            --run-url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --title="QA Deploy" \
+            --description="Commit \`${COMMIT_SHA:0:7}\` by @${ACTOR}. Droplet IP: ${DROPLET_IP:-(not yet provisioned)}. Auto-teardown if idle past ${EXPIRES}." \
+            "${FIELD_ARGS[@]}"

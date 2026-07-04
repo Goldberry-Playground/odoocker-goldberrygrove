@@ -108,6 +108,83 @@ Two layers:
 
 After editing, `make monitoring-setup`.
 
+## Synthetic Tier-1 (Hurl)
+
+Beyond the built-in OpenObserve monitors (shallow HTTP/TCP/SSL up-checks), the
+`synthetic-runner` container runs **multi-step Hurl journeys** against the live
+`grove_headless` API every 60s (supercronic) and ships pass/fail + latency to
+OpenObserve as OTLP metrics. See `synthetic/README.md` for the full design.
+
+| Journey | Scope | Proves |
+|---|---|---|
+| `health` | shared | grove_headless API up |
+| `catalog` | per tenant | products list + detail (with price) work |
+| `cart-flow` | per tenant | add-to-cart → cart reflects the line (BFF↔Odoo write path) |
+| `checkout-canary` | per tenant (opt-in) | $0 order via bearer `/orders` + access_token gate; draft swept via XML-RPC |
+| `ghost-content` | per tenant (opt-in) | Ghost Content API v5 returns ≥1 published post |
+
+Metrics emitted (queried by the `synthetic-*` alert rules in `alerts.json`):
+- `synthetic_journey_success` — gauge 1/0, tags `{journey, tenant, tier=api, env}`
+- `synthetic_journey_duration_ms` — gauge ms
+
+```bash
+# Journeys live in synthetic/journeys/*.hurl (edit + the runner picks them up
+# on its next minute). Add/remove journeys in synthetic/run.py's journey lists.
+# Unit-test the metric shipper without the stack:
+python3 synthetic/test_run.py
+```
+
+**Opt-in money-path journey:** `checkout-canary` is OFF by default. Set
+`SYNTHETIC_CANARY_ENABLED=true` + `ODOO_DB`/`ODOO_LOGIN`/`SYNTHETIC_ODOO_API_KEY`
+to enable it — `setup-monitoring.py` then seeds an unpublished `$0 SYNTHETIC-CANARY`
+product and the runner creates/sweeps a draft order each cycle (see
+`synthetic/README.md`).
+
+**Opt-in content journey:** `ghost-content` is OFF by default. Set
+`SYNTHETIC_GHOST_ENABLED=true` + per-tenant `GHOST_URL_<TENANT>`/`GHOST_KEY_<TENANT>`
+(read-only Content API keys) to check each blog has published posts — content
+depth beyond the `ghost-*-admin` availability monitors. **Synthetic Tier-1 is
+now complete** (health, catalog, cart-flow, checkout-canary, ghost-content).
+
+## CostOps (DO billing bridge)
+
+The `cost-bridge` container polls the DigitalOcean API hourly and ships **cost as
+metrics** into the same OpenObserve pane as the USE/utilization data, so
+`cost_resource_monthly_estimate × low-utilization` becomes a **rightsizing /
+"what to trim"** view. See `cost/README.md` for the design; spec §6.
+
+| Metric | Meaning |
+|---|---|
+| `cost_account_month_to_date` / `_balance` / `_month_to_date_usage` | The **actual** aggregate truth from DO's balance API |
+| `cost_resource_monthly_estimate{type,name,size,env}` | Per-resource **derived** cost = live inventory × static price list |
+
+Alerts: `cost-budget-warning`/`-critical` (vs `COST_MONTHLY_BUDGET`) and
+`cost-anomaly-warning`. **Opt-in + cloud-only** — set `COST_BRIDGE_ENABLED=true`
++ a read-only `DO_API_TOKEN` (no-op locally). **Sprint 2** adds Infracost
+(pre-merge `$/mo` delta on Terraform PRs) as the shift-left complement.
+
+**Rightsizing:** the **Grove CostOps** dashboard's *Rightsizing* row correlates
+droplet cost (cost-bridge) with droplet/container utilization (OTel Collector USE
+metrics) — high cost + low use = a downsize candidate. A single computed
+`cost × utilization` JOIN is a follow-up once the metric stream/field names are
+confirmed live.
+
+## APM / Infra — OTel Collector (USE metrics)
+
+The `otel-collector` container (contrib image) scrapes **host** CPU/RAM/disk
+(`hostmetrics` via `/hostfs`) + **per-container** CPU/RAM (`docker_stats` via the
+socket) and ships OTLP metrics to OpenObserve. Config: `otel/otelcol-config.yaml`.
+
+These are the **USE** metrics that complete the CostOps rightsizing view — joined
+with the cost-bridge's `cost_resource_monthly_estimate`, `cost × low-utilization`
+finally becomes "what to trim." Alerts added: `droplet-cpu-{warning,critical}`,
+`container-ram-{warning,critical}`, `disk-data-{warning,critical}`.
+
+Always on (reuses the OpenObserve root creds; no extra secret). Point
+`OPENOBSERVE_OTLP_BASE` at the obs-droplet URL in QA/prod. **Follow-ups:** the
+`postgresql` receiver (documented-optional in the config → `postgres-connections`
+alert) and Beyla eBPF for the RED latency/5xx alerts.
+
 ## Cost model
 
 - **Local:** $0. OpenObserve + Keep + MinIO all self-hosted.

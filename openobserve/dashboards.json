@@ -91,6 +91,84 @@
       ],
       "public_share_enabled": true,
       "refresh_interval_seconds": 60
+    },
+    {
+      "name": "Grove CostOps",
+      "description": "DigitalOcean spend + utilization at a glance (spec §6). Spend overview + a by-cost resource table (trim candidates by spend), and a Rightsizing row that correlates droplet cost (cost-bridge) with droplet/container utilization (USE metrics from the OTel Collector, §3): high cost + low utilization = a downsize candidate. A single computed cost×utilization JOIN is a follow-up once the metric stream/field names are confirmed live.",
+      "_query_note": "Cost queries target cost/do_billing_bridge.py streams (value + attrs env/type/name/size); USE queries target the OTel Collector streams (system_cpu_utilization, container_cpu_utilization, container_memory_percent, tag container_name). Exact OpenObserve OTLP column names are pending live validation — adjust after the first COST_BRIDGE_ENABLED=true + otel-collector run.",
+      "rows": [
+        {
+          "title": "Spend overview",
+          "panels": [
+            {
+              "title": "Month-to-date spend ($)",
+              "type": "stat",
+              "query": "SELECT value AS mtd FROM cost_account_month_to_date ORDER BY _timestamp DESC LIMIT 1",
+              "unit": "currency"
+            },
+            {
+              "title": "Account balance ($)",
+              "type": "stat",
+              "query": "SELECT value AS balance FROM cost_account_balance ORDER BY _timestamp DESC LIMIT 1",
+              "unit": "currency"
+            },
+            {
+              "title": "Estimated total ($/mo)",
+              "type": "stat",
+              "query": "SELECT SUM(value) AS total FROM cost_resource_monthly_estimate WHERE _timestamp > NOW() - INTERVAL '90 minutes'",
+              "unit": "currency"
+            },
+            {
+              "title": "Month-to-date spend trend",
+              "type": "timeseries",
+              "query": "SELECT value AS mtd, _timestamp FROM cost_account_month_to_date WHERE _timestamp > NOW() - INTERVAL '30 days'",
+              "unit": "currency"
+            }
+          ]
+        },
+        {
+          "title": "Cost by resource (trim candidates — highest spend first)",
+          "panels": [
+            {
+              "title": "Estimated monthly cost by resource",
+              "type": "table",
+              "query": "SELECT name, type, size, value AS monthly_usd FROM cost_resource_monthly_estimate WHERE _timestamp > NOW() - INTERVAL '90 minutes' ORDER BY value DESC",
+              "unit": "currency"
+            }
+          ]
+        },
+        {
+          "title": "Rightsizing (cost × utilization) — high cost + low use = downsize",
+          "panels": [
+            {
+              "title": "Droplet monthly cost ($)",
+              "type": "stat",
+              "query": "SELECT SUM(value) AS droplet_cost FROM cost_resource_monthly_estimate WHERE type = 'droplet' AND _timestamp > NOW() - INTERVAL '90 minutes'",
+              "unit": "currency"
+            },
+            {
+              "title": "Droplet CPU utilization (last 6h)",
+              "type": "timeseries",
+              "query": "SELECT avg(value) AS cpu, _timestamp FROM system_cpu_utilization WHERE _timestamp > NOW() - INTERVAL '6 hours' GROUP BY time_bucket('5 minutes', _timestamp)",
+              "unit": "percent"
+            },
+            {
+              "title": "Container CPU % by container (last 6h)",
+              "type": "timeseries",
+              "query": "SELECT avg(value) AS cpu, container_name, _timestamp FROM container_cpu_utilization WHERE _timestamp > NOW() - INTERVAL '6 hours' GROUP BY container_name, time_bucket('5 minutes', _timestamp)",
+              "unit": "percent"
+            },
+            {
+              "title": "Container memory % of limit (last 6h)",
+              "type": "timeseries",
+              "query": "SELECT avg(value) AS mem, container_name, _timestamp FROM container_memory_percent WHERE _timestamp > NOW() - INTERVAL '6 hours' GROUP BY container_name, time_bucket('5 minutes', _timestamp)",
+              "unit": "percent"
+            }
+          ]
+        }
+      ],
+      "public_share_enabled": false,
+      "refresh_interval_seconds": 300
     }
   ]
 }

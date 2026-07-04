@@ -69,7 +69,19 @@ useDefault = true
 # ── Rule-level overrides ─────────────────────────────────────────────────────
 # Add per-rule overrides below if a specific rule fires on a specific file
 # that is not covered by the global allowlist above.
-#
+
+# scripts/check-secret-shapes.sh -- the shape-check script literally names the
+# expected PEM header ('-----BEGIN OPENSSH PRIVATE KEY-----') so it can probe
+# for a matching prefix on the CI SSH secret. That literal appears in one
+# variable + one comment. The `private-key` rule matches on this literal;
+# gitleaks:allow inline comments only whitelist current content, not history,
+# so a rule-scoped path allowlist is what actually works across git history.
+[[rules]]
+id = "private-key"
+[rules.allowlist]
+  paths = ['''scripts/check-secret-shapes\.sh$''']
+  description = "Shape-check script intentionally names the expected PEM header for its prefix probe."
+
 # Example (uncomment and adapt if needed):
 # [[rules]]
 # id = "generic-api-key"

@@ -1,0 +1,67 @@
+# docker-compose for the Level 3 QA Odoo droplet.
+#
+# DIFFERS FROM THE MONOLITH QA (environments/qa/compose/docker-compose.qa.yml):
+#   - NO postgres service (offloaded to DO Managed PG; Odoo connects via env)
+#   - NO frontend services (moved to DO App Platform - Phase 2)
+#   - ONE Caddy site (just Odoo) - no per-tenant routing
+#
+# Two services only: caddy (TLS termination + reverse proxy to odoo) and
+# odoo (Odoo 19 with custom modules baked in via the grove-odoo image).
+# Postgres health-gate (PR #129) is irrelevant here - Odoo connects to
+# Managed PG over private VPC network; that connection is always ready
+# before Odoo starts.
+
+services:
+  caddy:
+    image: ghcr.io/goldberry-playground/grove-caddy:${CADDY_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /etc/grove/Caddyfile:/etc/caddy/Caddyfile:ro
+      - /mnt/caddy-data:/data         # Persistent LE certs + ACME account (volume bind)
+      - caddy-config:/config           # Caddy's own state (not certs)
+    environment:
+      DO_API_TOKEN: ${DO_API_TOKEN}    # DNS-01 ACME challenge under qa-l3 zone
+      ACME_CA: ${ACME_CA}              # LE prod or staging - set in /etc/grove/.env
+    networks:
+      - grove
+    depends_on:
+      odoo:
+        condition: service_started
+
+  odoo:
+    image: ghcr.io/goldberry-playground/grove-odoo:${ODOO_TAG:-latest}
+    restart: unless-stopped
+    expose:
+      - "8069"
+      - "8072"   # longpolling
+    environment:
+      HOST: ${DB_HOST}
+      PORT: ${DB_PORT}
+      USER: ${DB_USER}
+      PASSWORD: ${DB_PASSWORD}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      ADMIN_PASSWD: ${ODOO_ADMIN_PASSWORD}
+      # PROXY_MODE=true tells Odoo to trust X-Forwarded-* headers (which
+      # Caddy sets). Without this, Odoo's CSRF + URL generation breaks
+      # when behind a reverse proxy.
+      PROXY_MODE: "true"
+      LIST_DB: "false"   # hide the DB selector since we have one fixed DB
+    volumes:
+      - odoo-filestore:/var/lib/odoo
+    networks:
+      - grove
+
+networks:
+  grove:
+    driver: bridge
+
+volumes:
+  caddy-config:
+  odoo-filestore:

@@ -63,9 +63,9 @@ fi
 # ANSI colors -- disable if not a terminal
 if [ -t 1 ] && [ "${NO_COLOR:-}" = "" ]; then
   C_GREEN="\033[32m"; C_RED="\033[31m"; C_YELLOW="\033[33m"
-  C_BLUE="\033[34m";  C_GRAY="\033[2m"; C_BOLD="\033[1m"; NC="\033[0m"
+  C_GRAY="\033[2m"; C_BOLD="\033[1m"; NC="\033[0m"
 else
-  C_GREEN=""; C_RED=""; C_YELLOW=""; C_BLUE=""; C_GRAY=""; C_BOLD=""; NC=""
+  C_GREEN=""; C_RED=""; C_YELLOW=""; C_GRAY=""; C_BOLD=""; NC=""
 fi
 
 render() {
@@ -115,7 +115,7 @@ render() {
     [ .databaseId, .workflowName, .status, .conclusion, .event,
       .createdAt, .updatedAt, (.displayTitle // ""), (.url // "") ]
     | join("")' \
-  | while IFS=$'\x1f' read -r id wfname status conclusion event created updated title url; do
+  | while IFS=$'\x1f' read -r id wfname status conclusion event created updated title _url; do
 
     # Pick symbol + color from (status, conclusion)
     case "$status" in

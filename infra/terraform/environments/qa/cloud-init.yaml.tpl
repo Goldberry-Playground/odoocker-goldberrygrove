@@ -104,6 +104,14 @@ write_files:
       CADDY_TAG=${caddy_image_tag}
       DO_API_TOKEN=${do_token_for_caddy}
       ACME_CA=${acme_endpoint}
+      # qa_portal_pg -- co-located Postgres for the Grove QA portal app. Lives on
+      # its own qa_portal_net Docker network (defined in docker-compose.qa.yml)
+      # so it's isolated from the main grove network; only containers attached
+      # to qa_portal_net can reach it. Password rotates per droplet recreate
+      # (qa-deploy.yml reads this value after grove-ready and pushes the
+      # constructed URL to Infisical under grove-odoo/prod/qa-portal/QA_PORTAL_DATABASE_URL,
+      # so the portal app always fetches a fresh URL on each deploy).
+      QA_PORTAL_PG_PASSWORD=__QA_PORTAL_PG_PASSWORD__
 
   - path: /etc/grove/Caddyfile
     encoding: b64
@@ -112,6 +120,21 @@ write_files:
   - path: /etc/grove/docker-compose.yml
     encoding: b64
     content: ${compose_yml_b64}
+
+  # Ghost autoseed pair (Asana task 97d): bootstraps the 3 per-tenant Ghost
+  # instances after compose up, writes their Content API keys into
+  # /etc/grove/.env, and recreates the storefronts. The .js runs INSIDE each
+  # ghost container (node 18+ with fetch); the .sh orchestrates from the
+  # host. Keys never leave the droplet -- they are only valid for the Ghosts
+  # on this droplet and both die together on recreate.
+  - path: /opt/grove/ghost-bootstrap.js
+    encoding: b64
+    content: ${ghost_bootstrap_js_b64}
+
+  - path: /opt/grove/qa-ghost-autoseed.sh
+    encoding: b64
+    permissions: "0755"
+    content: ${ghost_autoseed_sh_b64}
 
 runcmd:
   # Install Docker per docs.docker.com (Ubuntu noble = 24.04)
@@ -129,9 +152,17 @@ runcmd:
   # ran before runcmd; sed-substitute the placeholders in /etc/grove/.env).
   - PGPW=$(openssl rand -hex 24) && sed -i "s|__POSTGRES_PASSWORD__|$PGPW|" /etc/grove/.env
   - OAPW=$(openssl rand -hex 16) && sed -i "s|__ODOO_ADMIN_PASSWORD__|$OAPW|" /etc/grove/.env
+  - QPPW=$(openssl rand -hex 24) && sed -i "s|__QA_PORTAL_PG_PASSWORD__|$QPPW|" /etc/grove/.env
 
   # Bring the stack up. Logs to /var/log/grove-qa-up.log for triage.
   - cd /etc/grove && docker compose --env-file /etc/grove/.env up -d > /var/log/grove-qa-up.log 2>&1
+
+  # Autoseed the 3 Ghost instances + wire Content API keys into .env +
+  # recreate storefronts (Asana 97d). NON-FATAL by design: deploys must
+  # never block on Ghost -- the sentinel below gates on hub serving, which
+  # doesn't need Ghost. On failure, /blog pages render empty state and the
+  # operator can re-run /opt/grove/qa-ghost-autoseed.sh over SSH.
+  - bash /opt/grove/qa-ghost-autoseed.sh > /var/log/grove-ghost-seed.log 2>&1 || echo "ghost autoseed failed (non-fatal, see /var/log/grove-ghost-seed.log)" >> /var/log/grove-qa-up.log
 
   # Health sentinel -- qa-deploy.yml polls for this file before posting URLs.
   # Up to 10 minutes for the full stack + cert provisioning.

@@ -64,6 +64,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      actions: read       # scripts/discord-status.sh queries gh run history for recovery/streak detection
 
     env:
       # Same Infisical identity as qa-deploy. Fetches DIGITALOCEAN_TOKEN_TEARDOWN
@@ -113,24 +114,13 @@ jobs:
         if: always()
         timeout-minutes: 1
         env:
-          STATUS: ${{ job.status }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # gh CLI run-history lookup in helper
           ACTOR: ${{ github.actor }}
         run: |
-          if [ "$STATUS" = "success" ]; then COLOR=10070709; ICON="🪦"; else COLOR=15158332; ICON="🚨"; fi
-          PAYLOAD=$(jq -n \
-            --arg title "$ICON QA Teardown -- $STATUS" \
-            --arg description "Initiated by @$ACTOR. QA env destroyed; tester data lost." \
-            --arg run_url "$RUN_URL" \
-            --argjson color "$COLOR" \
-            '{
-              username: "🧪 Grove QA",
-              embeds: [{
-                title: $title,
-                description: $description,
-                url: $run_url,
-                color: $color
-              }]
-            }')
-          curl -fsS -X POST -H "Content-Type: application/json" \
-            -d "$PAYLOAD" "$DISCORD_OPS_WEBHOOK_URL" || true
+          bash scripts/discord-status.sh \
+            --status="${{ job.status }}" \
+            --workflow=qa-teardown.yml \
+            --branch="${{ github.ref_name }}" \
+            --run-url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --title="QA Teardown" \
+            --description="Initiated by @${ACTOR}. QA env destroyed; tester data lost."
