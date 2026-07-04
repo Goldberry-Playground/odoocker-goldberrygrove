@@ -193,6 +193,10 @@ services:
       OPENOBSERVE_ROOT_EMAIL: ${OPENOBSERVE_ROOT_EMAIL}
       OPENOBSERVE_ROOT_PASSWORD: ${OPENOBSERVE_ROOT_PASSWORD}
       COST_ENV: ${COST_ENV:-${SYNTHETIC_ENV:-local}}
+      # postgresql receiver (opt-in — unused until enabled in the config pipeline)
+      POSTGRES_ENDPOINT: ${POSTGRES_ENDPOINT:-}
+      POSTGRES_MONITOR_USER: ${POSTGRES_MONITOR_USER:-}
+      POSTGRES_MONITOR_PASSWORD: ${POSTGRES_MONITOR_PASSWORD:-}
     volumes:
       - ./otel/otelcol-config.yaml:/etc/otelcol/config.yaml:ro
       - /:/hostfs:ro
