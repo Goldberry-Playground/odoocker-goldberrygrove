@@ -37,12 +37,12 @@ concurrency:
   # apply that adopts this same group (GOL-34 item 3a). Drift is plan-only
   # today, but a plan still refreshes/locks state, so overlapping runs are
   # not safe. cancel-in-progress:false — let an in-flight plan finish.
-  group: terraform-production
+  group: terraform-qa-app-platform
   cancel-in-progress: false
 
 jobs:
   drift-detect:
-    name: Detect production drift
+    name: Detect qa-app-platform drift
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -51,7 +51,11 @@ jobs:
       id-token: write   # OIDC token minted for Infisical exchange (read-only scope)
 
     env:
-      TF_DIR: infra/terraform/environments/production
+      # Repointed 2026-07-04: was the production STUB (gated, never applied
+      # -- drift-watching it was theater). Now watches the LIVE Level 3 QA
+      # env. assets/ + cloudflare-policy/ drift coverage: follow-up (needs
+      # their extra TF_VARs mirrored to Infisical first).
+      TF_DIR: infra/terraform/environments/qa-app-platform
       # ── Infisical identity assignment ──────────────────────────────────
       # Identity:   gh-oidc-odoocker-shared (UUID c502a60d-4b37-4e15-9fd7-8186c80c2ad0)
       # Project:    grove-odoocker (slug grove-odoocker-qu8p)
@@ -115,7 +119,7 @@ jobs:
           cat > "$TF_DIR/backend.hcl" <<'EOF'
           endpoint                    = "https://nyc3.digitaloceanspaces.com"
           bucket                      = "grove-tf-state"
-          key                         = "production/terraform.tfstate"
+          key                         = "qa-app-platform/terraform.tfstate"
           region                      = "us-east-1"
           skip_credentials_validation = true
           skip_metadata_api_check     = true
@@ -123,6 +127,15 @@ jobs:
           skip_requesting_account_id  = true
           force_path_style            = true
           EOF
+
+      - name: Map env-specific TF vars
+        timeout-minutes: 1
+        run: |
+          {
+            echo "TF_VAR_do_token=$DIGITALOCEAN_TOKEN"
+            echo "TF_VAR_cloudflare_api_token=$CLOUDFLARE_API_TOKEN"
+            echo "TF_VAR_grove_revalidate_secret=$GROVE_REVALIDATE_SECRET"
+          } >> "$GITHUB_ENV"
 
       - name: Terraform init
         timeout-minutes: 5
