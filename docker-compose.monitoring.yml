@@ -177,6 +177,29 @@ services:
     networks:
       - internal
 
+  # ── do-metrics-bridge — App Platform USE metrics → OpenObserve ────────────
+  # supercronic runs every 2 min: pulls CPU%/memory%/restart_count for each App
+  # Platform app from the DO Monitoring API and ships OTLP gauges. Closes the USE
+  # gap the Collector's docker_stats can't reach (frontends have no host/socket).
+  # The app-* alert rules query those streams. Opt-in (needs a DO token) and
+  # cloud-only — no-op locally. See do-metrics/README.md.
+  do-metrics-bridge:
+    build:
+      context: ./do-metrics
+    restart: unless-stopped
+    depends_on:
+      - openobserve
+    environment:
+      DO_METRICS_ENABLED: ${DO_METRICS_ENABLED:-false}
+      DO_API_TOKEN: ${DO_API_TOKEN:-}
+      COST_ENV: ${COST_ENV:-${SYNTHETIC_ENV:-local}}
+      DO_METRICS_LOOKBACK_SECONDS: ${DO_METRICS_LOOKBACK_SECONDS:-600}
+      OPENOBSERVE_OTLP_METRICS_URL: ${OPENOBSERVE_OTLP_METRICS_URL:-http://openobserve:5080/api/default/v1/metrics}
+      OPENOBSERVE_ROOT_EMAIL: ${OPENOBSERVE_ROOT_EMAIL}
+      OPENOBSERVE_ROOT_PASSWORD: ${OPENOBSERVE_ROOT_PASSWORD}
+    networks:
+      - internal
+
   # ── otel-collector — USE/infra metrics → OpenObserve ──────────────────────
   # Scrapes host CPU/RAM/disk (hostmetrics via /hostfs) + per-container CPU/RAM
   # (docker_stats via the socket) and ships OTLP metrics to OpenObserve. These

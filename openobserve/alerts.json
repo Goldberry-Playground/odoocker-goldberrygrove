@@ -285,6 +285,52 @@
       "destination": "keep-webhook",
       "runbook_key": "postgres-connections",
       "_message_template": "USE — Postgres connections >90% of max — new connections will be refused. Restart Odoo to clear leaked connections. Runbook: docs/RUNBOOKS.md#postgres-connections"
+    },
+    {
+      "name": "app-cpu-warning",
+      "stream": "do_app_cpu_percentage",
+      "trigger_condition": "avg(do_app_cpu_percentage) > 70 over 10m (any app component)",
+      "severity": "warning",
+      "destination": "keep-webhook",
+      "runbook_key": "app-cpu",
+      "_message_template": "USE — App Platform [{app}/{component}] CPU >70% for 10m. Consider a larger instance size or +1 instance. Runbook: docs/RUNBOOKS.md#app-cpu",
+      "_note": "USE metric from the DO-metrics bridge (App Platform). Percentage is 0-100 (NOT the 0-1 hostmetrics fraction). Stream/field name pending live validation."
+    },
+    {
+      "name": "app-cpu-critical",
+      "stream": "do_app_cpu_percentage",
+      "trigger_condition": "avg(do_app_cpu_percentage) > 90 over 10m (any app component)",
+      "severity": "critical",
+      "destination": "keep-webhook",
+      "runbook_key": "app-cpu",
+      "_message_template": "USE — App Platform [{app}/{component}] CPU >90% for 10m — requests will queue/latency spikes. Scale now. Runbook: docs/RUNBOOKS.md#app-cpu"
+    },
+    {
+      "name": "app-memory-warning",
+      "stream": "do_app_memory_percentage",
+      "trigger_condition": "avg(do_app_memory_percentage) > 80 over 5m (any app component)",
+      "severity": "warning",
+      "destination": "keep-webhook",
+      "runbook_key": "app-memory",
+      "_message_template": "USE — App Platform [{app}/{component}] memory >80% for 5m. Watch for OOM restarts (see app-restarts). Runbook: docs/RUNBOOKS.md#app-memory"
+    },
+    {
+      "name": "app-memory-critical",
+      "stream": "do_app_memory_percentage",
+      "trigger_condition": "avg(do_app_memory_percentage) > 95 over 5m (any app component)",
+      "severity": "critical",
+      "destination": "keep-webhook",
+      "runbook_key": "app-memory",
+      "_message_template": "USE — App Platform [{app}/{component}] memory >95% for 5m — OOM kill imminent. Bump instance size. Runbook: docs/RUNBOOKS.md#app-memory"
+    },
+    {
+      "name": "app-restarts-warning",
+      "stream": "do_app_restart_count",
+      "trigger_condition": "max(do_app_restart_count) > 0 over 10m (any app component)",
+      "severity": "warning",
+      "destination": "keep-webhook",
+      "runbook_key": "app-restarts",
+      "_message_template": "USE — App Platform [{app}/{component}] restarted in the last 10m — possible crash loop or OOM. Check the app's deploy/runtime logs. Runbook: docs/RUNBOOKS.md#app-restarts"
     }
   ]
 }
