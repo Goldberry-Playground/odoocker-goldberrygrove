@@ -98,7 +98,13 @@ runcmd:
   # a fresh value at boot; the file is mode 0600 so only root reads it.
   - MNU=$(openssl rand -hex 12) && sed -i "s|__MINIO_ROOT_USER__|grove-minio-$MNU|" /etc/grove-obs/.env
   - MNP=$(openssl rand -hex 24) && sed -i "s|__MINIO_ROOT_PASSWORD__|$MNP|" /etc/grove-obs/.env
-  - OOP=$(openssl rand -hex 24) && sed -i "s|__OPENOBSERVE_ROOT_PASSWORD__|$OOP|" /etc/grove-obs/.env
+  # OpenObserve v0.91+ enforces password complexity (8-128 chars, upper +
+  # lower + digit + special) and PANICS at boot on a weak one -- hex-only
+  # output (lowercase+digits) fails it, which restart-looped the container
+  # after the v0.17->v0.91 upgrade on 2026-07-04. The appended "Aa1!"
+  # guarantees all four classes regardless of the random part; base64 tr
+  # strips sed-hostile characters.
+  - OOP="$(openssl rand -base64 24 | tr -d '=+/')Aa1!" && sed -i "s|__OPENOBSERVE_ROOT_PASSWORD__|$OOP|" /etc/grove-obs/.env
   - KWT=$(openssl rand -hex 32) && sed -i "s|__KEEP_WEBHOOK_TOKEN__|$KWT|" /etc/grove-obs/.env
   - KNS=$(openssl rand -hex 32) && sed -i "s|__KEEP_NEXTAUTH_SECRET__|$KNS|" /etc/grove-obs/.env
 
