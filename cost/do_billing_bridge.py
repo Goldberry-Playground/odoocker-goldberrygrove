@@ -208,8 +208,14 @@ def ship(payload: dict) -> None:
 
 
 def main() -> None:
-    if not is_enabled():
-        _log("cost bridge disabled (COST_BRIDGE_ENABLED!=true or DO_API_TOKEN unset) — no-op")
+    # Fail loud on the enable-but-misconfigured case: a silent no-op here would
+    # leave the cost_* streams empty and their alerts permanently silent, with
+    # nothing in the logs to explain why.
+    if _env("COST_BRIDGE_ENABLED", "false").strip().lower() != "true":
+        _log("cost bridge disabled (COST_BRIDGE_ENABLED!=true) — no-op")
+        return
+    if not _env("DO_API_TOKEN"):
+        _log("✗ COST_BRIDGE_ENABLED=true but DO_API_TOKEN is unset — misconfigured; no cost metrics produced")
         return
     env_label = _env("COST_ENV", "local")
     _log(f"=== cost bridge: env={env_label} ===")
