@@ -107,9 +107,9 @@ variable "obs_droplet_size" {
 }
 
 variable "openobserve_tag" {
-  description = "OpenObserve image tag (public.ecr.aws/zinclabs/openobserve:<tag>). Match the version pinned in docker-compose.monitoring.yml so behavior is consistent across local + Level 3."
+  description = "OpenObserve image tag (public.ecr.aws/zinclabs/openobserve:<tag>). DIGEST-PINNED since 2026-07-04: upstream prunes old tags from public ECR (v0.17.2 vanished and every fresh obs droplet failed the pull; the old droplet had only survived on its local image cache). Tag-only pins on this registry are time bombs -- keep the @sha256 suffix on updates. Update docker-compose.monitoring.yml (local) in the same commit."
   type        = string
-  default     = "v0.17.2"
+  default     = "v0.91.1@sha256:e1ff0445fab3e748ac4cf630308cc8493579e50d19ad255bb3a3b8c1b710aaf7"
 }
 
 variable "keep_tag" {
