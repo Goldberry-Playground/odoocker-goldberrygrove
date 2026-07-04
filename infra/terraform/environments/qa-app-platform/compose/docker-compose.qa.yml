@@ -57,8 +57,6 @@ services:
       # droplet only ever ran via hand-applied fixes, so this compose had
       # never actually booted Odoo unassisted.
       APP_ENV: qa
-      WORKERS: "2"
-      LIST_DB: "false"
       # PROXY_MODE=true tells Odoo to trust X-Forwarded-* headers (which
       # Caddy sets). Without this, Odoo's CSRF + URL generation breaks
       # when behind a reverse proxy.
