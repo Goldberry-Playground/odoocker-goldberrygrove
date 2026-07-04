@@ -81,6 +81,23 @@ jobs:
           fi
           echo "No tracked .env (non-example) files."
 
+      # Terraform plan artifacts ARE secrets: `plan -out=` binaries embed
+      # every resolved variable value (API tokens, DB passwords). One leaked
+      # to this PUBLIC repo on 2026-07-04 (tfplan-cutover.bin) -- gitleaks
+      # couldn't catch it because it only scans text, and the gitignore
+      # patterns were too narrow for that filename. This gate is the
+      # text-independent backstop: NO plan/state/binary artifacts under
+      # infra/, ever. See vault: Grove Secrets Handling Policy.
+      - name: Fail if a plan/state/binary artifact is tracked under infra/
+        run: |
+          tracked=$(git ls-files -- 'infra/' | grep -E '(tfplan|\.tfstate|\.bin$|\.binary$)' || true)
+          if [ -n "$tracked" ]; then
+            echo "::error::Terraform plan/state or binary artifact(s) tracked under infra/ -- these embed resolved secrets. Remove them and ROTATE EVERY VALUE they contain:"
+            echo "$tracked"
+            exit 1
+          fi
+          echo "No tracked plan/state/binary artifacts under infra/."
+
   lint-python:
     name: Lint Python (Odoo Modules)
     runs-on: ubuntu-latest

@@ -55,6 +55,14 @@ services:
       LIST_DB: "false"   # hide the DB selector since we have one fixed DB
     volumes:
       - odoo-filestore:/var/lib/odoo
+      # LOAD-BEARING (2026-07-04): the grove-odoo image's entrypoint runs
+      # /odoorc.sh (which substitutes the literal placeholder strings in
+      # /etc/odoo/odoo.conf) ONLY when /.env exists in the container.
+      # Without this mount Odoo crash-loops on a raw dollar-brace DB_PORT
+      # ("invalid integer value"). The monolith compose carried this mount;
+      # this env's first droplet was hand-patched instead, and the fix
+      # evaporated on the first recreate. Same lesson, now in code.
+      - /etc/grove/.env:/.env:ro
     networks:
       - grove
 
