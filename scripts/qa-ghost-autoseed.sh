@@ -74,7 +74,11 @@ while IFS='|' read -r tenant port title integration; do
   # probe because the ghost image has no curl/wget guarantee.
   ready=0
   for _ in $(seq 1 24); do
-    if compose exec -T "$service" node -e "fetch('http://localhost:${port}/ghost/api/admin/site/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" 2>/dev/null; then
+    # </dev/null is LOAD-BEARING: docker compose exec attaches stdin even
+    # with -T, and inside a `while read` loop it drains the loop's input.
+    # First live run (2026-07-04, run 28713663225) seeded ONLY goldberry
+    # because this probe swallowed the ggg + nursery lines.
+    if compose exec -T "$service" node -e "fetch('http://localhost:${port}/ghost/api/admin/site/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" </dev/null 2>/dev/null; then
       ready=1
       break
     fi

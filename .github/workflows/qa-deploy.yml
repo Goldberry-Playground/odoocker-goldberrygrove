@@ -479,9 +479,22 @@ jobs:
           # to avoid sourcing the file (which would expose other secrets in this
           # workflow's env). Quote-strip just in case (the .env line shouldn't
           # have quotes but defense-in-depth).
-          QPPW=$($SSH "grep '^QA_PORTAL_PG_PASSWORD=' /etc/grove/.env | cut -d= -f2-" 2>/dev/null | tr -d '"' | tr -d "'")
+          # Retry loop (2026-07-04, run 28713663225): since PR #155 the
+          # sentinel can declare ready via the HTTPS probe BEFORE cloud-init
+          # finishes (SSH-verified grove-ready is no longer guaranteed at
+          # this point). A one-shot SSH read here raced the still-settling
+          # droplet (autoseed recreating containers = load spike) and failed
+          # despite the stack being healthy. 6 tries x 20s = 2 min of grace,
+          # far longer than the observed settle window.
+          QPPW=""
+          for attempt in 1 2 3 4 5 6; do
+            QPPW=$($SSH "grep '^QA_PORTAL_PG_PASSWORD=' /etc/grove/.env | cut -d= -f2-" 2>/dev/null | tr -d '"' | tr -d "'")
+            [ -n "$QPPW" ] && break
+            echo "  [attempt $attempt/6] SSH read failed or empty; droplet may still be settling. Retrying in 20s..."
+            sleep 20
+          done
           if [ -z "$QPPW" ]; then
-            echo "::error::Could not read QA_PORTAL_PG_PASSWORD from /etc/grove/.env on droplet."
+            echo "::error::Could not read QA_PORTAL_PG_PASSWORD from /etc/grove/.env on droplet (6 attempts over 2 min)."
             echo "  This means either: (a) cloud-init didn't substitute the placeholder,"
             echo "  (b) the .env file is missing the QA_PORTAL_PG_PASSWORD line, or"
             echo "  (c) SSH access broke between grove-ready and here."
