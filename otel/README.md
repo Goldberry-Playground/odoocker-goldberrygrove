@@ -21,7 +21,8 @@ OTel) export to it plain over the internal network; it adds OpenObserve auth onc
 
 - Runs on the **app/Odoo droplet** (where `/proc` + the Docker socket live).
   The App Platform frontends have no `docker_stats` — their USE metrics come from
-  the DO-metrics bridge (a separate follow-up).
+  the **DO-metrics bridge** (`do-metrics/`, polls the DO Monitoring API →
+  `do_app_*` gauges + `app-*` alerts).
 - `OPENOBSERVE_OTLP_BASE` targets local `openobserve:5080/api/default` by default;
   point it at the obs droplet (`https://oo.qa-l3.…/api/default`) in QA/prod.
 

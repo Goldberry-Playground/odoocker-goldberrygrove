@@ -6,7 +6,7 @@
 #
 # Runs on the app/Odoo droplet (where /proc + the Docker socket live). The
 # frontends are on App Platform (no docker_stats there) — their USE metrics come
-# from the DO-metrics bridge, a separate follow-up.
+# from the DO-metrics bridge (do-metrics/, polls the DO Monitoring API).
 #
 # PENDING LIVE VALIDATION: the OpenObserve OTLP metrics endpoint/auth and the
 # resulting stream/field names are the documented shapes but not yet exercised
