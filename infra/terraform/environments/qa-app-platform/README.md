@@ -11,7 +11,7 @@ The new QA shape from [ADR-007](../../../../docs/ADR/007-level-3-app-platform-mi
 | **2** | App Platform app specs (4 frontends) | ✅ applied 2026-07-02 (#157, #158) |
 | **3** | Soak validation | ✅ cut short by operator decision 2026-07-04 — L3 healthy, monolith pipeline was consuming all maintenance attention |
 | **4** | DNS cutover (qa-l3 → qa subdomain) | ✅ accelerated 2026-07-04 — this env re-keyed to plain `qa`; monolith released the zone |
-| **5** | Decommission monolith QA env | 🚧 48h fallback cushion, then dispatch `qa-teardown.yml` (confirm-gated) + delete `../qa/` |
+| **5** | Decommission monolith QA env | ✅ torn down 2026-07-04 (accelerated; cushion waived by operator) — droplet destroyed, `../qa/` deleted |
 
 Phase 1 lands the **bones** of the env. Nothing in this PR is applied yet — applying happens after Phase 1.5 (obs) lands so we don't deploy half the failure-domain story.
 

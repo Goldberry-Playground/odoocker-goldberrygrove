@@ -39,4 +39,11 @@ infra/terraform/environments/**/terraform.tfvars
 infra/terraform/environments/**/.terraform.lock.hcl
 *.tfplan
 tfplan.binary
+# ANY terraform plan artifact, any name -- plan binaries embed resolved
+# sensitive values (tokens, passwords). One leaked to the public repo on
+# 2026-07-04 (tfplan-cutover.bin) because the old patterns were too narrow;
+# DO auto-revoked the exposed token.
+tfplan*
+*.tfplan.bin
+plan.bin
 .env.infisical-seed.op
