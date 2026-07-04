@@ -132,7 +132,7 @@ jobs:
             dockerfile: ./pgadmin/Dockerfile
             context: .
             build-args: |
-              PGADMIN_TAG=9.15
+              PGADMIN_TAG=9.16
 
     steps:
       - name: Checkout repository

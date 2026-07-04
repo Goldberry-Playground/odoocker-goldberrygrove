@@ -45,11 +45,14 @@ on:
 permissions: {}
 
 concurrency:
-  # Sequenced with qa-deploy so they don't fight over the same droplet's
-  # docker daemon. If a full qa-deploy is in flight, this waits; if this
-  # is in flight and a qa-deploy gets dispatched, qa-deploy cancels this.
+  # Shares qa-deploy's group so the two never fight over the QA droplet's
+  # docker daemon. cancel-in-progress:false is REQUIRED here (GOL-34 item 3a):
+  # this group also carries qa-deploy's `terraform apply`, and a group is
+  # global across workflows — a cancel:true run here would cancel an in-flight
+  # apply and risk a stale lock / partial state. So both sequence by queuing:
+  # whichever starts first runs to completion, the other waits.
   group: qa-deploy
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   compose-update:

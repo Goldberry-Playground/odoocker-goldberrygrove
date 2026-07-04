@@ -31,6 +31,15 @@ on:
 # bound on the Infisical identity (repository + workflow_ref + ref, literals).
 permissions: {}
 
+concurrency:
+  # Keyed to the production Terraform state (`production/terraform.tfstate`)
+  # so drift plans serialize with each other and with any future production
+  # apply that adopts this same group (GOL-34 item 3a). Drift is plan-only
+  # today, but a plan still refreshes/locks state, so overlapping runs are
+  # not safe. cancel-in-progress:false — let an in-flight plan finish.
+  group: terraform-production
+  cancel-in-progress: false
+
 jobs:
   drift-detect:
     name: Detect production drift
