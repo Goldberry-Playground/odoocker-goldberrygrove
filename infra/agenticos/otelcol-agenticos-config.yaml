@@ -1,0 +1,115 @@
+# GOL-54 P1 — AgenticOS OTel Collector: host + container USE metrics → obs-droplet OpenObserve.
+#
+# Ships the AgenticOS droplet's resource telemetry (host CPU/RAM/disk/swap/net +
+# per-container CPU/RAM) to the SEPARATE Grove observability droplet's OpenObserve.
+# This closes the gap the Grove Observability design blueprints (spec §3 / §5
+# "AgenticOS disk/RAM metrics shipped to the Grove obs-droplet ... independent host
+# → no circular dependency") but never built. Parent: GOL-51 · child: GOL-54.
+#
+# WHY A SEPARATE, SELF-CONTAINED COLLECTOR (not the odoocker one):
+#   - AgenticOS is its own failure domain (it runs the agent fleet + Paperclip
+#     control plane). It must NOT depend on the odoocker `internal` network or the
+#     local OpenObserve — it exports OTLP OUT to the obs-droplet. If AgenticOS dies,
+#     the obs-droplet still has its last metrics; if the obs-droplet dies, AgenticOS
+#     keeps running (the DO-native alerts from P0/GOL-53 are the redundant fast layer).
+#   - No `otlp` receiver and no `postgresql` receiver: AgenticOS runs neither Beyla
+#     nor a Managed-PG client here. Smaller surface = fewer startup failure modes.
+#
+# TEMPLATE LINEAGE: derived from odoocker `otel/otelcol-config.yaml` (the odoo-droplet
+# collector). Same contrib image, same hostmetrics/docker_stats scrapers and OpenObserve
+# basicauth exporter; the AgenticOS deltas are (a) role/host tagging = `agenticos`,
+# (b) remote OTLP endpoint, (c) receivers trimmed to host+container only.
+#
+# PENDING LIVE VALIDATION (same caveat as the odoocker collector): the OpenObserve
+# OTLP endpoint/auth and the resulting stream/field names are the documented shapes
+# but not yet exercised end-to-end from AgenticOS — confirm on first deploy and adjust
+# the exporter + the `agenticos-*` alert stream names in openobserve/alerts.json if
+# the live stream names differ. See infra/agenticos/README.md.
+
+extensions:
+  # OpenObserve ingest auth. In this stack OpenObserve v0.17 authenticates OTLP with
+  # the root user's basicauth. FOLLOW-UP (least-privilege): provision a scoped
+  # ingest-only user on the obs-droplet and swap these creds — do NOT ship root creds
+  # to the AgenticOS box long-term. Injected via .env.agenticos-otel (Infisical/1Password).
+  basicauth/openobserve:
+    client_auth:
+      username: ${env:OPENOBSERVE_ROOT_EMAIL}
+      password: ${env:OPENOBSERVE_ROOT_PASSWORD}
+
+receivers:
+  # Host CPU/RAM/disk/filesystem/network/swap. root_path=/hostfs reads the host's
+  # /proc + /sys, mounted read-only by the compose service.
+  hostmetrics:
+    collection_interval: 30s
+    root_path: /hostfs
+    scrapers:
+      cpu:
+      load:
+      memory:
+      disk:
+      filesystem:
+      network:
+      paging:   # swap in/out + swap utilization — the OOM safety net (P0.1) is only
+                # useful if we can see it working; paging.utilization surfaces swap pressure.
+
+  # Per-container CPU% + memory% (of limit) via the Docker socket. This is how we
+  # attribute an AgenticOS RAM spike to a specific agent-runner container (the OOM
+  # root cause in GOL-51/GOL-53) rather than just "the box is hot".
+  docker_stats:
+    endpoint: unix:///var/run/docker.sock
+    collection_interval: 30s
+    metrics:
+      container.cpu.utilization:
+        enabled: true
+      container.memory.percent:
+        enabled: true
+
+processors:
+  batch:
+    timeout: 10s
+  resourcedetection:
+    detectors: [env, system]
+    system:
+      hostname_sources: [os]
+  # Tag every metric so the obs-droplet can separate AgenticOS from the odoo-droplet
+  # in the SAME OpenObserve streams. The `agenticos-*` alerts filter on host_role.
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: ${env:COST_ENV}
+        action: upsert
+      - key: host.role
+        value: agenticos
+        action: upsert
+      - key: host.name
+        value: agenticos
+        action: upsert
+
+exporters:
+  otlphttp/openobserve:
+    # Point at the obs-droplet's OpenObserve OTLP ingest base, e.g.
+    #   https://obs.gatheringatthegrove.com/api/default
+    # (NOT the local odoocker openobserve:5080). Set in .env.agenticos-otel.
+    endpoint: ${env:OPENOBSERVE_OTLP_BASE}
+    auth:
+      authenticator: basicauth/openobserve
+    # Small retry/queue so a transient obs-droplet blip doesn't drop the window that
+    # matters most (the spike right before an OOM).
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+    sending_queue:
+      enabled: true
+      queue_size: 1000
+
+service:
+  extensions: [basicauth/openobserve]
+  pipelines:
+    metrics:
+      receivers: [hostmetrics, docker_stats]
+      processors: [resourcedetection, resource, batch]
+      exporters: [otlphttp/openobserve]
+  telemetry:
+    logs:
+      level: info
