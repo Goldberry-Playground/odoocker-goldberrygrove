@@ -3,23 +3,9 @@ output "droplet_ipv4" {
   value       = digitalocean_droplet.qa.ipv4_address
 }
 
-output "qa_zone" {
-  description = "The delegated QA DNS zone (qa.gatheringatthegrove.com by default)."
-  value       = digitalocean_domain.qa.name
-}
-
-output "qa_urls" {
-  description = "Public URLs operators / testers hit. Resolved by Cloudflare → DO delegation. TLS via Let's Encrypt (Caddy with DO DNS-01)."
-  value = merge(
-    {
-      hub = "https://${digitalocean_domain.qa.name}"
-    },
-    {
-      for sub in var.tenant_subdomains :
-      sub => "https://${sub}.${digitalocean_domain.qa.name}"
-    }
-  )
-}
+# (qa_zone + qa_urls outputs removed 2026-07-04 -- the qa zone moved to
+# ../qa-app-platform/, which now serves the public qa.* URLs. This env only
+# holds the fallback droplet until final teardown.)
 
 output "ssh_command" {
   description = "Quick-copy SSH command to connect to the QA droplet for troubleshooting."

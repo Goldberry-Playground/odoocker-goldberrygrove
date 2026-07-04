@@ -50,31 +50,16 @@ data "cloudflare_zone" "apex" {
   name = var.cloudflare_zone_name
 }
 
-# ── Cloudflare → DigitalOcean NS delegation for qa.<apex> ───────────────────
-# Three NS records under the apex zone in Cloudflare point at DO's nameservers,
-# delegating the qa subdomain's DNS management to DO. Same pattern as the
-# preview env's bootstrap (PR #19 in odoocker).
-
-resource "cloudflare_record" "qa_ns" {
-  for_each = toset([
-    "ns1.digitalocean.com",
-    "ns2.digitalocean.com",
-    "ns3.digitalocean.com",
-  ])
-
-  zone_id = data.cloudflare_zone.apex.id
-  name    = var.qa_subdomain
-  type    = "NS"
-  value   = each.value
-  ttl     = 1 # 1 = Cloudflare "Auto"
-}
-
-# ── DO domain (the delegated zone DO now manages) ───────────────────────────
-
-resource "digitalocean_domain" "qa" {
-  name = local.qa_zone
-  # No ip_address here — child records (below) handle individual hosts.
-}
+# ── DNS: RELEASED to the Level 3 env (accelerated Phase 4, 2026-07-04) ──────
+# This env previously owned the qa zone: the CF→DO NS delegation, the
+# digitalocean_domain, the apex A record, and the per-tenant CNAMEs. All of
+# it moved to ../qa-app-platform/ (which re-keys from qa-l3 to qa) so the
+# Level 3 frontends + Odoo serve at the plain qa.* hostnames.
+#
+# What remains in THIS env is only the compute the 48h fallback cushion
+# needs: droplet + volume + firewall + SSH keys. Final teardown = the
+# qa-teardown.yml workflow (workflow_dispatch, confirm-gated), after which
+# this whole env directory gets deleted.
 
 # ── SSH keys ────────────────────────────────────────────────────────────────
 #
@@ -231,33 +216,8 @@ resource "digitalocean_droplet" "qa" {
   }
 }
 
-# ── DNS records inside the delegated qa zone ────────────────────────────────
-
-# Apex A record — qa.gatheringatthegrove.com → droplet IP. The hub frontend
-# is served here (no subdomain prefix).
-resource "digitalocean_record" "qa_apex" {
-  domain = digitalocean_domain.qa.name
-  type   = "A"
-  name   = "@" # the apex of the delegated qa zone
-  value  = digitalocean_droplet.qa.ipv4_address
-  ttl    = 300
-}
-
-# Per-tenant CNAMEs — qa-goldberry.qa.gatheringatthegrove.com, etc.
-# Caddy on the droplet routes by Host header to the right frontend container.
-#
-# Naming choice: we use child labels (goldberry → goldberry.qa.gatheringatthegrove.com)
-# instead of a flat `qa-goldberry.gatheringatthegrove.com` prefix, because the
-# delegation gives DO control over the entire qa subdomain. Cleaner.
-resource "digitalocean_record" "tenant" {
-  for_each = toset(var.tenant_subdomains)
-
-  domain = digitalocean_domain.qa.name
-  type   = "CNAME"
-  name   = each.key
-  value  = "@" # FQDN within the qa zone — resolves to qa.gatheringatthegrove.com
-  ttl    = 300
-}
+# (DNS records removed 2026-07-04 -- the qa zone and all records in it are
+# now owned by ../qa-app-platform/. See the release note near the top.)
 
 # ── Firewall ────────────────────────────────────────────────────────────────
 

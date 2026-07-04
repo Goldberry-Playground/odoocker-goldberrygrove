@@ -42,7 +42,7 @@
 
 resource "digitalocean_app" "hub" {
   spec {
-    name   = "grove-hub-qa-l3"
+    name   = "grove-hub-qa"
     region = "nyc"
 
     service {
@@ -172,7 +172,7 @@ resource "digitalocean_app" "tenant" {
   for_each = local.tenant_apps
 
   spec {
-    name   = "grove-${each.key}-qa-l3"
+    name   = "grove-${each.key}-qa"
     region = "nyc"
 
     service {
