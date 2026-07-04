@@ -25,13 +25,15 @@ That's it. The click is the gate — nothing resizes prod without a human.
 
 ## Tier ladder
 
-| Tier | Size | ~$/mo | Use |
-|------|------|-------|-----|
-| `quiet` | `s-2vcpu-2gb` | 18 | Off-peak floor (only if live disk ≤ 60GB — confirm first) |
-| `base` | `s-2vcpu-4gb` | 24 | Default resting tier |
-| `busy` | `s-4vcpu-8gb` | 48 | Market days / launches / batch runs |
+| Tier | Size | disk | ~$/mo | Use |
+|------|------|------|-------|-----|
+| `quiet` | `s-2vcpu-2gb` | 60GB | 18 | ⛔ Unreachable from the current 80GB disk (can't shrink) — reference only |
+| `base` | `s-2vcpu-4gb` | 80GB | 24 | ✅ **Current live tier** — default resting state |
+| `busy` | `s-4vcpu-8gb` | 160GB | 48 | Market days / launches / batch runs |
 
-**Reversibility:** resizes never touch the disk. A target whose nominal disk is smaller than the *live* disk is refused (DO cannot shrink disk), so the day-to-day reversible band is `base` ↔ `busy`. The workflow enforces this at runtime.
+Verified against the live DO API **2026-07-04**: droplet `572389418` is `s-2vcpu-4gb` / 80GB / $24 in `nyc1` (= `base`); all three slugs exist and are available in nyc1 with exactly these specs.
+
+**Reversibility:** resizes never touch the disk. A target whose nominal disk is smaller than the *live* disk is refused (DO cannot shrink disk), so the day-to-day reversible band is `base` ↔ `busy` (both keep the 80GB disk). `quiet` (60GB) is therefore not reachable while the box runs an 80GB disk; the workflow refuses it with a clear disk-shrink message. The workflow enforces all of this at runtime.
 
 ## Safety model
 
@@ -43,10 +45,7 @@ That's it. The click is the gate — nothing resizes prod without a human.
 
 ## Prerequisites / status
 
-- **Requires** a DO API token with `droplet:read+write` scope in Infisical `grove-odoocker-qu8p` prod (provisioned by **P0 / GOL-53**). Until then the workflow is committed but cannot apply.
+- **DO API token — ✅ granted** (GOL-59, `droplet:read+write`; the same token is available to CI via Infisical OIDC as `DIGITALOCEAN_TOKEN`). The workflow can apply once merged to `main`.
+- **Live baseline — ✅ verified 2026-07-04** (see the tier-ladder note above). No ladder correction was needed. The workflow's runtime guards additionally re-fetch the live size/disk on every run, so the ladder can't drift into a misfire — a stale slug just fails safe (refuse).
 - The `agenticos-memory-*-capacity` alerts require the AgenticOS OTel hostmetrics stream from **P1 / GOL-54**; until that ships, the alerts are inert (no metric to evaluate) but harmless.
-- **First-run TODO (needs the P0 token):** confirm the live baseline and correct the ladder if it differs:
-  ```
-  doctl compute droplet get 572389418 --format Name,Memory,VCPUs,Disk,Size
-  ```
-  The workflow's runtime guards make a stale slug **fail safe** (refuse), never misfire.
+- **CI cannot dispatch a workflow that isn't on the default branch** — the `workflow_dispatch` one-click path goes live only after this PR merges to `main`.
