@@ -22,6 +22,9 @@ SECURITY MODEL
     * Money/finance/CRM models (account.*, payment.*, sale.order, res.partner)
       are read-only through this tool, even though they are readable for
       reconciliation.
+    * Field-level gate: even on writable models, governance-gated fields are
+      refused. Confirming a purchase order (writing `purchase.order.state`)
+      commits binding spend and is CFO-only — drafts only through this tool.
 - The Odoo user itself should also be least-privilege (Inventory + Purchase +
   Sales groups only, NOT admin). This tool is defense-in-depth on top of that,
   not a substitute for it. See scripts/provision_logistics_user.py.
@@ -72,6 +75,7 @@ READ_MODELS = {
     "product.pricelist",
     "product.pricelist.item",
     "product.supplierinfo",
+    "product.packaging",
     "uom.uom",
     "uom.category",
     # Inventory
@@ -82,6 +86,7 @@ READ_MODELS = {
     "stock.picking.type",
     "stock.location",
     "stock.warehouse",
+    "stock.warehouse.orderpoint",
     "stock.lot",
     "stock.scrap",
     # Purchasing
@@ -112,10 +117,12 @@ WRITE_MODELS = {
     "product.pricelist",
     "product.pricelist.item",
     "product.supplierinfo",
+    "product.packaging",
     "stock.quant",
     "stock.move",
     "stock.move.line",
     "stock.picking",
+    "stock.warehouse.orderpoint",
     "stock.lot",
     "stock.scrap",
     "purchase.order",
@@ -126,6 +133,20 @@ WRITE_MODELS = {
 
 # Methods that are never allowed, regardless of model.
 BLOCKED_METHODS = {"unlink"}
+
+# Field-level write guard — even on a *writable* model, some fields commit
+# spend or cross a governance boundary and must not be set through this tool.
+#
+# purchase.order: this skill may build & edit PO *drafts* freely, but
+# confirming a PO (state -> 'purchase'/'done') commits binding spend, which is
+# CFO-only (routes through Penny; landed-cost review). We refuse any write that
+# touches `state` on a purchase order so Otto can draft + hand off without ever
+# binding spend himself. The confirmation itself happens through a separate,
+# CFO-owned path — not by writing `state` here and not via button_confirm
+# (which this tool does not expose at all).
+WRITE_FIELD_BLOCKLIST = {
+    "purchase.order": {"state"},
+}
 
 
 class AccessError(Exception):
@@ -222,6 +243,21 @@ def _guard_write(model: str, method: str, confirm: bool) -> None:
         )
 
 
+def _guard_write_fields(model: str, values: dict) -> None:
+    """Reject writes that touch a governance-gated field on a writable model."""
+    blocked = WRITE_FIELD_BLOCKLIST.get(model)
+    if not blocked:
+        return
+    hit = blocked.intersection(values)
+    if hit:
+        raise AccessError(
+            f"field(s) {sorted(hit)} on '{model}' are governance-gated and cannot "
+            "be set through this tool. Confirming a purchase order commits binding "
+            "spend (CFO-only, routes through Penny) — draft the PO here and hand "
+            "off the confirmation."
+        )
+
+
 # --------------------------------------------------------------------------- #
 # Commands
 # --------------------------------------------------------------------------- #
@@ -303,6 +339,7 @@ def cmd_create(odoo: Odoo, args) -> None:
     values = _parse_json("--values", args.values, None)
     if not isinstance(values, dict):
         _die("--values must be a JSON object for create")
+    _guard_write_fields(args.model, values)
     _log(f"CREATE {args.model} <- {json.dumps(values)}")
     _emit(odoo.execute(args.model, "create", [values]))
 
@@ -315,6 +352,7 @@ def cmd_write(odoo: Odoo, args) -> None:
         _die("--values must be a JSON object for write")
     if not ids:
         _die("--ids is required for write")
+    _guard_write_fields(args.model, values)
     _log(f"WRITE {args.model} ids={ids} <- {json.dumps(values)}")
     _emit(odoo.execute(args.model, "write", [ids, values]))
 

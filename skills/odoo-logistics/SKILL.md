@@ -20,8 +20,11 @@ and without any secrets in your config.
 
 - Look up product / variant / category / UoM master data.
 - Check on-hand quantities, inventory moves, pickings, lots, warehouses.
+- Set reorder points / safety stock (`stock.warehouse.orderpoint`) and manage
+  packaging / box-fit (`product.packaging`).
 - Read or update vendor pricelists and supplier info.
-- Read / create / update purchase orders.
+- Read / create / update purchase-order **drafts** (confirming a PO is CFO-only
+  — the `state` field is refused here; draft and hand off).
 - Read sales orders + deliveries for fulfilment and for reconciling
   Stripe / Shippo against Odoo (sales & finance are **read-only** here).
 
@@ -85,9 +88,12 @@ scripts/odoo_client.py write product.template \
 
 Deletes (`unlink`) are blocked entirely. `account.*`, `payment.transaction`,
 `sale.order`, and `res.partner` are **read-only** — money, CRM, and revenue
-docs cannot be mutated through this skill. If you have a legitimate need for a
-model or a write that policy blocks, ask Engineering to widen the allow-list on
-[GOL-57](/GOL/issues/GOL-57) rather than working around it.
+docs cannot be mutated through this skill. Confirming a purchase order
+(`purchase.order.state` → `purchase`) is also refused: it commits binding spend
+and is CFO-only, so draft the PO here and hand off the confirmation. If you have
+a legitimate need for a model or a write that policy blocks, ask Engineering to
+widen the allow-list on [GOL-57](/GOL/issues/GOL-57) rather than working around
+it.
 
 See `references/models.md` for the full scoped model list and the Odoo security
 groups they map to, and `references/reconciliation.md` for the Stripe/Shippo

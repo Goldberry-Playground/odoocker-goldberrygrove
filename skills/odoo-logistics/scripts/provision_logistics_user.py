@@ -12,6 +12,7 @@ What it does (idempotent):
         - Purchase / User         (purchase.group_purchase_user)
         - Sales / User: own docs  (sales_team.group_sale_salesman)
         - Multi-UoM               (uom.group_uom)
+        - Product packaging       (product.group_stock_packaging)
      Explicitly does NOT grant Settings/admin, Accounting, or user-management.
   3. Prints the user id.
 
@@ -46,6 +47,10 @@ GROUP_XMLIDS = [
     "purchase.group_purchase_user",
     "sales_team.group_sale_salesman",
     "uom.group_uom",
+    # Product packaging feature — needed to read/write product.packaging
+    # (box-fit / carton strategy per product class). Skipped gracefully if the
+    # feature flag isn't installed (WARN, not fatal).
+    "product.group_stock_packaging",
 ]
 
 
