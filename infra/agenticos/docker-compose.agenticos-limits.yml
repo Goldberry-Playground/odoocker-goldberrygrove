@@ -1,0 +1,46 @@
+# GOL-53 P0.2 — Docker memory guardrails for the AgenticOS agent-runner containers.
+#
+# Why: one runaway agent / LLM run currently has no ceiling and can consume all host
+# RAM (the OOM root cause). mem_limit is a hard cap (container OOM-killed instead of
+# the host); mem_reservation is a soft floor the scheduler tries to honour.
+#
+# This is a compose OVERLAY: it patches memory limits onto existing services without
+# redefining them. Apply alongside the box's real compose file(s):
+#
+#   docker compose \
+#     -f docker-compose.yml \
+#     -f infra/agenticos/docker-compose.agenticos-limits.yml \
+#     up -d
+#
+# ⚠️ SERVICE NAMES BELOW ARE PLACEHOLDERS. Before applying, confirm the real
+#    agent-runner service names on the host:
+#      docker ps --format '{{.Names}}\t{{.Image}}'
+#      docker compose config --services
+#    Then rename the keys below to match. Compose ignores overlay keys that don't
+#    match a base service, so a wrong name silently no-ops — verify with the check
+#    command in the runbook after applying.
+#
+# Sizing rationale (2 vCPU / ~2GB tier, pre-resize): leave headroom for the host +
+# Postgres + control plane. Total container caps should sum to < (RAM + swap) with
+# margin. Retune once P0.3 resize + P1 telemetry land and we see real per-container
+# working sets.
+
+services:
+  # --- Primary agent runner (rename to the real service) ---
+  agent-runner:
+    mem_limit: 1500m        # hard cap: container is OOM-killed before it takes the host
+    mem_reservation: 512m   # soft floor: scheduler keeps this much available
+    restart: unless-stopped
+
+  # --- Paperclip control plane / API (rename to the real service) ---
+  # Give the singleton control plane more headroom than a single agent run; it must
+  # survive even when an agent container is being reaped.
+  # control-plane:
+  #   mem_limit: 1024m
+  #   mem_reservation: 384m
+  #   restart: unless-stopped
+
+# NOTE on Compose v2 + cgroup v2: mem_limit maps to --memory. If the box also needs a
+# swap ceiling per-container, add `memswap_limit` (== mem_limit disables container swap;
+# > mem_limit allows that much swap). Left unset here so containers can use host swap as
+# the intended safety net. Do NOT set mem_swappiness=0 on the runner — that defeats P0.1.
