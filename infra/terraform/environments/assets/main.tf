@@ -135,33 +135,67 @@ resource "aws_s3_bucket_cors_configuration" "assets" {
 # long the edge holds each object; upload-assets.sh can override per-object
 # via Cache-Control headers when an image needs to invalidate faster.
 #
-# 2026-07-01: NO custom_domain set. Adding one requires a certificate,
-# which DO auto-provisions via LE -- but LE needs the DNS record to
-# resolve at the custom_domain FIRST, which creates a chicken-and-egg
-# during initial apply (`certificate ID missing` error).
-#
-# Instead: Cloudflare's proxied CNAME (below) terminates TLS at Cloudflare's
-# edge (its universal cert covers assets.gatheringatthegrove.com), then
-# proxies to the DO CDN's raw endpoint. DO CDN sees requests hitting its
-# raw .cdn.digitaloceanspaces.com hostname (which has its own valid
-# DO-provisioned cert). No custom cert coordination needed.
+# NO custom_domain -- the vanity host is handled entirely on the Cloudflare
+# side by a Worker (below). See that block for the full why.
 
 resource "digitalocean_cdn" "assets" {
   origin = digitalocean_spaces_bucket.assets.bucket_domain_name
   ttl    = var.cdn_ttl_seconds
 }
 
-# ---- Cloudflare CNAME → CDN endpoint ---------------------------------------
-# Point assets.<zone> at the CDN's raw endpoint. Cloudflare handles the
-# outermost TLS (universal cert) + WAF; DO CDN handles the edge cache +
-# origin fetch from the bucket. Proxy is essential -- without it, browsers
-# would see the DO CDN hostname's cert (mismatch with assets.<zone>).
+# ---- Vanity host: Cloudflare Worker proxy -----------------------------------
+# The arc that led here (2026-07-01 -> 07-04, full detail in git log):
+#
+#   1. CF PROXIED CNAME -> DO CDN: 403. CF preserves the original Host
+#      header on the origin fetch; the DO CDN doesn't recognize the vanity
+#      hostname without custom_domain.
+#   2. NS-delegate assets.<apex> to DO + custom_domain + DO LE cert: dead
+#      end. The vanity host is the delegated zone's APEX; DO DNS rejects
+#      apex CNAMEs ("CNAME records cannot share a name with other
+#      records"), DO doesn't auto-create resolution records for API-added
+#      custom domains, and pointing apex A records straight at the CDN's
+#      edge IPs trips Cloudflare error 1000 "DNS points to prohibited IP"
+#      (DO CDN is CF-for-SaaS underneath; direct-IP pointing is forbidden).
+#   3. THIS: a ~10-line CF Worker on the proxied vanity route that rewrites
+#      the hostname to the raw CDN endpoint on the origin fetch. CF's
+#      universal cert covers TLS at the edge, the DO CDN receives its own
+#      hostname (which it always recognizes), and there is no DO cert to
+#      renew -- no time bombs, free plan, one small component.
+#
+# The DNS record under the Worker route is a proxied CNAME to the CDN
+# endpoint. Any proxied record would do (the Worker intercepts before
+# origin routing), but CNAMEing to the real origin keeps the record
+# self-documenting.
+
+resource "cloudflare_worker_script" "assets_proxy" {
+  account_id = data.cloudflare_zone.apex.account_id
+  name       = "grove-assets-proxy"
+  module     = true
+
+  # No JS template literals here -- backtick-$ would collide with TF
+  # interpolation. Plain URL mutation only.
+  content = <<-EOT
+    export default {
+      async fetch(request) {
+        const url = new URL(request.url);
+        url.hostname = "${digitalocean_cdn.assets.endpoint}";
+        return fetch(new Request(url, request));
+      }
+    };
+  EOT
+}
+
+resource "cloudflare_worker_route" "assets" {
+  zone_id     = data.cloudflare_zone.apex.id
+  pattern     = "${local.assets_fqdn}/*"
+  script_name = cloudflare_worker_script.assets_proxy.name
+}
 
 resource "cloudflare_record" "assets" {
   zone_id = data.cloudflare_zone.apex.id
   name    = var.assets_subdomain
   type    = "CNAME"
   value   = digitalocean_cdn.assets.endpoint
-  ttl     = 1    # 1 = "Auto" in Cloudflare, follows their edge TTL
-  proxied = true # keeps traffic behind Cloudflare's WAF + terminates TLS
+  ttl     = 1    # 1 = "Auto" in Cloudflare
+  proxied = true # required -- Worker routes only fire on proxied traffic
 }
