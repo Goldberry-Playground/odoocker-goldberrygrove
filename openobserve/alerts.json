@@ -331,6 +331,44 @@
       "destination": "keep-webhook",
       "runbook_key": "app-restarts",
       "_message_template": "USE — App Platform [{app}/{component}] restarted in the last 10m — possible crash loop or OOM. Check the app's deploy/runtime logs. Runbook: docs/RUNBOOKS.md#app-restarts"
+    },
+    {
+      "name": "rum-lcp-warning",
+      "stream": "rum",
+      "trigger_condition": "p75(web_vitals.value where metric='LCP') > 2500 over 30m (per tenant)",
+      "severity": "warning",
+      "destination": "keep-webhook",
+      "runbook_key": "rum-web-vitals",
+      "_message_template": "RUM — real-user LCP p75 >2.5s over 30m. Largest Contentful Paint is slow; check hero/image payloads + Odoo BFF latency. Runbook: docs/RUNBOOKS.md#rum-web-vitals",
+      "_note": "Real User Monitoring from @grove/analytics (grove-sites). web_vitals events are emitted to OpenObserve RUM via addAction with {metric, value, rating}. CLS value is scaled ×1000. Stream/field names pending live validation on first real RUM traffic."
+    },
+    {
+      "name": "rum-inp-warning",
+      "stream": "rum",
+      "trigger_condition": "p75(web_vitals.value where metric='INP') > 200 over 30m (per tenant)",
+      "severity": "warning",
+      "destination": "keep-webhook",
+      "runbook_key": "rum-web-vitals",
+      "_message_template": "RUM — real-user INP p75 >200ms over 30m. Interaction latency is poor; check hydration cost + heavy client-side handlers. Runbook: docs/RUNBOOKS.md#rum-web-vitals"
+    },
+    {
+      "name": "rum-cls-warning",
+      "stream": "rum",
+      "trigger_condition": "p75(web_vitals.value where metric='CLS') > 100 over 30m (per tenant) — value is scaled ×1000, so 100 == CLS 0.1",
+      "severity": "warning",
+      "destination": "keep-webhook",
+      "runbook_key": "rum-web-vitals",
+      "_message_template": "RUM — real-user CLS p75 >0.1 over 30m. Layout shift is high; check images/embeds/fonts without reserved space. Runbook: docs/RUNBOOKS.md#rum-web-vitals"
+    },
+    {
+      "name": "rum-purchase-drop-warning",
+      "stream": "rum",
+      "trigger_condition": "count(begin_checkout) >= 5 AND count(purchase) == 0 over 1h (any tenant)",
+      "severity": "warning",
+      "destination": "keep-webhook",
+      "runbook_key": "checkout-broken",
+      "_message_template": "RUM — real users reaching checkout but 0 completed purchases in 1h (≥5 begin_checkout, 0 purchase). The money path may be broken for real traffic — cross-check synthetic-checkout-critical. Runbook: docs/RUNBOOKS.md#checkout-broken",
+      "_note": "Funnel drop from real-user events (begin_checkout → purchase, order_id_hash only — no PII). The real-traffic complement to the synthetic checkout-canary. The ≥5 floor avoids low-traffic false positives; tune once baseline volume is known."
     }
   ]
 }
