@@ -59,7 +59,7 @@ services:
       # Behavior
       ZO_TELEMETRY: "false"  # don't phone home
       ZO_PROMETHEUS_ENABLED: "true"
-      ZO_LOCAL_MODE: "true"  # single-node; flip to false + add etcd for HA in prod
+      ZO_LOCAL_MODE: ${OPENOBSERVE_LOCAL_MODE:-true}  # single-node; prod can set false + add etcd for HA
     ports:
       - "${OPENOBSERVE_PORT:-5080}:5080"
     networks:
@@ -78,14 +78,14 @@ services:
   # docs/RUNBOOKS.md. Future GATH-23 additions (Prometheus alerts, Loki
   # alerts) plug in here without rewiring downstream Discord channels.
   keep-backend:
-    image: us-central1-docker.pkg.dev/keephq/keep/keep-api:${KEEP_TAG:-latest}
+    image: us-central1-docker.pkg.dev/keephq/keep/keep-api:${KEEP_TAG:-v0.54.1}
     restart: unless-stopped
     environment:
       # Storage — SQLite for the MVP (single-user, small footprint).
       # Swap to Postgres when multi-user / multi-tenant is needed.
       DATABASE_CONNECTION_STRING: sqlite:////app/data/keep.db
       # API/Frontend wiring
-      AUTH_TYPE: NO_AUTH  # MVP: local-only, no UI auth. Tighten for any non-local deploy.
+      AUTH_TYPE: ${KEEP_AUTH_TYPE:-NO_AUTH}  # local dev = NO_AUTH; prod MUST set KEEP_AUTH_TYPE (e.g. DB)
       KEEP_API_URL: http://keep-backend:8080
       PORT: 8080
       # Webhook the OpenObserve→Keep bridge POSTs alerts to.
@@ -106,7 +106,7 @@ services:
       start_period: 60s
 
   keep-frontend:
-    image: us-central1-docker.pkg.dev/keephq/keep/keep-ui:${KEEP_TAG:-latest}
+    image: us-central1-docker.pkg.dev/keephq/keep/keep-ui:${KEEP_TAG:-v0.54.1}
     restart: unless-stopped
     depends_on:
       - keep-backend
@@ -115,7 +115,7 @@ services:
       NEXTAUTH_SECRET: ${KEEP_NEXTAUTH_SECRET}
       NEXTAUTH_URL: http://localhost:${KEEP_PORT:-3034}
       NEXT_PUBLIC_API_URL: http://localhost:${KEEP_BACKEND_PORT:-8080}
-      AUTH_TYPE: NO_AUTH
+      AUTH_TYPE: ${KEEP_AUTH_TYPE:-NO_AUTH}
     ports:
       - "${KEEP_PORT:-3034}:3000"
     networks:
