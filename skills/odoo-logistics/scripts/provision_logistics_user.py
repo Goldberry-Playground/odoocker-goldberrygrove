@@ -17,12 +17,14 @@ What it does (idempotent):
   3. Prints the user id.
 
 What it deliberately does NOT do:
-  - It does NOT create the API key. Odoo API keys are self-service (the target
-    user generates them under Settings ▸ Account Security ▸ New API Key, which
-    requires that user's own re-authentication). Generate the key as the
-    logistics-otto user, then store it in the secrets manager and inject it as
-    ODOO_API_KEY into Otto's runtime env. NEVER paste it into agent config,
-    AGENTS.md, or an issue thread.
+  - It does NOT create the API key. Keys are minted by the private method
+    res.users.apikeys._generate, which Odoo's RPC layer refuses to dispatch
+    (underscore-prefixed), so it CANNOT be done over XML-RPC from here. Mint
+    the key headlessly in an Odoo shell with the companion script:
+        odoo shell -d "$ODOO_DB" --no-http < mint_logistics_key.py
+    then store it in the secrets manager and inject it as ODOO_API_KEY into
+    Otto's runtime env. NEVER paste it into agent config, AGENTS.md, or an
+    issue thread.
 
 Admin env contract (for THIS script only — not for Otto):
     ODOO_URL, ODOO_DB (or ODOO_DB_NAME), ODOO_ADMIN_LOGIN, ODOO_ADMIN_API_KEY
@@ -137,9 +139,10 @@ def main() -> int:
 
     print(user_id)
     _log(
-        "NEXT: log in as this user, generate an API key "
-        "(Settings ▸ Account Security ▸ New API Key), store it in the secrets "
-        "manager, and inject ODOO_LOGIN + ODOO_API_KEY into Otto's runtime env."
+        "NEXT: mint this user's API key headlessly — "
+        "`odoo shell -d $ODOO_DB --no-http < mint_logistics_key.py` — then "
+        "store it in the secrets manager and inject ODOO_LOGIN + ODOO_API_KEY "
+        "into Otto's runtime env."
     )
     return 0
 

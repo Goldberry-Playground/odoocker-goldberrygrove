@@ -125,3 +125,24 @@ in AGENTS.md, adapterConfig, or an issue thread:
 
 If `check` reports missing env, the credentials have not been injected yet —
 that is an operator/governance step, not something to hard-code.
+
+## Provisioning the credential (operator, one-time)
+
+Done once by DevOps against the running Odoo; the agent never does this.
+
+1. **Create the least-privilege user** (over XML-RPC, needs admin creds):
+   ```
+   ODOO_URL=… ODOO_DB=… ODOO_ADMIN_LOGIN=… ODOO_ADMIN_API_KEY=… \
+     scripts/provision_logistics_user.py --dry-run   # confirm scope, then drop --dry-run
+   ```
+2. **Mint the user's API key** — headless, in an Odoo shell (NOT XML-RPC: the
+   `_generate` method is underscore-prefixed and the RPC layer refuses it):
+   ```
+   docker compose exec -T odoo \
+     odoo shell -d "$ODOO_DB" --no-http < scripts/mint_logistics_key.py
+   ```
+   The key prints once between `----BEGIN/END LOGISTICS_OTTO_API_KEY----`.
+   Both scripts are idempotent — safe to re-run for rotation/recovery.
+3. **Store + inject:** put the key in the secrets manager and inject
+   `ODOO_URL` / `ODOO_DB` / `ODOO_LOGIN=logistics-otto` / `ODOO_API_KEY` into
+   the agent's runtime env. Then clear scrollback.
