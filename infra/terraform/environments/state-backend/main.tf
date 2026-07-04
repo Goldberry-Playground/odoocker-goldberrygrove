@@ -50,6 +50,30 @@ resource "digitalocean_spaces_bucket" "tf_state" {
   region = var.region
   acl    = "private"
 
+  # State is sacred. Versioning gives point-in-time recovery: a corrupted or
+  # racing apply that clobbers a state object leaves the prior version
+  # recoverable (DO Spaces retains non-current versions). This is a
+  # non-destructive, in-place change — enabling it never rewrites existing
+  # objects, it only starts versioning writes from here forward.
+  versioning {
+    enabled = true
+  }
+
+  # Keep versioning from growing without bound. Non-current state versions are
+  # only needed as a short recovery window, and half-finished multipart uploads
+  # (e.g. an interrupted `terraform apply`) are pure waste. State objects are
+  # tiny (~KBs) so 90 days of history is cheap insurance, not bloat.
+  lifecycle_rule {
+    id      = "expire-noncurrent-state-versions"
+    enabled = true
+
+    noncurrent_version_expiration {
+      days = 90
+    }
+
+    abort_incomplete_multipart_upload_days = 7
+  }
+
   # Destroying this bucket destroys the state files of every other TF env
   # in this repo. Don't make it easy.
   lifecycle {
