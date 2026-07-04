@@ -121,6 +121,21 @@ write_files:
     encoding: b64
     content: ${compose_yml_b64}
 
+  # Ghost autoseed pair (Asana task 97d): bootstraps the 3 per-tenant Ghost
+  # instances after compose up, writes their Content API keys into
+  # /etc/grove/.env, and recreates the storefronts. The .js runs INSIDE each
+  # ghost container (node 18+ with fetch); the .sh orchestrates from the
+  # host. Keys never leave the droplet -- they are only valid for the Ghosts
+  # on this droplet and both die together on recreate.
+  - path: /opt/grove/ghost-bootstrap.js
+    encoding: b64
+    content: ${ghost_bootstrap_js_b64}
+
+  - path: /opt/grove/qa-ghost-autoseed.sh
+    encoding: b64
+    permissions: "0755"
+    content: ${ghost_autoseed_sh_b64}
+
 runcmd:
   # Install Docker per docs.docker.com (Ubuntu noble = 24.04)
   - install -m 0755 -d /etc/apt/keyrings
@@ -141,6 +156,13 @@ runcmd:
 
   # Bring the stack up. Logs to /var/log/grove-qa-up.log for triage.
   - cd /etc/grove && docker compose --env-file /etc/grove/.env up -d > /var/log/grove-qa-up.log 2>&1
+
+  # Autoseed the 3 Ghost instances + wire Content API keys into .env +
+  # recreate storefronts (Asana 97d). NON-FATAL by design: deploys must
+  # never block on Ghost -- the sentinel below gates on hub serving, which
+  # doesn't need Ghost. On failure, /blog pages render empty state and the
+  # operator can re-run /opt/grove/qa-ghost-autoseed.sh over SSH.
+  - bash /opt/grove/qa-ghost-autoseed.sh > /var/log/grove-ghost-seed.log 2>&1 || echo "ghost autoseed failed (non-fatal, see /var/log/grove-ghost-seed.log)" >> /var/log/grove-qa-up.log
 
   # Health sentinel -- qa-deploy.yml polls for this file before posting URLs.
   # Up to 10 minutes for the full stack + cert provisioning.

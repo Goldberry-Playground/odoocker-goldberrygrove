@@ -26,44 +26,44 @@ intentional for QA; when we need durability, follow the pattern in
 and mount them onto the persistent block volume that already hosts
 `caddy-data`.
 
-## Bootstrap (one-time, per fresh QA droplet)
+## Bootstrap — automatic since task 97d (2026-07-02)
 
-Fresh Ghost containers boot with no admin user and no API keys. Storefronts
-need Content API keys to fetch posts, so after a droplet recreate you'll see
-`GHOST_CONTENT_KEY=qa-stub-no-ghost-key-yet` — that's the stub sentinel.
-Seed real keys with:
+Fresh Ghost containers boot with no admin user and no API keys. Cloud-init
+now handles the whole seed automatically after `docker compose up`:
 
-```bash
-# 1. SSH to the QA droplet (see qa-deploy Discord post for the IP).
-ssh -i ~/.ssh/grove-qa-admin root@<droplet_ip>
+1. `/opt/grove/qa-ghost-autoseed.sh` (written by cloud-init from
+   `scripts/qa-ghost-autoseed.sh`) waits up to 120s per Ghost container
+2. Runs `/opt/grove/ghost-bootstrap.js` INSIDE each ghost container via
+   `docker compose exec -T ... node` — the ghost:5 image ships node 18+,
+   so there's no dependency on any other repo or image
+3. Writes `GHOST_KEY_{GOLDBERRY,GGG,NURSERY}` into `/etc/grove/.env`
+4. Recreates the 4 storefronts so they pick the keys up
 
-# 2. Run the seed wrapper. Any password works -- QA is ephemeral.
-GHOST_ADMIN_PASSWORD='QaEphemeralPw!2026' \
-  bash /workspace/current/setup-all-ghosts.sh
-```
+**Keys never leave the droplet.** They're only valid for the Ghosts on
+that droplet, and both die together on recreate — so nothing gets pushed
+to Infisical. The per-droplet Ghost admin password is generated once and
+stored at `/etc/grove/.ghost-admin-pass` (0600); read it over SSH if you
+need to log into a Ghost admin UI.
 
-The wrapper:
+The seed is **non-fatal by design**: if it fails, the deploy still
+completes (the sentinel gates on hub serving, which doesn't need Ghost),
+`/blog` pages render empty state, and the log is at
+`/var/log/grove-ghost-seed.log`.
 
-1. Waits up to 90s for each Ghost container to respond
-2. Calls `setup_ghost_integration.py` (from the grove-odoo-modules git-sync
-   mount) once per tenant to create the admin user + a Content Integration
-3. Prints an `infisical secrets set ...` block for you to paste on your
-   operator laptop (where `op` auth is alive)
+## Manual re-run / fallback
 
-## Push the keys to Infisical + reload storefronts
+Safe to re-run any time — Ghost setup is skipped when already done, and
+the integration lookup is name-based so re-runs upsert the SAME keys:
 
-Copy the `infisical secrets set` block from the wrapper's output and run it
-on your laptop. Then either:
-
-**Fast path** (no rebuild, ~10 sec):
 ```bash
 ssh -i ~/.ssh/grove-qa-admin root@<droplet_ip> \
-  'docker restart hub goldberry ggg nursery'
+  'bash /opt/grove/qa-ghost-autoseed.sh'
 ```
-Storefronts re-read the sentinel values on restart. Wait ~30s for Next.js
-warmup.
 
-**Full path** (rebuilds droplet, ~15 min): `gh workflow run "QA Deploy"`.
+(The older `scripts/setup-all-ghosts.sh` + push-to-Infisical flow is
+retired for QA — it also assumed a `/workspace/current` git-sync mount
+that the QA droplet never had. Kept in-tree only as a reference for
+local-compose seeding.)
 
 ## Verify
 
@@ -86,26 +86,11 @@ ssh -i ~/.ssh/grove-qa-admin -L 2368:ghost-goldberry:2368 root@<droplet_ip>
 
 ## Idempotency
 
-- The seed wrapper is safe to re-run. `setup_ghost_integration.py` detects
-  a completed setup and skips it; the integration lookup is name-based, so
-  the same wrapper on a re-run reuses the existing integration and prints
-  the SAME keys — no drift.
-- `infisical secrets set` upserts by name, so the seed block is safe to
-  re-run too.
-
-## Why manual (for now)
-
-Automating the seed inside cloud-init is tracked as [Asana
-#117](https://app.asana.com/) — it needs to (a) wait for Ghost health, (b)
-call setup_ghost_integration.py, (c) push keys to Infisical via CLI from
-the droplet, (d) restart storefronts. All doable, but adds ~150 lines of
-cloud-init and 3-4 new failure modes. For QA — where a fresh seed is a
-5-min operator step and droplet recreates aren't hourly — the manual flow
-is honest.
-
-When we cutover to Level 3 (App Platform + Managed PG per ADR-007), Ghost
-will move to a managed service anyway. #117 stays deferred until then
-unless QA recreates get frequent.
+The autoseed is safe to re-run: Ghost setup is skipped when already done,
+the integration lookup is name-based (re-runs return the SAME keys), and
+the `.env` write is an upsert. Storefront recreation via `docker compose
+up -d` only touches services whose config changed — the rest of the stack
+is untouched.
 
 ## Hub's editorial feed
 

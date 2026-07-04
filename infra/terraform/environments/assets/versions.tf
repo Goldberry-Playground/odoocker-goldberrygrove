@@ -14,6 +14,10 @@ terraform {
       source  = "cloudflare/cloudflare"
       version = "~> 4.40"
     }
+    dns = {
+      source  = "hashicorp/dns"
+      version = "~> 3.4"
+    }
   }
 
   # Remote state in grove-tf-state, namespaced under `assets/`. Shared infra

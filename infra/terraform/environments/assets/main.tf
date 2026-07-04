@@ -130,38 +130,110 @@ resource "aws_s3_bucket_cors_configuration" "assets" {
   }
 }
 
+# ---- DNS: delegate assets.<apex> to DO --------------------------------------
+# History of this hop (see git log for the full arc):
+#   2026-07-01: CDN custom_domain failed on first apply (LE cert needs DNS
+#               first -- chicken-and-egg on an empty state). Fell back to a
+#               Cloudflare PROXIED CNAME at the vanity host.
+#   2026-07-02: The proxied CNAME turned out to 403 -- Cloudflare preserves
+#               the original Host header on the origin fetch and the DO CDN
+#               (no custom_domain) doesn't recognize the vanity hostname.
+#               CF host-header override is Enterprise-only, and DO's LE
+#               issuance only works for domains in DO-managed DNS.
+#   Fix: NS-delegate the assets subdomain to DO (same pattern as the qa-l3
+#   zone in ../qa-app-platform/main.tf), let DO own cert + routing.
+#
+# Nothing user-facing breaks during the cutover window: images currently use
+# the raw CDN hostname (grove-sites bakes NEXT_PUBLIC_ASSETS_URL to it), so
+# the vanity host has no traffic until this lands + grove-sites flips.
+
+resource "digitalocean_domain" "assets_zone" {
+  name = local.assets_fqdn
+}
+
+# NS records under the apex Cloudflare zone hand DNS for the assets
+# subdomain over to DO's nameservers. Replaces the proxied CNAME that
+# previously lived at this name -- CNAMEs can't coexist with NS records,
+# so if a single apply races the delete/create, re-run the apply once.
+resource "cloudflare_record" "assets_ns" {
+  for_each = toset([
+    "ns1.digitalocean.com",
+    "ns2.digitalocean.com",
+    "ns3.digitalocean.com",
+  ])
+
+  zone_id = data.cloudflare_zone.apex.id
+  name    = var.assets_subdomain
+  type    = "NS"
+  value   = each.value
+  ttl     = 1 # 1 = Cloudflare "Auto"
+}
+
+# LE cert for the vanity host, issued by DO. Works ONLY because the domain
+# above is DO-managed -- DO writes its own validation records. depends_on
+# the NS delegation so LE's resolver can chase apex -> DO nameservers on
+# first issuance. If the very first apply fails with a validation timeout,
+# the delegation hadn't propagated yet: re-run the apply.
+resource "digitalocean_certificate" "assets" {
+  name    = "grove-assets-vanity"
+  type    = "lets_encrypt"
+  domains = [local.assets_fqdn]
+
+  depends_on = [
+    digitalocean_domain.assets_zone,
+    cloudflare_record.assets_ns,
+  ]
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
 # ---- DO CDN endpoint -------------------------------------------------------
 # Fronts the bucket at the DO-provisioned CDN endpoint. TTL controls how
 # long the edge holds each object; upload-assets.sh can override per-object
 # via Cache-Control headers when an image needs to invalidate faster.
 #
-# 2026-07-01: NO custom_domain set. Adding one requires a certificate,
-# which DO auto-provisions via LE -- but LE needs the DNS record to
-# resolve at the custom_domain FIRST, which creates a chicken-and-egg
-# during initial apply (`certificate ID missing` error).
-#
-# Instead: Cloudflare's proxied CNAME (below) terminates TLS at Cloudflare's
-# edge (its universal cert covers assets.gatheringatthegrove.com), then
-# proxies to the DO CDN's raw endpoint. DO CDN sees requests hitting its
-# raw .cdn.digitaloceanspaces.com hostname (which has its own valid
-# DO-provisioned cert). No custom cert coordination needed.
+# custom_domain makes the CDN answer to the vanity host directly (TLS via
+# the DO-issued LE cert above). DO manages the resolution records inside
+# the delegated assets zone itself.
 
 resource "digitalocean_cdn" "assets" {
-  origin = digitalocean_spaces_bucket.assets.bucket_domain_name
-  ttl    = var.cdn_ttl_seconds
+  origin           = digitalocean_spaces_bucket.assets.bucket_domain_name
+  ttl              = var.cdn_ttl_seconds
+  custom_domain    = local.assets_fqdn
+  certificate_name = digitalocean_certificate.assets.name
 }
 
-# ---- Cloudflare CNAME → CDN endpoint ---------------------------------------
-# Point assets.<zone> at the CDN's raw endpoint. Cloudflare handles the
-# outermost TLS (universal cert) + WAF; DO CDN handles the edge cache +
-# origin fetch from the bucket. Proxy is essential -- without it, browsers
-# would see the DO CDN hostname's cert (mismatch with assets.<zone>).
+# ---- Apex resolution inside the delegated zone -------------------------------
+# DO does NOT auto-create the resolution record for CDN custom domains added
+# via the API (the control-panel flow does, but only when the PARENT zone is
+# in DO). And our vanity host is the APEX of the delegated zone, where CNAME
+# is forbidden ("CNAME records cannot share a name with other records" --
+# verified against the DO API 2026-07-02).
+#
+# So: A records at the apex, pointing at the CDN endpoint's edge IPs. The
+# hashicorp/dns data source resolves the endpoint at plan time, so the
+# records track edge-IP changes on every apply instead of hardcoding.
+#
+# Brittleness, acknowledged: if DO/Cloudflare re-homes the CDN endpoint's
+# anycast IPs BETWEEN applies, the vanity host breaks until the next apply.
+# Acceptable for marketing assets because (a) anycast assignments are
+# long-lived in practice, (b) grove-sites can flip NEXT_PUBLIC_ASSETS_URL
+# back to the raw CDN hostname (always valid) as an instant mitigation,
+# and (c) terraform-drift.yml re-plans on schedule and will surface the IP
+# drift as a pending change.
 
-resource "cloudflare_record" "assets" {
-  zone_id = data.cloudflare_zone.apex.id
-  name    = var.assets_subdomain
-  type    = "CNAME"
-  value   = digitalocean_cdn.assets.endpoint
-  ttl     = 1    # 1 = "Auto" in Cloudflare, follows their edge TTL
-  proxied = true # keeps traffic behind Cloudflare's WAF + terminates TLS
+data "dns_a_record_set" "cdn_edge" {
+  host = digitalocean_cdn.assets.endpoint
+}
+
+resource "digitalocean_record" "assets_apex" {
+  for_each = toset(data.dns_a_record_set.cdn_edge.addrs)
+
+  domain = digitalocean_domain.assets_zone.name
+  type   = "A"
+  name   = "@"
+  value  = each.value
+  ttl    = 300
 }

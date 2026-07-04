@@ -213,6 +213,10 @@ resource "digitalocean_droplet" "qa" {
     # or complex formatting.
     compose_yml_b64   = base64encode(file("${path.module}/compose/docker-compose.qa.yml"))
     caddyfile_tpl_b64 = base64encode(replace(file("${path.module}/compose/Caddyfile.tpl"), "$${QA_ZONE}", local.qa_zone))
+    # Ghost autoseed pair (task 97d) -- shipped from the repo's scripts/ dir
+    # so there's one source of truth; cloud-init writes them to /opt/grove/.
+    ghost_bootstrap_js_b64 = filebase64("${path.module}/../../../../scripts/ghost-bootstrap.js")
+    ghost_autoseed_sh_b64  = filebase64("${path.module}/../../../../scripts/qa-ghost-autoseed.sh")
   })
 
   monitoring = false
