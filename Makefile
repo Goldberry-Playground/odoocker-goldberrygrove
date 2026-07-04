@@ -237,6 +237,10 @@ qa-plan:
 ## qa-apply                      — terraform apply for the qa env
 .PHONY: qa-apply
 qa-apply:
+	@# qa_portal_pg_password is deployer-generated (droplet firewall blocks
+	@# runner SSH read-back -- see qa/variables.tf). Auto-generate when the
+	@# caller hasn't exported one.
+	TF_VAR_qa_portal_pg_password=$${TF_VAR_qa_portal_pg_password:-$$(openssl rand -hex 24)} \
 	op run --env-file=$(QA_DIR)/.env.op -- \
 		terraform -chdir=$(QA_DIR) apply
 

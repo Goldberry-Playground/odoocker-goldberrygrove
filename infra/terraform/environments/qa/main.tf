@@ -195,6 +195,9 @@ resource "digitalocean_droplet" "qa" {
     frontend_image_tags = var.frontend_image_tags
     caddy_image_tag     = var.caddy_image_tag
     ghost_key_goldberry = var.ghost_key_goldberry
+    # Deployer-generated (see variables.tf) -- flows into /etc/grove/.env so
+    # the workflow can construct QA_PORTAL_DATABASE_URL without SSH.
+    qa_portal_pg_password = var.qa_portal_pg_password
     # DO API token for Caddy's DNS-01 ACME challenge. Same token TF uses
     # (domain:write is the scope needed to manage _acme-challenge TXT
     # records under the delegated qa zone). Flows to /etc/grove/.env and

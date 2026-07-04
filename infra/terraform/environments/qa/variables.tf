@@ -120,3 +120,14 @@ variable "ghost_key_goldberry" {
   sensitive   = true
   default     = ""
 }
+
+variable "qa_portal_pg_password" {
+  description = "Password for the co-located qa_portal_pg Postgres, generated FRESH BY THE DEPLOYER for every droplet recreate (qa-deploy.yml exports TF_VAR_qa_portal_pg_password from openssl; make qa-apply auto-generates when unset). Deliberately NOT generated on-droplet: the deployer needs the value post-apply to construct QA_PORTAL_DATABASE_URL for Infisical, and the droplet firewall scopes SSH to the admin IP -- CI runners can never read it back over SSH. Rotation per recreate is expected; the portal app re-fetches from Infisical each deploy."
+  type        = string
+  sensitive   = true
+
+  validation {
+    condition     = length(var.qa_portal_pg_password) >= 24
+    error_message = "qa_portal_pg_password must be >=24 chars (use openssl rand -hex 24)."
+  }
+}

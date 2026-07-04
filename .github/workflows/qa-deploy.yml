@@ -155,51 +155,29 @@ jobs:
         with:
           terraform_version: "~1.9"
 
-      - name: Materialize CI SSH private key from Infisical
+      # (Removed 2026-07-04: "Materialize CI SSH private key" step. The
+      # droplet firewall scopes port 22 to the admin IP, so runner SSH never
+      # worked -- every consumer of ~/.ssh/grove-qa-deploy in this workflow
+      # was dead code and has been removed. The key's shape is still
+      # validated by the pre-flight check-secret-shapes.sh, and TF still
+      # installs the PUBLIC key on the droplet via var.ci_ssh_public_key,
+      # preserving the option of a runner-reachable SSH path later without
+      # a droplet recreate.)
+
+      # Deployer-side generation (2026-07-04): the qa_portal_pg password is
+      # created HERE, flows into cloud-init via TF, and the post-deploy
+      # Infisical step reuses this same env var -- no SSH read-back needed.
+      # Why not on-droplet like the other passwords: the droplet firewall
+      # scopes SSH to the admin IP (Tier 1 hardening), so runners can NEVER
+      # ssh in. Every post-deploy Infisical push had silently failed on that
+      # wall since the firewall landed; the Jul 2 "slow boot" sentinel
+      # timeout was the same block, misdiagnosed.
+      - name: Generate qa_portal_pg password (deployer-side)
         timeout-minutes: 1
-        # Was: ssh-keygen every run -> regenerates the key -> TF planned a
-        # REPLACE on the digitalocean_ssh_key resource every run -> deploy
-        # token's lack of ssh_key:delete scope returned 403. Wasted hours
-        # on 2026-06-24.
-        #
-        # Now: the CI key is LONG-LIVED. Public key is hardcoded in TF
-        # (var.ci_ssh_public_key default). Private key was fetched into the
-        # GROVE_QA_CI_SSH_PRIVATE_KEY env var by the Infisical secrets-action
-        # step at the top of this job. We just write it to ~/.ssh/grove-qa-deploy
-        # so the grove-ready poll later in this workflow can use it.
-        #
-        # The droplet sees the same SSH key fingerprint across every run, so
-        # TF plan never needs a destroy. No more orphan-key cleanup.
         run: |
-          if [ -z "${GROVE_QA_CI_SSH_PRIVATE_KEY:-}" ]; then
-            echo "::error::GROVE_QA_CI_SSH_PRIVATE_KEY not set — the Infisical fetch step likely didn't include it. Verify the secret exists in the grove-odoocker/prod env."
-            exit 1
-          fi
-          mkdir -p ~/.ssh
-          # GitHub Actions strips trailing newlines from secrets; OpenSSH
-          # requires the key end with one. Use printf + trailing \n to be safe.
-          printf '%s\n' "$GROVE_QA_CI_SSH_PRIVATE_KEY" > ~/.ssh/grove-qa-deploy
-          chmod 600 ~/.ssh/grove-qa-deploy
-          # Sanity-check the key is well-formed (catches secret-mangling on the way through)
-          if ! ssh-keygen -y -f ~/.ssh/grove-qa-deploy >/dev/null 2>&1; then
-            # Diagnostic info ONLY ON FAILURE — emits length + first-line shape
-            # (no key material) so the operator can pin the root cause without
-            # re-running with debug logging. Added after the 2026-06-30 01:33 UTC
-            # failure printed only "malformed" with zero context.
-            len=$(wc -c < ~/.ssh/grove-qa-deploy | tr -d ' ')
-            first_line_shape=$(head -1 ~/.ssh/grove-qa-deploy | sed 's/[a-zA-Z0-9+/=]/X/g' | head -c 40)
-            last_byte=$(tail -c 1 ~/.ssh/grove-qa-deploy | od -An -c | tr -d ' ')
-            echo "::error::CI SSH private key is malformed after writing to disk."
-            echo "  Diagnostic (safe -- no key material):"
-            echo "    bytes_written    = $len"
-            echo "    first_line_shape = '$first_line_shape'  (chars masked as X)"
-            echo "    last_byte_repr   = '$last_byte'  (should be '\\n')"
-            echo "  Likely causes:"
-            echo "    - Infisical returned empty/whitespace-only value (check secret in grove-odoocker/prod env)"
-            echo "    - Secret pasted with extra whitespace (probe via op CLI with byte count)"
-            echo "    - Key format wrong (must start with -----BEGIN OPENSSH PRIVATE KEY----- AND end with literal \\n)"
-            exit 1
-          fi
+          QPPW=$(openssl rand -hex 24)
+          echo "::add-mask::$QPPW"
+          echo "TF_VAR_qa_portal_pg_password=$QPPW" >> "$GITHUB_ENV"
 
       - name: Terraform init
         timeout-minutes: 5
@@ -372,86 +350,59 @@ jobs:
         run: |
           NOW=$(date +%s)
           DEADLINE=$(( NOW + 1800 ))   # 30 min
-          SSH="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i ~/.ssh/grove-qa-deploy root@$DROPLET_IP"
 
-          # HTTPS backup probe target. Uses --resolve to bypass any
-          # DNS-propagation delay after a droplet recreate — we hit the
-          # fresh droplet IP directly, but Caddy receives the request with
-          # the right SNI so it serves the hub.qa vhost + cert.
+          # HTTPS-ONLY sentinel (2026-07-04). The old SSH sentinel + SSH
+          # error-pattern checks are GONE, not moved: the droplet firewall
+          # scopes port 22 to the admin IP (Tier 1 hardening), so runner SSH
+          # has never once succeeded since that landed. The Jul 2 "slow
+          # boot" timeout was this block misdiagnosed, and every SSH-based
+          # check in this loop was dead code producing misleading log lines
+          # ("SSH not yet responding") that sent the diagnosis the wrong way.
+          #
+          # HTTPS via --resolve hits the fresh droplet IP directly (bypasses
+          # DNS propagation) with the right SNI so Caddy serves the hub.qa
+          # vhost + cert. hub serving = compose up + Caddy routed + cert
+          # loaded. `-k` accepts staging certs (auto-upgrader promotes later).
+          # Deep diagnostics on failure remain an OPERATOR action (admin IP
+          # can SSH); the error message says exactly what to run.
           HUB_HOST="hub.qa.gatheringatthegrove.com"
 
           while [ "$(date +%s)" -lt "$DEADLINE" ]; do
-            # (1) happy path -- canonical sentinel via SSH
-            if $SSH "test -f /var/lib/cloud/instance/grove-ready" 2>/dev/null; then
-              echo "  ✓ stack ready (SSH sentinel: /var/lib/cloud/instance/grove-ready present)"
-              exit 0
-            fi
-
-            # (1b) backup probe -- HTTPS on hub.qa. Added 2026-07-01 after
-            # a slow-boot event where the droplet was serving traffic ~3
-            # min before the SSH sentinel would have fired. If Caddy is
-            # answering with a real cert on hub.qa's vhost, the stack is
-            # functionally healthy regardless of SSH lag. `-k` accepts
-            # staging certs (the auto-upgrader promotes those later).
             HTTP_CODE=$(curl -sk -o /dev/null -w '%{http_code}' \
               --resolve "${HUB_HOST}:443:${DROPLET_IP}" \
               --connect-timeout 5 --max-time 10 \
               "https://${HUB_HOST}/" 2>/dev/null || echo "000")
             case "$HTTP_CODE" in
               200|301|302|303|307|308)
-                echo "  ✓ stack ready (HTTPS probe: hub.qa returned ${HTTP_CODE} — SSH sentinel not yet ready, but the stack is serving)"
+                echo "  ✓ stack ready (HTTPS probe: hub.qa returned ${HTTP_CODE})"
                 exit 0
                 ;;
             esac
-
-            # (2) sad path -- known error patterns
-            ERR=$($SSH "
-              if [ -f /var/log/grove-qa-up.log ]; then
-                grep -E 'pull access denied|repository does not exist|Error response from daemon|Unexpected next token|invalid integer value|failed to solve' /var/log/grove-qa-up.log | tail -5
-              fi
-              if [ -f /var/log/cloud-init-output.log ]; then
-                grep -iE 'fatal:|cloud-init.*error' /var/log/cloud-init-output.log | tail -5
-              fi
-            " 2>/dev/null || true)
-            if [ -n "$ERR" ]; then
-              echo "::error::Cloud-init / compose surfaced known error patterns:"
-              echo "$ERR" | sed 's/^/  /'
-              echo
-              echo "Last 30 lines of /var/log/grove-qa-up.log:"
-              $SSH "tail -30 /var/log/grove-qa-up.log 2>/dev/null" 2>/dev/null | sed 's/^/  /' || true
-              echo
-              echo "SSH in to debug: ssh -i ~/.ssh/grove-qa-admin root@$DROPLET_IP"
-              exit 1
-            fi
-
-            # (3) progress hint
-            PROGRESS=$($SSH "
-              if [ -f /var/log/grove-qa-up.log ]; then
-                tail -1 /var/log/grove-qa-up.log
-              else
-                echo '(cloud-init in apt/docker install stage; compose-up not started yet)'
-              fi
-            " 2>/dev/null || echo "(SSH not yet responding; droplet may still be booting)")
-            echo "  [$(date -u +%H:%M:%S)] ${PROGRESS} — HTTPS probe: ${HTTP_CODE}"
+            echo "  [$(date -u +%H:%M:%S)] not serving yet — HTTPS probe: ${HTTP_CODE}"
             sleep 30
           done
 
-          # Hard fail when NEITHER probe fires within 30 min -- otherwise the
-          # workflow declares success despite the stack being down. Discord
-          # then posts URLs that resolve to nothing. Per code review 2026-06-24:
-          # truthful CI status > continuing through a likely-broken deploy.
-          echo "::error::droplet didn't signal ready within 30 min via EITHER probe (SSH sentinel + HTTPS on ${HUB_HOST}) -- stack likely broken."
-          echo "  Debug: ssh -i ~/.ssh/grove-qa-admin root@${DROPLET_IP}"
-          echo "  Then check: /var/log/cloud-init-output.log, docker ps, and 'docker logs caddy'"
+          # Hard fail when the probe never fires within 30 min -- otherwise
+          # the workflow declares success despite the stack being down.
+          # Discord then posts URLs that resolve to nothing. Per code review
+          # 2026-06-24: truthful CI status > continuing through a likely-
+          # broken deploy.
+          echo "::error::droplet didn't serve hub.qa within 30 min -- stack likely broken."
+          echo "  Debug (from the ADMIN IP -- runners cannot SSH, by firewall design):"
+          echo "    ssh -i ~/.ssh/grove-qa-admin root@${DROPLET_IP}"
+          echo "  Then check: /var/log/cloud-init-output.log, /var/log/grove-qa-up.log, docker ps, 'docker logs caddy'"
           exit 1
 
       # Post-deploy: sync qa_portal_pg URL to Infisical.
       #
       # qa_portal_pg is a co-located Postgres container (defined in compose +
-      # cloud-init); its password is randomized at first boot and lives only in
-      # /etc/grove/.env on the droplet. The Grove QA portal app (deployed
-      # separately) reads QA_PORTAL_DATABASE_URL from Infisical at runtime, so
-      # we need to push the freshly-constructed URL after every droplet recreate.
+      # cloud-init). Its password is generated DEPLOYER-SIDE earlier in this
+      # job (see "Generate qa_portal_pg password") and flows into the droplet
+      # via TF -> cloud-init -> /etc/grove/.env. This step reuses the same
+      # env var to construct the URL -- NO SSH to the droplet. (The old SSH
+      # read-back never worked: the droplet firewall scopes port 22 to the
+      # admin IP, and every run of this step had failed on that wall since
+      # Tier 1 hardening landed. Discovered 2026-07-04.)
       #
       # The constructed URL uses container name `qa_portal_pg` as the host (not
       # the droplet IP) because it's resolved from inside the same Docker network
@@ -468,49 +419,26 @@ jobs:
       - name: Post-deploy - push QA_PORTAL_DATABASE_URL to Infisical
         timeout-minutes: 3
         env:
-          DROPLET_IP: ${{ steps.tf_outputs.outputs.droplet_ip }}
           # INFISICAL_TOKEN was set by the secrets-action step at the top of this
           # job. The CLI consumes the same token via env var — no re-auth needed.
           INFISICAL_TOKEN: ${{ env.INFISICAL_TOKEN }}
         run: |
-          SSH="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i ~/.ssh/grove-qa-deploy root@$DROPLET_IP"
-
           # Install Infisical CLI on the runner (~3 sec; the official installer
           # script just downloads the binary + chmod +x).
           curl -1sLf 'https://artifacts-cli.infisical.com/setup.deb.sh' | sudo -E bash
           sudo apt-get install -y infisical
 
-          # Read the rotated password from the droplet's /etc/grove/.env. grep + cut
-          # to avoid sourcing the file (which would expose other secrets in this
-          # workflow's env). Quote-strip just in case (the .env line shouldn't
-          # have quotes but defense-in-depth).
-          # Retry loop (2026-07-04, run 28713663225): since PR #155 the
-          # sentinel can declare ready via the HTTPS probe BEFORE cloud-init
-          # finishes (SSH-verified grove-ready is no longer guaranteed at
-          # this point). A one-shot SSH read here raced the still-settling
-          # droplet (autoseed recreating containers = load spike) and failed
-          # despite the stack being healthy. 6 tries x 20s = 2 min of grace,
-          # far longer than the observed settle window.
-          QPPW=""
-          for attempt in 1 2 3 4 5 6; do
-            QPPW=$($SSH "grep '^QA_PORTAL_PG_PASSWORD=' /etc/grove/.env | cut -d= -f2-" 2>/dev/null | tr -d '"' | tr -d "'")
-            [ -n "$QPPW" ] && break
-            echo "  [attempt $attempt/6] SSH read failed or empty; droplet may still be settling. Retrying in 20s..."
-            sleep 20
-          done
-          if [ -z "$QPPW" ]; then
-            echo "::error::Could not read QA_PORTAL_PG_PASSWORD from /etc/grove/.env on droplet (6 attempts over 2 min)."
-            echo "  This means either: (a) cloud-init didn't substitute the placeholder,"
-            echo "  (b) the .env file is missing the QA_PORTAL_PG_PASSWORD line, or"
-            echo "  (c) SSH access broke between grove-ready and here."
-            echo "  SSH to debug: ssh -i ~/.ssh/grove-qa-admin root@$DROPLET_IP"
+          # The password this droplet was provisioned with -- exported to
+          # GITHUB_ENV (masked) by the generate step before terraform apply.
+          if [ -z "${TF_VAR_qa_portal_pg_password:-}" ]; then
+            echo "::error::TF_VAR_qa_portal_pg_password missing from env -- the generate step didn't run?"
             exit 1
           fi
 
           # Construct the URL. Container name `qa_portal_pg` is the host because
           # this URL is consumed from INSIDE qa_portal_net (the portal app's
           # container side), not from outside the droplet.
-          URL="postgresql://qa_portal_app:${QPPW}@qa_portal_pg:5432/qa_portal?sslmode=disable"
+          URL="postgresql://qa_portal_app:${TF_VAR_qa_portal_pg_password}@qa_portal_pg:5432/qa_portal?sslmode=disable"
 
           # Push to Infisical. --silent + redirect prevents the value from being
           # echoed in CI logs (the CLI normally prints the set value on success).
