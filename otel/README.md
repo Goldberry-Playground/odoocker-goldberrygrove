@@ -43,13 +43,25 @@ Managed Postgres has no kernel access; its stats come from the `postgresql`
 receiver). Needs a Linux host + compatible kernel; if it can't attach it logs
 and produces no metrics (never crashes the stack).
 
+## Enabling the `postgresql` receiver (opt-in)
+
+The receiver is **defined-but-commented** and kept out of the pipeline on purpose
+— an unset `POSTGRES_*` would fail collector startup and take the USE/RED metrics
+down with it. The `postgres-connections-{warning,critical}` alerts + `POSTGRES_*`
+env are already staged. To turn it on:
+
+1. `CREATE USER otel_monitor PASSWORD '…'; GRANT pg_monitor TO otel_monitor;`
+   (Managed PG under ADR-007 → point `POSTGRES_ENDPOINT` at the managed host.)
+2. Set `POSTGRES_ENDPOINT` / `POSTGRES_MONITOR_USER` / `POSTGRES_MONITOR_PASSWORD`
+   in `.env.monitoring` (already passed to the container).
+3. Uncomment the `postgresql` receiver in `otelcol-config.yaml` **and** add
+   `postgresql` to the metrics pipeline `receivers:` list.
+
 ## Not yet (documented follow-ups)
 
-- **`postgresql` receiver** — a commented block in the config; enable with a
-  read-only `pg_monitor` user → unlocks `postgres-connections` + query stats.
 - **Next.js `instrumentation.ts`** (grove-sites) → the `nextjs-*` latency + 5xx
   alerts + BFF→Odoo trace correlation. Separate PR (different repo).
-- **Rightsizing join panel** — add a `cost × utilization` panel to the Grove
+- **Rightsizing join panel** — a computed `cost × utilization` JOIN on the Grove
   CostOps dashboard once these metric stream/field names are confirmed live.
 
 > **Pending live validation:** the OpenObserve OTLP endpoint/auth and the exact
