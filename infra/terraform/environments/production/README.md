@@ -22,7 +22,7 @@ Managed PG / Odoo droplet / App Platform arrive with the Track 2 plan.
 - Cloudflare Origin CA certs (15y, per zone) for proxied TLS
 - grove-blogs-backups Spaces bucket + lifecycle
 - Apex A records for gatheringatthegrove.com + goldberrygrove.farm
-  (imported from Cloudflare during migration; see apex-records.tf)
+  (imported from Cloudflare during migration; see apex-records.tf) (file arrives with the Task 6 migration)
 
 ## History
 

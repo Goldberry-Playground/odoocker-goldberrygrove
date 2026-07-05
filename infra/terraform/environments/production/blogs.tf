@@ -51,6 +51,20 @@ resource "digitalocean_spaces_bucket" "blogs_backups" {
   # monthly/ prefix has no rule - kept indefinitely.
 }
 
+# Scoped Spaces key for the droplet's rclone backups. The all-buckets
+# "plumbing" key (var.spaces_access_id) stays TF-side only: it is provider
+# auth for bucket ops and must never land on the droplet, where the
+# metadata service exposes user_data to any process on the box. This key
+# can touch ONLY the backups bucket.
+resource "digitalocean_spaces_key" "blogs_backup" {
+  name = "grove-blogs-backup"
+
+  grant {
+    bucket     = digitalocean_spaces_bucket.blogs_backups.name
+    permission = "readwrite"
+  }
+}
+
 # -- Persistent data volume ------------------------------------------------------
 
 resource "digitalocean_volume" "blogs_data" {
@@ -108,6 +122,16 @@ resource "digitalocean_droplet" "blogs" {
       nursery   = "https://blog.atthegrovenursery.com"
     }
 
+    # Admin lives on blog.* from day one, even while the public url stays
+    # the apex - Ghost otherwise redirects /ghost/ to the canonical url,
+    # which pre-cutover is the OLD snowflake droplet.
+    ghost_admin_urls = {
+      hub       = "https://blog.gatheringatthegrove.com"
+      goldberry = "https://blog.goldberrygrove.farm"
+    }
+
+    volume_name = digitalocean_volume.blogs_data.name
+
     origin_certs = {
       for k, z in local.tenants : z => {
         cert = cloudflare_origin_ca_certificate.origin[k].certificate
@@ -119,13 +143,15 @@ resource "digitalocean_droplet" "blogs" {
     caddyfile_b64   = base64encode(file("${path.module}/compose/Caddyfile-blogs.tpl"))
     mysql_init_b64  = base64encode(file("${path.module}/compose/mysql-init.sql.tpl"))
 
-    spaces_access_id      = var.spaces_access_id
-    spaces_secret_key     = var.spaces_secret_key
+    spaces_access_id      = digitalocean_spaces_key.blogs_backup.access_key
+    spaces_secret_key     = digitalocean_spaces_key.blogs_backup.secret_key
     backups_bucket        = digitalocean_spaces_bucket.blogs_backups.name
     spaces_endpoint       = "https://${var.region}.digitaloceanspaces.com"
     healthchecks_ping_url = var.healthchecks_ping_url
   })
 
+  # DO agent metrics not needed: Healthchecks covers backups, and synthetic
+  # probes cover the public surface (obs stack, Track 2).
   monitoring = false
 
   timeouts {

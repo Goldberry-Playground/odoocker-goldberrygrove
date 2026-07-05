@@ -8,6 +8,7 @@
 # Secrets randomized at first boot (never hardcoded):
 #   MYSQL_ROOT_PASSWORD, MYSQL_GHOST_{HUB,GOLDBERRY,GGG,NURSERY}_PASSWORD
 # Operator reads them from /etc/grove-blogs/.env (root-only, 0600).
+# Secrets self-restore from `/mnt/blogs-data/.grove-mysql-secrets` on replacement droplets.
 #
 # Nightly backup (03:30 UTC): mysqldump per DB + tar of each Ghost content
 # dir -> rclone to Spaces daily/ prefix; 1st of month also copies to
@@ -41,6 +42,8 @@ write_files:
       GHOST_GOLDBERRY_URL=${ghost_urls.goldberry}
       GHOST_GGG_URL=${ghost_urls.ggg}
       GHOST_NURSERY_URL=${ghost_urls.nursery}
+      GHOST_HUB_ADMIN_URL=${ghost_admin_urls.hub}
+      GHOST_GOLDBERRY_ADMIN_URL=${ghost_admin_urls.goldberry}
 
       MYSQL_ROOT_PASSWORD=__MYSQL_ROOT_PASSWORD__
       MYSQL_GHOST_HUB_PASSWORD=__MYSQL_GHOST_HUB_PASSWORD__
@@ -125,8 +128,10 @@ runcmd:
   # -- Mount the persistent data volume (attached by TF as first data disk)
   - mkdir -p /mnt/blogs-data
   - |
-    DEV=$(ls /dev/disk/by-id/scsi-0DO_Volume_* | head -1)
-    if ! blkid "$DEV" >/dev/null 2>&1; then mkfs.ext4 "$DEV"; fi
+    DEV=/dev/disk/by-id/scsi-0DO_Volume_${volume_name}
+    for i in $(seq 1 60); do [ -b "$DEV" ] && break; sleep 5; done
+    [ -b "$DEV" ] || { echo "::error::data volume never attached at $DEV" >> /var/log/grove-blogs-up.log; exit 1; }
+    if ! blkid "$DEV" >/dev/null 2>&1; then mkfs.ext4 -L blogsdata "$DEV"; fi
     grep -q "$DEV /mnt/blogs-data" /etc/fstab || echo "$DEV /mnt/blogs-data ext4 defaults,nofail,discard 0 2" >> /etc/fstab
     mount -a
   - mkdir -p /mnt/blogs-data/mysql /mnt/blogs-data/mysql-init /mnt/blogs-data/ghost-hub /mnt/blogs-data/ghost-goldberry /mnt/blogs-data/ghost-ggg /mnt/blogs-data/ghost-nursery
@@ -137,17 +142,31 @@ runcmd:
   - systemctl enable docker
   - systemctl start docker
 
-  # -- Randomize secrets (only if placeholders still present - keeps this
-  # idempotent across reboots; the data volume outlives the droplet, so a
-  # REPLACEMENT droplet must reuse the existing MySQL passwords - operator
-  # restores /etc/grove-blogs/.env from the previous droplet or resets
-  # MySQL users. First boot on a fresh volume takes the random path.)
+  # -- MySQL secrets: restore from the data volume if a previous droplet generation left them (replacement droplets reuse the existing MySQL data dir), otherwise randomize once and persist to the volume alongside the data they unlock.
   - |
     if grep -q "__MYSQL_ROOT_PASSWORD__" /etc/grove-blogs/.env; then
-      for K in MYSQL_ROOT_PASSWORD MYSQL_GHOST_HUB_PASSWORD MYSQL_GHOST_GOLDBERRY_PASSWORD MYSQL_GHOST_GGG_PASSWORD MYSQL_GHOST_NURSERY_PASSWORD; do
-        V=$(openssl rand -hex 24)
-        sed -i "s|__$${K}__|$V|" /etc/grove-blogs/.env
-      done
+      if [ -f /mnt/blogs-data/.grove-mysql-secrets ]; then
+        . /mnt/blogs-data/.grove-mysql-secrets
+      else
+        MYSQL_ROOT_PASSWORD=$(openssl rand -hex 24)
+        MYSQL_GHOST_HUB_PASSWORD=$(openssl rand -hex 24)
+        MYSQL_GHOST_GOLDBERRY_PASSWORD=$(openssl rand -hex 24)
+        MYSQL_GHOST_GGG_PASSWORD=$(openssl rand -hex 24)
+        MYSQL_GHOST_NURSERY_PASSWORD=$(openssl rand -hex 24)
+        umask 077
+        {
+          echo "MYSQL_ROOT_PASSWORD=$MYSQL_ROOT_PASSWORD"
+          echo "MYSQL_GHOST_HUB_PASSWORD=$MYSQL_GHOST_HUB_PASSWORD"
+          echo "MYSQL_GHOST_GOLDBERRY_PASSWORD=$MYSQL_GHOST_GOLDBERRY_PASSWORD"
+          echo "MYSQL_GHOST_GGG_PASSWORD=$MYSQL_GHOST_GGG_PASSWORD"
+          echo "MYSQL_GHOST_NURSERY_PASSWORD=$MYSQL_GHOST_NURSERY_PASSWORD"
+        } > /mnt/blogs-data/.grove-mysql-secrets
+      fi
+      sed -i "s|__MYSQL_ROOT_PASSWORD__|$MYSQL_ROOT_PASSWORD|" /etc/grove-blogs/.env
+      sed -i "s|__MYSQL_GHOST_HUB_PASSWORD__|$MYSQL_GHOST_HUB_PASSWORD|" /etc/grove-blogs/.env
+      sed -i "s|__MYSQL_GHOST_GOLDBERRY_PASSWORD__|$MYSQL_GHOST_GOLDBERRY_PASSWORD|" /etc/grove-blogs/.env
+      sed -i "s|__MYSQL_GHOST_GGG_PASSWORD__|$MYSQL_GHOST_GGG_PASSWORD|" /etc/grove-blogs/.env
+      sed -i "s|__MYSQL_GHOST_NURSERY_PASSWORD__|$MYSQL_GHOST_NURSERY_PASSWORD|" /etc/grove-blogs/.env
     fi
 
   # -- Materialize mysql init.sql with the randomized passwords (first boot

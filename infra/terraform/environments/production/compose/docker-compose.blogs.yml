@@ -21,7 +21,7 @@ services:
     networks:
       - internal
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 30s
       timeout: 5s
       retries: 5
@@ -35,6 +35,7 @@ services:
         condition: service_healthy
     environment:
       url: ${GHOST_HUB_URL}
+      admin__url: ${GHOST_HUB_ADMIN_URL}
       database__client: mysql
       database__connection__host: mysql
       database__connection__user: ghost_hub
@@ -54,6 +55,7 @@ services:
         condition: service_healthy
     environment:
       url: ${GHOST_GOLDBERRY_URL}
+      admin__url: ${GHOST_GOLDBERRY_ADMIN_URL}
       database__client: mysql
       database__connection__host: mysql
       database__connection__user: ghost_goldberry
