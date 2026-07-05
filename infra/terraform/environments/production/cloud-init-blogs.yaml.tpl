@@ -127,7 +127,7 @@ runcmd:
   - |
     DEV=$(ls /dev/disk/by-id/scsi-0DO_Volume_* | head -1)
     if ! blkid "$DEV" >/dev/null 2>&1; then mkfs.ext4 "$DEV"; fi
-    echo "$DEV /mnt/blogs-data ext4 defaults,nofail,discard 0 2" >> /etc/fstab
+    grep -q "$DEV /mnt/blogs-data" /etc/fstab || echo "$DEV /mnt/blogs-data ext4 defaults,nofail,discard 0 2" >> /etc/fstab
     mount -a
   - mkdir -p /mnt/blogs-data/mysql /mnt/blogs-data/mysql-init /mnt/blogs-data/ghost-hub /mnt/blogs-data/ghost-goldberry /mnt/blogs-data/ghost-ggg /mnt/blogs-data/ghost-nursery
 
@@ -146,7 +146,7 @@ runcmd:
     if grep -q "__MYSQL_ROOT_PASSWORD__" /etc/grove-blogs/.env; then
       for K in MYSQL_ROOT_PASSWORD MYSQL_GHOST_HUB_PASSWORD MYSQL_GHOST_GOLDBERRY_PASSWORD MYSQL_GHOST_GGG_PASSWORD MYSQL_GHOST_NURSERY_PASSWORD; do
         V=$(openssl rand -hex 24)
-        sed -i "s|__${K}__|$V|" /etc/grove-blogs/.env
+        sed -i "s|__$${K}__|$V|" /etc/grove-blogs/.env
       done
     fi
 
@@ -162,7 +162,7 @@ runcmd:
     chmod 0600 /mnt/blogs-data/mysql-init/init.sql
 
   # -- Bring up the stack
-  - cd /etc/grove-blogs && docker compose --env-file /etc/grove-blogs/.env -p grove-blogs up -d > /var/log/grove-blogs-up.log 2>&1
+  - docker compose -f /etc/grove-blogs/docker-compose.yml --env-file /etc/grove-blogs/.env -p grove-blogs up -d > /var/log/grove-blogs-up.log 2>&1
 
   # -- Ready sentinel: all four Ghosts answering on their internal ports
   - |
@@ -180,3 +180,4 @@ runcmd:
       sleep 5
     done
     echo "::error::not all Ghost instances came online" >> /var/log/grove-blogs-up.log
+    exit 1
