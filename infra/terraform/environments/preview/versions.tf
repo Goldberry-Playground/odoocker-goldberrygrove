@@ -1,5 +1,5 @@
 terraform {
-  required_version = ">= 1.6"
+  required_version = ">= 1.10"
 
   required_providers {
     digitalocean = {
@@ -15,7 +15,13 @@ terraform {
   # Per-PR state isolation — the workflow (Task 3.3) templates `key` as
   # `preview/pr-<number>.tfstate` so multiple PRs can be in flight without
   # state collisions. backend.hcl is git-ignored; see backend.hcl.example.
-  backend "s3" {}
+  backend "s3" {
+    # S3-native state locking (GOL-40): Terraform >= 1.10 writes
+    # <key>.tflock via a conditional PUT (If-None-Match: *). Verified DO
+    # Spaces enforces it (2nd writer gets HTTP 412). Real backend values
+    # live in backend.hcl (git-ignored).
+    use_lockfile = true
+  }
 }
 
 provider "digitalocean" {
