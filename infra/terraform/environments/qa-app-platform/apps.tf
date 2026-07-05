@@ -99,11 +99,13 @@ resource "digitalocean_app" "hub" {
       # Signed webhook secret so grove-sites' /api/revalidate can be poked by
       # Odoo / Ghost when their content changes. Rotates whenever this TF
       # applies with a new var value. Sensitive: never printed by outputs.
+      # GENERAL, not SECRET, for the same drift reason as ODOO_API_KEY on
+      # the tenant apps (provider issues #869/#514: SECRET envs re-diff on
+      # every plan and would page the nightly drift alert).
       env {
         key   = "GROVE_REVALIDATE_SECRET"
         value = var.grove_revalidate_secret
         scope = "RUN_AND_BUILD_TIME"
-        type  = "SECRET"
       }
 
       env {
@@ -206,12 +208,17 @@ resource "digitalocean_app" "tenant" {
         scope = "RUN_AND_BUILD_TIME"
       }
 
-      # No real per-tenant Odoo API key issued yet (same state as monolith
-      # QA). requireEnv() passes; authenticated Odoo calls fail at runtime
-      # until a real key is seeded.
+      # Real per-tenant bearer key (global-scope res.users.apikeys on the
+      # QA Odoo). Deliberately GENERAL, not SECRET: DO returns SECRET envs
+      # encrypted, so the provider re-diffs them on every plan (upstream
+      # digitalocean provider issues #869/#514, still open at 2.92) --
+      # which would fire the nightly drift alert forever. The value lives
+      # in TF state regardless of type; state stays in the Spaces backend,
+      # never in the repo (see Grove Secrets Handling Policy). Keys are
+      # revocable in Odoo (Settings -> Users -> API Keys).
       env {
         key   = "ODOO_API_KEY"
-        value = "qa-stub-no-odoo-api-key-yet"
+        value = var.odoo_api_keys[each.key]
         scope = "RUN_AND_BUILD_TIME"
       }
 

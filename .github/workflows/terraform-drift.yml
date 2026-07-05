@@ -135,6 +135,8 @@ jobs:
             echo "TF_VAR_do_token=$DIGITALOCEAN_TOKEN"
             echo "TF_VAR_cloudflare_api_token=$CLOUDFLARE_API_TOKEN"
             echo "TF_VAR_grove_revalidate_secret=$GROVE_REVALIDATE_SECRET"
+            # map(string) var: Infisical stores the JSON object verbatim
+            echo "TF_VAR_odoo_api_keys=$ODOO_API_KEYS_TF_JSON"
           } >> "$GITHUB_ENV"
 
       - name: Terraform init

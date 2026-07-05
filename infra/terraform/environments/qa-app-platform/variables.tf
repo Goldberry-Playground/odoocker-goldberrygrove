@@ -144,6 +144,21 @@ variable "grove_revalidate_secret" {
   }
 }
 
+variable "odoo_api_keys" {
+  description = "Per-tenant Odoo API keys (bearer auth for authenticated /grove/api/v1 endpoints, e.g. order creation). Global-scope res.users.apikeys records minted on the QA Odoo -- Odoo 19 bearer auth requires scope NULL keys. Read from Infisical ODOO_API_KEYS_TF_JSON via TF_VAR_odoo_api_keys; defaults keep the pre-key qa-stub behavior so plan still works without the secret."
+  type        = map(string)
+  sensitive   = true
+  default = {
+    goldberry = "qa-stub-no-odoo-api-key-yet"
+    ggg       = "qa-stub-no-odoo-api-key-yet"
+    nursery   = "qa-stub-no-odoo-api-key-yet"
+  }
+  validation {
+    condition     = alltrue([for t in ["goldberry", "ggg", "nursery"] : contains(keys(var.odoo_api_keys), t)])
+    error_message = "odoo_api_keys must contain keys: goldberry, ggg, nursery."
+  }
+}
+
 # === ACME endpoint (Caddy / Let's Encrypt) ==================================
 
 variable "acme_endpoint" {
