@@ -60,6 +60,16 @@ write_files:
       # Randomized at boot via the runcmd step below; placeholder here.
       ODOO_ADMIN_PASSWORD=__ODOO_ADMIN_PASSWORD__
 
+      # Addons path substituted into odoo.conf by odoorc.sh at container
+      # start. /workspace/current is populated by the custom-modules-sync
+      # git-sync sidecar (grove-odoo-modules repo; grove_headless lives
+      # there). Only list dirs that EXIST in the image + mounts -- Odoo
+      # refuses to start on a nonexistent addons dir. Without this var the
+      # placeholder substitutes to empty and Odoo silently runs with stock
+      # community addons only (how the 2026-07-05 "module not in list"
+      # incident happened).
+      ADDONS_PATH=/usr/lib/python3/dist-packages/odoo/addons,/workspace/current
+
       # Caddy DNS-01 ACME - single hostname (odoo.${qa_zone}), so the
       # rate-limit class that motivated the monolith's multi-issuer
       # fallback (ADR-005 PR-D) is essentially non-applicable here.
