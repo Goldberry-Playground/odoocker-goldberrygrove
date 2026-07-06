@@ -47,3 +47,4 @@ tfplan*
 *.tfplan.bin
 plan.bin
 .env.infisical-seed.op
+infra/terraform/environments/**/op.env
