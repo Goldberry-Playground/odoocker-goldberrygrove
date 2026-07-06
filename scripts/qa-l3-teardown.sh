@@ -52,8 +52,13 @@ if [ "$MODE" = "all" ]; then
   echo "!! 'all' destroys Managed PG (ALL Odoo data), the LE cert volume,"
   echo "!! the qa DNS zone, and the Cloudflare NS delegation."
 else
-  echo "'compute' destroys: 4 App Platform apps, 2 droplets, volume attachment."
-  echo "Survives: Managed PG data, LE certs, DNS, firewalls. Rebuild: make qa-l3-up"
+  echo "'compute' destroys 14 resources: 4 App Platform apps, 2 droplets,"
+  echo "volume attachment, plus their DEPENDENTS terraform pulls in via"
+  echo "-target: droplet firewalls, the odoo/oo/keep/apex DNS records, and"
+  echo "the PG trusted-sources firewall (verified via plan -destroy 2026-07-05)."
+  echo "Survives: Managed PG cluster+data, the LE-cert volume, the qa DNS"
+  echo "zone + CF delegation. NOTE: with the PG firewall destroyed the DB"
+  echo "endpoint is password-only until rebuild. Rebuild: make qa-l3-up"
 fi
 printf "Type 'destroy-qa-l3-%s' to continue: " "$MODE"
 read -r CONFIRM
