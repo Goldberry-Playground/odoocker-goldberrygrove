@@ -25,8 +25,11 @@ provider "digitalocean" {
 }
 
 provider "cloudflare" {
-  api_token            = var.cloudflare_api_token
-  api_user_service_key = var.cloudflare_origin_ca_key
+  # Origin CA certs authenticate with the same API token since Aug 2022
+  # (token needs Zone -> SSL and Certificates -> Edit on all four zones).
+  # The legacy Origin CA service key is deprecated and stops working
+  # 2026-09-30: developers.cloudflare.com/changelog/post/2026-03-19-service-key-authentication-deprecated/
+  api_token = var.cloudflare_api_token
 }
 
 locals {

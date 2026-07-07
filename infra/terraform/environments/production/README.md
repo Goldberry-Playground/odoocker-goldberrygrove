@@ -7,7 +7,7 @@ Managed PG / Odoo droplet / App Platform arrive with the Track 2 plan.
 
 1. `cp backend.hcl.example backend.hcl`
 2. Create `.env.op` mapping op:// refs -> TF_VAR_* + AWS_* (see qa-app-platform README for the pattern). Required:
-   - TF_VAR_do_token, TF_VAR_cloudflare_api_token, TF_VAR_cloudflare_origin_ca_key
+   - TF_VAR_do_token, TF_VAR_cloudflare_api_token
    - TF_VAR_spaces_access_id, TF_VAR_spaces_secret_key
    - TF_VAR_admin_ip_cidr, TF_VAR_healthchecks_ping_url
    - AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY (state backend)

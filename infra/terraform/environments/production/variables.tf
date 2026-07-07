@@ -10,12 +10,6 @@ variable "cloudflare_api_token" {
   sensitive   = true
 }
 
-variable "cloudflare_origin_ca_key" {
-  description = "Cloudflare Origin CA Key (starts 'v1.0-'). Required by cloudflare_origin_ca_certificate. From CF dashboard -> API Tokens -> Origin CA Key."
-  type        = string
-  sensitive   = true
-}
-
 variable "spaces_access_id" {
   description = "DO Spaces access key (plumbing key, All Buckets) for the digitalocean provider's S3-protocol bucket operations AND the droplet's rclone backup uploads."
   type        = string
