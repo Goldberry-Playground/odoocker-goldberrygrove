@@ -111,7 +111,7 @@ jobs:
         uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
         timeout-minutes: 3
         with:
-          terraform_version: "~1.9"
+          terraform_version: "~1.10" # GOL-40: use_lockfile requires >= 1.10
 
       - name: Write backend config
         timeout-minutes: 1
