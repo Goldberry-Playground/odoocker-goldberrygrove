@@ -178,7 +178,12 @@ runcmd:
         -e "s|__MYSQL_GHOST_GGG_PASSWORD__|$MYSQL_GHOST_GGG_PASSWORD|" \
         -e "s|__MYSQL_GHOST_NURSERY_PASSWORD__|$MYSQL_GHOST_NURSERY_PASSWORD|" \
         /etc/grove-blogs/mysql-init.sql.tpl > /mnt/blogs-data/mysql-init/init.sql
-    chmod 0600 /mnt/blogs-data/mysql-init/init.sql
+    # The mysql entrypoint drops to its 'mysql' user (uid 999) BEFORE reading
+    # /docker-entrypoint-initdb.d - a root:root 0600 file is silently skipped
+    # with "Permission denied" and the ghost_* databases never get created
+    # (hit on first prod boot 2026-07-07). Own it to the container's uid.
+    chown 999:999 /mnt/blogs-data/mysql-init/init.sql
+    chmod 0400 /mnt/blogs-data/mysql-init/init.sql
 
   # -- Bring up the stack
   - docker compose -f /etc/grove-blogs/docker-compose.yml --env-file /etc/grove-blogs/.env -p grove-blogs up -d > /var/log/grove-blogs-up.log 2>&1
