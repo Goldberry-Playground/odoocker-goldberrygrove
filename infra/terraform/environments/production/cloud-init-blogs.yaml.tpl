@@ -193,7 +193,10 @@ runcmd:
     for i in $(seq 1 60); do
       OK=0
       for SVC in ghost-hub ghost-goldberry ghost-ggg ghost-nursery; do
-        code=$(docker exec grove-blogs-caddy-1 wget -qO- --timeout=5 "http://$SVC:2368/ghost/api/admin/site/" >/dev/null 2>&1 && echo 200 || echo 000)
+        # X-Forwarded-Proto: Ghost 301s plain HTTP to its https url unless the
+        # request looks proxied (Caddy adds this header; the raw probe must too).
+        # Hit on first prod boot 2026-07-07 - services healthy, sentinel timed out.
+        code=$(docker exec grove-blogs-caddy-1 wget -qO- --timeout=5 --header "X-Forwarded-Proto: https" "http://$SVC:2368/ghost/api/admin/site/" >/dev/null 2>&1 && echo 200 || echo 000)
         [ "$code" = "200" ] && OK=$((OK+1))
       done
       if [ "$OK" = "4" ]; then
