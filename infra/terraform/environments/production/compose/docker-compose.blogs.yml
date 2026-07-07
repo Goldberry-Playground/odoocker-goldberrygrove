@@ -42,6 +42,11 @@ services:
       database__connection__password: ${MYSQL_GHOST_HUB_PASSWORD}
       database__connection__database: ghost_hub
       NODE_ENV: production
+      # Interim until SES/SMTP lands (Grove Production Launch spec): Ghost 6
+      # emails a device-verification code on staff login; with no mail
+      # transport the login 500s (EmailError - hit 2026-07-07). Re-enable
+      # alongside mail__* config.
+      security__staffDeviceVerification: "false"
     volumes:
       - /mnt/blogs-data/ghost-hub:/var/lib/ghost/content
     networks:
@@ -62,6 +67,11 @@ services:
       database__connection__password: ${MYSQL_GHOST_GOLDBERRY_PASSWORD}
       database__connection__database: ghost_goldberry
       NODE_ENV: production
+      # Interim until SES/SMTP lands (Grove Production Launch spec): Ghost 6
+      # emails a device-verification code on staff login; with no mail
+      # transport the login 500s (EmailError - hit 2026-07-07). Re-enable
+      # alongside mail__* config.
+      security__staffDeviceVerification: "false"
     volumes:
       - /mnt/blogs-data/ghost-goldberry:/var/lib/ghost/content
     networks:
@@ -81,6 +91,11 @@ services:
       database__connection__password: ${MYSQL_GHOST_GGG_PASSWORD}
       database__connection__database: ghost_ggg
       NODE_ENV: production
+      # Interim until SES/SMTP lands (Grove Production Launch spec): Ghost 6
+      # emails a device-verification code on staff login; with no mail
+      # transport the login 500s (EmailError - hit 2026-07-07). Re-enable
+      # alongside mail__* config.
+      security__staffDeviceVerification: "false"
     volumes:
       - /mnt/blogs-data/ghost-ggg:/var/lib/ghost/content
     networks:
@@ -100,6 +115,11 @@ services:
       database__connection__password: ${MYSQL_GHOST_NURSERY_PASSWORD}
       database__connection__database: ghost_nursery
       NODE_ENV: production
+      # Interim until SES/SMTP lands (Grove Production Launch spec): Ghost 6
+      # emails a device-verification code on staff login; with no mail
+      # transport the login 500s (EmailError - hit 2026-07-07). Re-enable
+      # alongside mail__* config.
+      security__staffDeviceVerification: "false"
     volumes:
       - /mnt/blogs-data/ghost-nursery:/var/lib/ghost/content
     networks:
