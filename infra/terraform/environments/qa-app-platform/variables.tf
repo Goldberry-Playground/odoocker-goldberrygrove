@@ -107,9 +107,9 @@ variable "obs_droplet_size" {
 }
 
 variable "openobserve_tag" {
-  description = "OpenObserve image tag (public.ecr.aws/zinclabs/openobserve:<tag>). Match the version pinned in docker-compose.monitoring.yml so behavior is consistent across local + Level 3."
+  description = "OpenObserve image tag (public.ecr.aws/zinclabs/openobserve:<tag>). DIGEST-PINNED since 2026-07-04: upstream prunes old tags from public ECR (v0.17.2 vanished and every fresh obs droplet failed the pull; the old droplet had only survived on its local image cache). Tag-only pins on this registry are time bombs -- keep the @sha256 suffix on updates. Update docker-compose.monitoring.yml (local) in the same commit."
   type        = string
-  default     = "v0.17.2"
+  default     = "v0.91.1@sha256:e1ff0445fab3e748ac4cf630308cc8493579e50d19ad255bb3a3b8c1b710aaf7"
 }
 
 variable "keep_tag" {
@@ -141,6 +141,21 @@ variable "grove_revalidate_secret" {
   validation {
     condition     = length(var.grove_revalidate_secret) >= 32
     error_message = "grove_revalidate_secret must be at least 32 characters (use `openssl rand -hex 32`)."
+  }
+}
+
+variable "odoo_api_keys" {
+  description = "Per-tenant Odoo API keys (bearer auth for authenticated /grove/api/v1 endpoints, e.g. order creation). Global-scope res.users.apikeys records minted on the QA Odoo -- Odoo 19 bearer auth requires scope NULL keys. Read from Infisical ODOO_API_KEYS_TF_JSON via TF_VAR_odoo_api_keys; defaults keep the pre-key qa-stub behavior so plan still works without the secret."
+  type        = map(string)
+  sensitive   = true
+  default = {
+    goldberry = "qa-stub-no-odoo-api-key-yet"
+    ggg       = "qa-stub-no-odoo-api-key-yet"
+    nursery   = "qa-stub-no-odoo-api-key-yet"
+  }
+  validation {
+    condition     = alltrue([for t in ["goldberry", "ggg", "nursery"] : contains(keys(var.odoo_api_keys), t)])
+    error_message = "odoo_api_keys must contain keys: goldberry, ggg, nursery."
   }
 }
 

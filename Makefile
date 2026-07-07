@@ -208,6 +208,38 @@ infisical-identities-destroy:
 # qa.* hostnames. Frontends deploy via grove-sites CI -> GHCR ->
 # deploy_on_push; droplets via terraform apply in that env.
 
+# ── QA Level 3 (qa-app-platform) ────────────────────────────────────────────
+# Lifecycle for the current QA env. Secrets flow: 1Password (Infisical
+# machine identity) -> Infisical (everything else). Requires `op` signed in.
+
+QA_L3_DIR := infra/terraform/environments/qa-app-platform
+QA_L3_INFISICAL_PROJECT := 850603f8-e175-4c38-9038-97a1e69d72e6
+QA_L3_OP_ITEM := qvkpvg24x2wbsn6owjyvn4vhx4
+
+## qa-l3-up: apply the full Level 3 QA env (droplets re-bootstrap from cloud-init)
+.PHONY: qa-l3-up
+qa-l3-up:
+	@INF_TOKEN="$$(infisical login --method=universal-auth \
+		--client-id="$$(op item get $(QA_L3_OP_ITEM) --fields label=infisical_admin_client_id --reveal)" \
+		--client-secret="$$(op item get $(QA_L3_OP_ITEM) --fields label=infisical_admin_client_secret --reveal)" \
+		--plain)"; \
+	infisical run --projectId=$(QA_L3_INFISICAL_PROJECT) --env=prod --token="$$INF_TOKEN" -- bash -c '\
+		export AWS_ACCESS_KEY_ID="$$SPACES_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$$SPACES_SECRET_ACCESS_KEY" \
+			TF_VAR_do_token="$$DIGITALOCEAN_TOKEN" TF_VAR_cloudflare_api_token="$$CLOUDFLARE_API_TOKEN" \
+			TF_VAR_grove_revalidate_secret="$$GROVE_REVALIDATE_SECRET" TF_VAR_odoo_api_keys="$$ODOO_API_KEYS_TF_JSON"; \
+		terraform -chdir=$(QA_L3_DIR) init -backend-config=backend.hcl -input=false >/dev/null; \
+		terraform -chdir=$(QA_L3_DIR) apply -input=false'
+
+## qa-l3-teardown: destroy compute only (apps + droplets); PG data/DNS/certs survive
+.PHONY: qa-l3-teardown
+qa-l3-teardown:
+	bash scripts/qa-l3-teardown.sh compute
+
+## qa-l3-teardown-all: destroy EVERYTHING incl. Managed PG data + DNS zone
+.PHONY: qa-l3-teardown-all
+qa-l3-teardown-all:
+	bash scripts/qa-l3-teardown.sh all
+
 # ── Help ─────────────────────────────────────────────────────────────────────
 
 .PHONY: help

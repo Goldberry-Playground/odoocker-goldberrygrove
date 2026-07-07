@@ -1,5 +1,14 @@
 name: Release — Production Deploy
 
+# DORMANT (audited 2026-07-07, #124): production doesn't exist yet. The
+# deploy-production job is triple-gated (version tag/dispatch only, the
+# `production` GitHub Environment approval, and the PROD_SSH_PRIVATE_KEY /
+# PROD_HOST secrets are not set) so it cannot fire accidentally. It is
+# also MONOLITH-SHAPED: runner-SSH-to-droplet contradicts the L3 pattern
+# (droplet firewalls scope port 22 to the admin IP; data goes IN via
+# cloud-init, deploys via image pull -- see the QA cutover). Redesign this
+# job when Level 3 production ships; do not just set the PROD_* secrets.
+#
 # Trigger: semantic version tag push OR manual dispatch.
 # The full job graph (sequential via needs:):
 #

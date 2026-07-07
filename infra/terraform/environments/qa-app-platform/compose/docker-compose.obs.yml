@@ -83,17 +83,34 @@ services:
       - "5080"
     networks:
       - internal
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:5080/healthz"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
+    # NO healthcheck: the openobserve v0.91 image is distroless (no sh,
+    # wget, curl, nc, or busybox -- verified 2026-07-05), so ANY exec-based
+    # probe fails forever and dependents gated on service_healthy never
+    # start. That exact failure held caddy in "Created" for 24h while
+    # openobserve itself ran fine. Caddy depends on service_started and
+    # just 502s for the few seconds until 5080 binds.
 
   # -- Keep - alert routing + workflow engine --------------------------------
+  # One-shot volume-permission fix: docker creates named volumes root-owned,
+  # but keep-api runs as uid 1000 (user `keep`) and sqlite needs to CREATE
+  # /app/data/keep.db -- without this chown the backend crash-loops with
+  # "sqlite3.OperationalError: unable to open database file" (2323 restarts
+  # before diagnosis, 2026-07-05).
+  keep-init:
+    image: busybox:1.36
+    volumes:
+      - keep-data:/app/data
+    command: chown -R 1000:1000 /app/data
+    networks:
+      - internal
+    restart: "no"
+
   keep-backend:
     image: us-central1-docker.pkg.dev/keephq/keep/keep-api:${KEEP_TAG}
     restart: unless-stopped
+    depends_on:
+      keep-init:
+        condition: service_completed_successfully
     environment:
       DATABASE_CONNECTION_STRING: sqlite:////app/data/keep.db
       AUTH_TYPE: NO_AUTH
@@ -108,7 +125,11 @@ services:
     networks:
       - internal
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthcheck"]
+      # 127.0.0.1, NOT localhost: /etc/hosts maps localhost to ::1 first,
+      # busybox wget does not fall back to IPv4, and gunicorn binds
+      # 0.0.0.0 (v4 only) -- so the localhost form is connection-refused
+      # forever while the API serves fine (diagnosed 2026-07-05).
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthcheck"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -149,8 +170,11 @@ services:
     networks:
       - internal
     depends_on:
+      # service_started, NOT service_healthy: openobserve's distroless
+      # image cannot carry an exec healthcheck (see the openobserve
+      # service comment above).
       openobserve:
-        condition: service_healthy
+        condition: service_started
       keep-frontend:
         condition: service_started
 

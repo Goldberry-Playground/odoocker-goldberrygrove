@@ -50,6 +50,7 @@ TITLE=""
 DESCRIPTION=""
 USERNAME="🧪 Grove QA"
 HEARTBEAT=0
+QUIET_SUCCESS=0
 declare -a FIELDS=()
 
 while [ $# -gt 0 ]; do
@@ -62,6 +63,7 @@ while [ $# -gt 0 ]; do
     --description=*) DESCRIPTION="${1#*=}" ;;
     --username=*)    USERNAME="${1#*=}" ;;
     --heartbeat)     HEARTBEAT=1 ;;
+    --quiet-success) QUIET_SUCCESS=1 ;;
     --field)         shift; FIELDS+=("$1") ;;
     *) echo "Unknown arg: $1" >&2; exit 1 ;;
   esac
@@ -139,6 +141,14 @@ else
   else
     variant="NORMAL_FAILURE"
   fi
+fi
+
+# --quiet-success: cron health checks run every N minutes; posting every
+# plain success is noise. With this flag, NORMAL_SUCCESS exits silently --
+# only failures + RECOVERED (streak break) reach Discord.
+if [ "$variant" = "NORMAL_SUCCESS" ] && [ "${QUIET_SUCCESS:-0}" = "1" ]; then
+  echo "  (quiet-success: healthy + no streak to clear; not posting)"
+  exit 0
 fi
 
 # ── Variant → display config (icon, color, title prefix, mention) ──────────

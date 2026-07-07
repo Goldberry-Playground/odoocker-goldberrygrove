@@ -5,8 +5,15 @@
 #   - NO frontend services (moved to DO App Platform - Phase 2)
 #   - ONE Caddy site (just Odoo) - no per-tenant routing
 #
-# Two services only: caddy (TLS termination + reverse proxy to odoo) and
-# odoo (Odoo 19 with custom modules baked in via the grove-odoo image).
+# Three services: caddy (TLS termination + reverse proxy to odoo), odoo,
+# and custom-modules-sync (git-sync sidecar). The grove-odoo image does NOT
+# bake in the grove-odoo-modules repo -- its Dockerfile only clones
+# third-party addons. Custom modules (grove_headless et al.) arrive the
+# same way production gets them: git-sync writes /workspace/current on a
+# shared volume, and ADDONS_PATH (in /etc/grove/.env) includes it.
+# Discovered 2026-07-05: the first L3 boot ran --init=base with an EMPTY
+# addons_path because nothing delivered the modules and ADDONS_PATH was
+# unset -- grove_headless was invisible to ir.module.module.
 # Postgres health-gate (PR #129) is irrelevant here - Odoo connects to
 # Managed PG over private VPC network; that connection is always ready
 # before Odoo starts.
@@ -58,7 +65,6 @@ services:
       # never actually booted Odoo unassisted.
       APP_ENV: qa
       WORKERS: "2"
-      LIST_DB: "false"
       # PROXY_MODE=true tells Odoo to trust X-Forwarded-* headers (which
       # Caddy sets). Without this, Odoo's CSRF + URL generation breaks
       # when behind a reverse proxy.
@@ -74,6 +80,39 @@ services:
       # this env's first droplet was hand-patched instead, and the fix
       # evaporated on the first recreate. Same lesson, now in code.
       - /etc/grove/.env:/.env:ro
+      # Custom modules delivered by the custom-modules-sync sidecar below.
+      # ADDONS_PATH (set in /etc/grove/.env, substituted into odoo.conf by
+      # odoorc.sh at container start) must include /workspace/current.
+      - custom-modules-data:/workspace:ro
+    networks:
+      - grove
+    depends_on:
+      # service_started only -- git-sync has no shell for a healthcheck.
+      # If odoo wins the race before /workspace/current exists, it exits
+      # and `restart: unless-stopped` retries until the first sync lands
+      # (seconds; the repo is small and cloned --depth 1).
+      custom-modules-sync:
+        condition: service_started
+
+  # Same delivery mechanism as production's custom-modules-sync: git-sync
+  # clones grove-odoo-modules and maintains /workspace/current -> latest.
+  # The repo is PUBLIC, so no GITSYNC_USERNAME/PASSWORD here -- keep it
+  # that way; /etc/grove/.env is mode 0644 and must stay credential-light.
+  custom-modules-sync:
+    image: registry.k8s.io/git-sync/git-sync:${GIT_SYNC_TAG:-v4.2.3@sha256:19cc7c317d125c5737ecb9a9159d00b5d97f39c45225c6483de365d62fc09fa8}
+    restart: unless-stopped
+    # Run as root so it can write to the shared volume regardless of mount
+    # permissions (matches the production service).
+    user: "0:0"
+    volumes:
+      - custom-modules-data:/workspace
+    environment:
+      - GITSYNC_REPO=${CUSTOM_MODULES_REPO:-https://github.com/Goldberry-Playground/grove-odoo-modules.git}
+      - GITSYNC_REF=${CUSTOM_MODULES_REF:-main}
+      - GITSYNC_ROOT=/workspace
+      - GITSYNC_LINK=current
+      - GITSYNC_DEPTH=1
+      - GITSYNC_PERIOD=${CUSTOM_MODULES_SYNC_PERIOD:-60s}
     networks:
       - grove
 
@@ -84,3 +123,5 @@ networks:
 volumes:
   caddy-config:
   odoo-filestore:
+  # Shared between custom-modules-sync (writer) and odoo (reader)
+  custom-modules-data:
