@@ -5,7 +5,7 @@ variable "do_token" {
 }
 
 variable "cloudflare_api_token" {
-  description = "Cloudflare API token with Zone.DNS edit + Zone.Zone read + Zone Settings edit on all four brand zones."
+  description = "Cloudflare ACCOUNT-scoped API token covering all four brand zones: Zone.DNS edit + Zone.Zone read + Zone Settings edit + SSL and Certificates edit (the latter authorizes cloudflare_origin_ca_certificate; the legacy Origin CA Key is deprecated). 1P field: account_cloudflare_api_token."
   type        = string
   sensitive   = true
 }

@@ -6,10 +6,10 @@ Managed PG / Odoo droplet / App Platform arrive with the Track 2 plan.
 ## Apply (manual by decision)
 
 1. `cp backend.hcl.example backend.hcl`
-2. Create `.env.op` mapping op:// refs -> TF_VAR_* + AWS_* (see qa-app-platform README for the pattern). Required:
-   - TF_VAR_do_token, TF_VAR_cloudflare_api_token
+2. `.env.op` (committed in this dir) maps op:// refs -> TF_VAR_* + AWS_*. Required:
+   - TF_VAR_do_token, TF_VAR_cloudflare_api_token (ACCOUNT-scoped token incl. "SSL and Certificates: Edit" - authorizes Origin CA cert issuance; the legacy Origin CA Key is deprecated)
    - TF_VAR_spaces_access_id, TF_VAR_spaces_secret_key
-   - TF_VAR_admin_ip_cidr, TF_VAR_healthchecks_ping_url
+   - admin_ip_cidr + healthchecks_ping_url live in terraform.tfvars (gitignored)
    - AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY (state backend)
 3. `terraform init -backend-config=backend.hcl`
 4. `op run --env-file=.env.op -- terraform plan`
