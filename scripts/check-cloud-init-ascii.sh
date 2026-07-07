@@ -26,10 +26,7 @@
 set -euo pipefail
 
 DEFAULT_FILES=(
-  # monolith QA
-  "infra/terraform/environments/qa/cloud-init.yaml.tpl"
-  "infra/terraform/environments/qa/compose/docker-compose.qa.yml"
-  "infra/terraform/environments/qa/compose/Caddyfile.tpl"
+  # (monolith QA entries removed 2026-07-07 -- env deleted at Phase 4+5 cutover)
   # Level 3 (ADR-007) -- added 2026-07-01 after Level 3 first-boot failed
   # exactly this way: em-dashes + arrows + box-drawing in cloud-init.yaml.tpl
   # caused YAML #x0080 parse error at cloud-init time. The droplet booted +
@@ -95,9 +92,9 @@ Common culprits (replace with ASCII equivalents):
 To bulk-fix in one go:
   python3 - <<'PYEOF'
   import re
-  for p in ['infra/terraform/environments/qa/cloud-init.yaml.tpl',
-            'infra/terraform/environments/qa/compose/docker-compose.qa.yml',
-            'infra/terraform/environments/qa/compose/Caddyfile.tpl']:
+  for p in ['infra/terraform/environments/qa-app-platform/cloud-init.yaml.tpl',
+            'infra/terraform/environments/qa-app-platform/compose/docker-compose.qa.yml',
+            'infra/terraform/environments/qa-app-platform/compose/Caddyfile.tpl']:
       with open(p, 'rb') as f: d = f.read()
       out = bytearray()
       i = 0
