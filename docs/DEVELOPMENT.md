@@ -92,8 +92,27 @@ odoo-mcp edit-profile --name dev --password <your-admin-password>
 # Test connection
 odoo-mcp test --profile dev
 
-# Use in Claude Code — .mcp.json auto-configures the server
+# QA profile — points at the Level 3 QA instance with a dedicated Odoo
+# API key (named `odoo-mcp-qa` under Josh's user; backup copy in the
+# 1Password "Gatheringatthegrove" item). Lets AI sessions read/write QA
+# Odoo data (products, orders, taxes, stock) as MCP tool calls -- no
+# SSH, no ad-hoc XML-RPC scripts, no rebuilds.
+odoo-mcp add-profile --name qa \
+  --url https://odoo.qa.gatheringatthegrove.com \
+  --database odoo --user <your-odoo-login> --password <api-key> --test
+
+# Use in Claude Code — .mcp.json auto-configures the server (file is
+# git-ignored; copy .mcp.json.example)
 ```
+
+Change-delivery cheat sheet (what needs a rebuild vs not):
+
+| Change | Path | Rebuild? |
+|---|---|---|
+| Odoo DATA (products, stock, taxes, orders) | MCP tools / XML-RPC | no |
+| Custom module CODE (grove_headless etc.) | push to grove-odoo-modules main -> git-sync (~60s) + `-i`/`-u` module | no |
+| Odoo core/image deps (pip, third-party addons) | grove-odoo image rebuild | yes |
+| Frontends | grove-sites CI -> GHCR -> App Platform deploy_on_push | automatic |
 
 ## Full Grove Stack (with Ghost CMS)
 

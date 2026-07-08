@@ -18,10 +18,15 @@ QA_ZONE="${QA_ZONE:-qa.gatheringatthegrove.com}"
 fail=0
 
 echo "== HTTP sweep =="
-# odoo returns 303 (redirect to /odoo login), oo/keep 30x to their UIs;
-# any 2xx/3xx counts as serving. 000/5xx = degraded. 4xx is deliberate:
-# a 403/404 at the APEX of these services would be a routing regression.
-for host in hub goldberry ggg nursery odoo oo keep; do
+# odoo returns 303 (redirect to /odoo login); any 2xx/3xx counts as
+# serving. 000/5xx = degraded. 4xx is deliberate: a 403/404 at the APEX
+# of these services would be a routing regression.
+# oo/keep are NOT swept: the obs droplet firewall scopes 443 to the
+# admin CIDR (Keep runs NO_AUTH -- must never be public), so CI always
+# sees 000 and paged DEGRADED every 15min (2026-07-07). Obs-plane
+# health is covered by the App Platform phase checks below + the
+# OpenObserve monitors themselves (ADR-008).
+for host in hub goldberry ggg nursery odoo; do
   code=$(curl -sk -o /dev/null -w "%{http_code}" "https://${host}.${QA_ZONE}/" --connect-timeout 5 --max-time 12 2>/dev/null)
   case "$code" in
     2*|3*) echo "  ok   ${host}.${QA_ZONE} (${code})" ;;
