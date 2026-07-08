@@ -37,14 +37,30 @@ is gated** on the QA L3 soak sign-off (~2026-07-21+) and the @CEO final go
 - Reuses Track 1's SSH keys + the hub-zone Origin CA cert (its
   `*.gatheringatthegrove.com` SAN covers `odoo.`)
 
+## What lives here (Track 2 step 3 - GOL-116, apply gated)
+
+- App Platform apps: `grove-hub-prod` + 3 tenants (goldberry/ggg/nursery),
+  pro tier (`apps-d-1vcpu-0.5gb`, ~$12/mo each, ADR-007 D6) - see apps.tf
+- Env wiring: GROVE_ODOO_URL/ODOO_URL → https://odoo.gatheringatthegrove.com;
+  Ghost URLs → the live blog.* hosts; real per-tenant ODOO_API_KEY + shared
+  GROVE_REVALIDATE_SECRET + Ghost content keys (all GENERAL scope, injected via
+  TF_VAR from 1P/Infisical - stubs keep `plan` working pre-launch)
+- DO-native DEPLOYMENT_FAILED / DOMAIN_FAILED alerts (alert path #2)
+- **No `domain{}` blocks yet.** The four brand apexes are a one-way-door launch
+  cutover (GOL-116 decisions #1 CF-proxied-apex TLS pattern + #2 CEO-coordinated
+  flip). Until resolved+applied, the apps serve only on their
+  `*.ondigitalocean.app` ingress and the apexes keep serving Ghost. See the
+  "Apex cutover" block at the bottom of apps.tf.
+
 **Soak sign-off (GOL-105) must be green before `terraform apply`:** Managed PG
 perf + Odoo pool acceptable; App Platform TLS auto-renew clean; GHCR autodeploys
 reliable; durable filestore + droplet-replace test validated (GOL-93); three
 alert paths green; no unresolved incidents across the window. Then @-mention the
 CEO here for the final go.
 
-Still pending (GOL-105 child): App Platform specs (hub + 3 tenants, pro tier) +
-the brand-apex launch cutover.
+Still pending (GOL-116): resolve apex-cutover decisions #1/#2, add the
+`domain{}` blocks + Cloudflare apex→ingress records, and coordinate the
+launch-day flip with the CEO.
 
 ## History
 
