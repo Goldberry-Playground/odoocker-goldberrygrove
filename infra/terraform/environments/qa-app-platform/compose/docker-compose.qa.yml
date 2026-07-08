@@ -71,7 +71,14 @@ services:
       PROXY_MODE: "true"
       LIST_DB: "false"   # hide the DB selector since we have one fixed DB
     volumes:
-      - odoo-filestore:/var/lib/odoo
+      # Durable DO block volume (GOL-93). /mnt/odoo-filestore is a dedicated
+      # LABEL=filestore volume mounted by cloud-init; it survives a droplet
+      # replace, so product photos + ir.attachment binaries are NOT lost on
+      # recreate. Was a named docker volume (odoo-filestore) on the droplet's
+      # ephemeral disk -- a replace wiped every photo (asset-bundle 500s +
+      # orphaned ir.attachment rows). cloud-init chowns it to 101:101 (the
+      # official odoo image's uid:gid) before this stack comes up.
+      - /mnt/odoo-filestore:/var/lib/odoo
       # LOAD-BEARING (2026-07-04): the grove-odoo image's entrypoint runs
       # /odoorc.sh (which substitutes the literal placeholder strings in
       # /etc/odoo/odoo.conf) ONLY when /.env exists in the container.
@@ -122,6 +129,7 @@ networks:
 
 volumes:
   caddy-config:
-  odoo-filestore:
+  # NOTE: no odoo-filestore named volume anymore -- the Odoo filestore is a
+  # durable DO block volume bind-mounted at /mnt/odoo-filestore (GOL-93).
   # Shared between custom-modules-sync (writer) and odoo (reader)
   custom-modules-data:

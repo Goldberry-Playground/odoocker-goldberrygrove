@@ -64,6 +64,17 @@ variable "droplet_image" {
   default     = "ubuntu-24-04-x64"
 }
 
+variable "odoo_filestore_volume_size_gb" {
+  description = "Size (GiB) of the block volume backing the Odoo filestore (/var/lib/odoo). Product photos + all ir.attachment binaries live here and must survive a droplet replace (GOL-93). QA default is modest (~$1/mo); Phase-6 prod copies this pattern and sizes it up. Minimum DO block volume is 1 GiB."
+  type        = number
+  default     = 10
+
+  validation {
+    condition     = var.odoo_filestore_volume_size_gb >= 1
+    error_message = "odoo_filestore_volume_size_gb must be at least 1 (DO block-volume minimum)."
+  }
+}
+
 # === Managed Postgres ===
 
 variable "pg_size" {
