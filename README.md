@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Goldberry-Playground/odoocker-goldberrygrove/actions/workflows/ci.yml/badge.svg)](https://github.com/Goldberry-Playground/odoocker-goldberrygrove/actions/workflows/ci.yml)
 
-Multi-tenant Docker Compose stack for the **Gather at the Grove** ecosystem — three businesses on a single Odoo 19 instance with Ghost CMS headless blogs.
+Multi-tenant Odoo 19 + Ghost CMS stack for the **Gather at the Grove** ecosystem — three businesses on a single Odoo instance. Docker Compose runs this stack for **local development only**; QA and production run on the **Level 3** architecture (DO App Platform + Managed Postgres + a small Odoo droplet) — see [Deployment](#deployment).
 
 | Business | Domain | Ghost Blog |
 |----------|--------|------------|
@@ -24,57 +24,63 @@ Multi-tenant Docker Compose stack for the **Gather at the Grove** ecosystem — 
 - [Admin Panel Access](#admin-panel-access)
 - [Multi-Tenant Architecture](#multi-tenant-architecture)
 - [Custom Odoo Modules](#custom-odoo-modules)
-- [SSL/TLS Setup](#ssltls-setup)
+- [TLS Certificates](#tls-certificates)
 - [Backup and Restore](#backup-and-restore)
-- [Development vs Production](#development-vs-production)
+- [Development vs Deployed Environments](#development-vs-deployed-environments)
 - [Deployment](#deployment)
 - [Troubleshooting](#troubleshooting)
 - [Related Repositories](#related-repositories)
 
 ## Architecture
 
-```
-                        ┌──────────────────┐
-                        │   nginx-proxy     │
-                        │   :80  :443       │
-                        │   (Let's Encrypt) │
-                        └────────┬─────────┘
-                                 │
-                ┌────────────────┼────────────────┐
-                │                │                │
-                ▼                ▼                ▼
-┌───────────────────┐ ┌──────────────┐ ┌──────────────────┐
-│      nginx         │ │  ghost-gold  │ │   ghost-ggg      │
-│ (Odoo + Ghost      │ │  :2368       │ │   :2369          │
-│  routing)          │ │  SQLite      │ │   SQLite         │
-└────────┬──────────┘ └──────────────┘ └──────────────────┘
-         │                                         │
-         │            ┌──────────────┐             │
-         │            │ ghost-nursery│             │
-         │            │  :2370       │             │
-         │            │  SQLite      │             │
-         │            └──────────────┘             │
-         ▼                                         │
-┌─────────────────┐   ┌──────────────┐            │
-│    Odoo 19       │   │  PostgreSQL   │           │
-│    :8069         │──▶│  :5432        │           │
-│  grove_headless  │   │  (shared DB)  │           │
-│    API           │   └──────────────┘            │
-└────────┬────────┘                                │
-         │            ┌──────────────┐             │
-         ├───────────▶│  KeyDB/Redis  │◀───────────┘
-         │            │  (sessions)   │
-         │            └──────────────┘
-         │            ┌──────────────┐
-         └───────────▶│  MinIO (S3)   │
-                      │  (filestore)  │
-                      └──────────────┘
+There are two shapes: Docker Compose for local development, and **Level 3** ([ADR-007](docs/ADR/007-level-3-app-platform-migration.md)) for QA and production.
 
-┌──────────────────────┐
-│  custom-modules-sync  │  ← git-sync from grove-odoo-modules repo
-│  → /workspace/current │
-└──────────────────────┘
+### Local development (Docker Compose)
+
 ```
+┌──────────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+│ hub + 3 tenant    │ │  ghost-gold  │ │  ghost-ggg   │ │ ghost-nursery│
+│ frontends         │ │  :2368       │ │  :2369       │ │  :2370       │
+│ :3000-3003        │ │  SQLite      │ │  SQLite      │ │  SQLite      │
+└────────┬─────────┘ └──────────────┘ └──────────────┘ └──────────────┘
+         │  /grove/api/v1/*  (X-Grove-Tenant header)
+         ▼
+┌─────────────────┐   ┌──────────────┐
+│    Odoo 19       │   │  PostgreSQL   │
+│    :8069         │──▶│  :5432        │
+│  grove_headless  │   │  (shared DB)  │
+│    API           │   └──────────────┘
+└────────┬────────┘
+         │            ┌──────────────┐      ┌──────────────┐
+         ├───────────▶│  KeyDB/Redis  │      │  MinIO (S3)   │ (optional
+         │            │  (sessions)   │      │  (filestore)  │  profiles)
+         │            └──────────────┘      └──────────────┘
+         │
+   custom modules: ../grove-odoo-modules bind-mounted → /workspace/current
+```
+
+### QA / production (Level 3)
+
+```
+┌────────────────────────────┐    ┌────────────────────────────────┐
+│  DO App Platform            │    │  Odoo droplet (small)           │
+│  hub + 3 tenant frontends   │    │  ┌───────┐   ┌──────────────┐  │
+│  managed TLS, auto-deploys  │───▶│  │ Caddy │──▶│   Odoo 19     │  │
+│  from GHCR (deploy_on_push) │    │  └───────┘   └──────┬───────┘  │
+└────────────────────────────┘    │  ┌─────────────────┴────────┐  │
+                                   │  │ custom-modules-sync       │  │
+┌────────────────────────────┐    │  │ (git-sync sidecar →       │  │
+│  DO Managed Postgres        │◀───│  │  grove-odoo-modules)      │  │
+│  backups, private network   │    │  └──────────────────────────┘  │
+└────────────────────────────┘    └────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────┐
+│  Observability droplet — OpenObserve + Keep (separate plane,      │
+│  ADR-008)                                                          │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+Everything in the Level 3 diagram is Terraform-managed under `infra/terraform/environments/` (`qa-app-platform/` for QA; `production/` is a gated stub until ADR-007 Phase 6). The grove-odoo image bakes **no** custom modules — the git-sync sidecar delivers them at runtime. See [docs/DEPLOY-OVERVIEW.md](docs/DEPLOY-OVERVIEW.md) for the full deployment map.
 
 ## Prerequisites
 
@@ -90,9 +96,10 @@ Multi-tenant Docker Compose stack for the **Gather at the Grove** ecosystem — 
 
 ## Quick Start
 
-> **TL;DR for the full Grove ecosystem:** use the repo-root `Makefile`
-> (`make stack-up`) — it wraps every flag below. The longhand commands here
-> exist as documentation and for CI scripting.
+> **TL;DR for the full Grove ecosystem:** run `make all-up` from the
+> `gather-at-the-grove` top-level directory (one level above this repo) — it
+> wraps every flag below and is the canonical local bring-up. The longhand
+> commands here exist as documentation and for CI scripting.
 
 ### Local Development (Odoo + Postgres only)
 
@@ -232,8 +239,8 @@ cp .env.grove.example .env.grove
 | **odoo** | Custom (Odoo 19) | ERP application server | 8069 (HTTP), 8071 (longpolling), 8072 (debug) |
 | **postgres** | Custom (PostgreSQL 17) | Database | 5432 |
 | **nginx** | nginx | Odoo reverse proxy + Ghost routing | 80 (internal) |
-| **nginx-proxy** | nginxproxy/nginx-proxy | TLS termination, virtual host routing | 80, 443 |
-| **letsencrypt** | nginxproxy/acme-companion | Automatic SSL certificate renewal | — |
+| **nginx-proxy** | nginxproxy/nginx-proxy | *Legacy (pre-Level 3)* — TLS termination; not used in any deployed env | 80, 443 |
+| **letsencrypt** | nginxproxy/acme-companion | *Legacy (pre-Level 3)* — SSL renewal; not used in any deployed env | — |
 | **redis** | eqalpha/keydb | Session storage | 6379 |
 | **s3** | minio/minio | S3-compatible object storage (filestore) | 9000, 9001 |
 | **pgadmin** | pgadmin | Database management UI | 80 (internal) |
@@ -244,7 +251,10 @@ cp .env.grove.example .env.grove
 
 ## Compose Override Files
 
-Combine these files to configure different environments:
+Combine these files to configure different **local** environments. Deployed
+environments (QA/prod) do NOT use these files — the QA droplet runs the
+TF-managed compose at
+`infra/terraform/environments/qa-app-platform/compose/docker-compose.qa.yml`.
 
 | File | Purpose | Use With |
 |------|---------|----------|
@@ -252,7 +262,7 @@ Combine these files to configure different environments:
 | `docker-compose.override.local.yml` | Local dev: ports exposed, no restart, modules bind-mounted | Development |
 | `docker-compose.override.grove.yml` | Adds 3 Ghost CMS instances | Any Grove environment |
 | `docker-compose.override.sandbox.yml` | Sandbox: staging DB, dev Ghost instances | QA/Testing |
-| `docker-compose.override.production.yml` | Production: memory limits, restart policies, localhost binding | Production |
+| `docker-compose.override.production.yml` | *Legacy (pre-Level 3)* — retained as the home of the prod `GITSYNC_REF` module pin | Historical reference |
 
 **Common combinations:**
 
@@ -267,11 +277,6 @@ docker compose -f docker-compose.yml \
   -f docker-compose.override.grove.yml \
   -f docker-compose.override.local.yml \
   --profile odoo --profile postgres up -d
-
-# Production
-docker compose -f docker-compose.yml \
-  -f docker-compose.override.grove.yml \
-  -f docker-compose.override.production.yml up -d
 
 # Sandbox/QA
 docker compose -f docker-compose.yml \
@@ -290,7 +295,7 @@ docker compose -f docker-compose.yml \
 | `testing` | Creates test DB, installs `ADDONS_TO_TEST`, runs `TEST_TAGS` | Running module tests |
 | `full` | Installs `INIT` modules in `DB_NAME` | Fresh production DB replica |
 | `staging` | Sets `UPDATE=all`, upgrades all installed addons | Pre-deployment validation |
-| `production` | No demo data, no debug, enables Let's Encrypt | Live deployment |
+| `production` | No demo data, no debug, enables Let's Encrypt (legacy compose path) | Deployed envs (Level 3 droplet compose) |
 
 ## Admin Panel Access
 
@@ -362,55 +367,46 @@ After code changes, restart Odoo:
 docker compose -f docker-compose.yml -f docker-compose.override.local.yml restart odoo
 ```
 
-### Production
+### QA / Production (Level 3)
 
-The `custom-modules-sync` container (git-sync) automatically pulls the latest `main` branch every 30 seconds. No Docker rebuild needed.
+The grove-odoo image bakes **no** custom modules. On the Odoo droplet, the
+`custom-modules-sync` sidecar (git-sync) delivers them at runtime into
+`/workspace/current`:
+
+- **QA** tracks the `main` branch of grove-odoo-modules (polling; no Docker
+  rebuild needed).
+- **Production** pins a specific SHA via `GITSYNC_REF` — a module bump is an
+  explicit, reviewed infra PR. See the "Bumping the prod modules SHA"
+  procedure in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#module-updates).
+  Never set `GITSYNC_REF=main` in production.
 
 ```bash
-# Install/upgrade modules via CLI
+# Install/upgrade modules via CLI (inside the Odoo container)
 docker compose exec odoo odoo -d odoo --init grove_headless --stop-after-init
 docker compose exec odoo odoo -d odoo --update grove_headless --stop-after-init
 ```
 
-## SSL/TLS Setup
+## TLS Certificates
 
-SSL is handled automatically by the `letsencrypt` (ACME companion) container in production.
+- **Local:** plain HTTP — no TLS.
+- **QA/prod frontends:** DO App Platform provisions and renews certificates
+  automatically. Nothing to configure.
+- **Odoo + observability droplet hosts:** Caddy obtains certificates via the
+  DO DNS solver, with the 4-layer resilience stack from
+  [ADR-005](docs/ADR/005-qa-cert-resilience-stack.md) (persistent `/data`
+  volume, multi-issuer fallback, orphan-TXT cleanup, staging-to-prod
+  auto-upgrade).
 
-### Setup Steps
-
-1. **Point DNS records** for all domains to your server:
-   - `erp.goldberrygrove.farm`
-   - `blog.goldberrygrove.farm`
-   - `blog.woodworkingeorge.com`
-   - `blog.atthegrovenursery.com`
-
-2. **Switch from staging to production ACME** in `.env`:
-
-   ```bash
-   # Staging (for testing — issues untrusted certs):
-   ACME_CA_URI=https://acme-staging-v02.api.letsencrypt.org/directory
-
-   # Production (for go-live — issues trusted certs):
-   ACME_CA_URI=https://acme-v02.api.letsencrypt.org/directory
-   ```
-
-3. **Set the Let's Encrypt email** in `.env`:
-
-   ```bash
-   DEFAULT_EMAIL=admin@goldberrygrove.farm
-   ```
-
-4. **Use the production compose override:**
-
-   ```bash
-   docker compose -f docker-compose.yml \
-     -f docker-compose.override.grove.yml \
-     -f docker-compose.override.production.yml up -d
-   ```
-
-Certificates are auto-renewed before expiration.
+> **Historical:** the nginx-proxy + acme-companion (`letsencrypt` container)
+> flow described in older revisions of this README was retired with the
+> monolith QA env (PRs #171 and #181). Do not follow it for any deployed
+> environment.
 
 ## Backup and Restore
+
+> The commands below apply to the **local compose stack** (and any environment
+> where Postgres runs as a container). QA/prod use **DO Managed Postgres**,
+> which has automated backups and point-in-time recovery built in.
 
 ### Odoo Database Backup
 
@@ -460,91 +456,72 @@ docker compose cp ghost-ggg:/var/lib/ghost/content ./ghost-ggg-backup
 docker compose cp ghost-nursery:/var/lib/ghost/content ./ghost-nursery-backup
 ```
 
-## Development vs Production
+## Development vs Deployed Environments
 
-| Aspect | Development | Production |
-|--------|-------------|------------|
+| Aspect | Local development | QA / Production (Level 3) |
+|--------|-------------------|---------------------------|
+| Platform | Docker Compose (OrbStack) | DO App Platform + droplets (Terraform) |
+| Frontends | Compose `frontends` profile (:3000-3003) | App Platform apps, auto-deploy from GHCR |
+| Database | `postgres` container | DO Managed Postgres (private network) |
 | `APP_ENV` | `local` or `debug` | `production` |
 | `WORKERS` | `0` (single-threaded) | `2+` (multi-process) |
 | `LIST_DB` | `True` | `False` |
-| `ADMIN_PASSWD` | `odoo` | Strong password |
+| `ADMIN_PASSWD` | `odoo` | Strong password (via Infisical) |
 | `DEV_MODE` | `reload,qweb` | (empty) |
-| Ports | Exposed to host | Bound to `127.0.0.1` |
-| Restart policy | `no` | `unless-stopped` |
-| Memory limits | None | 2GB Odoo, 2GB Postgres |
-| SSL | None | Auto via Let's Encrypt |
-| Custom modules | Bind-mounted from local | git-sync from GitHub |
+| TLS | None | App Platform (frontends) + Caddy (droplet hosts) |
+| Custom modules | Bind-mounted from `../grove-odoo-modules` | git-sync sidecar (prod pins `GITSYNC_REF` SHA) |
 | Demo data | Loaded | Disabled |
 
 ## Deployment
 
-### Initial Deployment
+Clone-to-server compose deploys are **retired**. The monolith QA droplet was
+cut over to Level 3 (PR #171, 2026-07-04) and fully torn down (PR #181,
+2026-07-07 — env directory and pipeline workflows deleted). QA and production
+follow [ADR-007](docs/ADR/007-level-3-app-platform-migration.md); the living
+map of all deployment targets is
+[docs/DEPLOY-OVERVIEW.md](docs/DEPLOY-OVERVIEW.md).
+
+### Local
 
 ```bash
-# 1. Clone to server
-git clone git@github.com:Goldberry-Playground/odoocker-goldberrygrove.git
-cd odoocker-goldberrygrove
-
-# 2. Configure environment
-cp .env.example .env
-cp .env.grove.example .env.grove
-# Edit both files with production values:
-#   - Strong passwords (ADMIN_PASSWD, DB_PASSWORD)
-#   - Real domains
-#   - Production ACME_CA_URI
-#   - WORKERS=2 or more
-#   - LIST_DB=False
-
-# 3. Build and start
-docker compose -f docker-compose.yml \
-  -f docker-compose.override.grove.yml \
-  -f docker-compose.override.production.yml \
-  up -d --build
-
-# 4. Check logs
-docker compose logs -f odoo
+cd ~/Documents/Dev\ Projects/gather-at-the-grove/
+make all-up          # postgres + odoo + frontends (canonical local bring-up)
+make monitoring-up   # optional: OpenObserve + Keep
 ```
 
-### Subsequent Updates
+### QA (Level 3 — live)
 
-```bash
-# Pull latest changes
-git pull origin main
+Everything is Terraform-managed under
+`infra/terraform/environments/qa-app-platform/`. There is no droplet-rebuild
+pipeline in this repo anymore:
 
-# Rebuild and restart
-docker compose -f docker-compose.yml \
-  -f docker-compose.override.grove.yml \
-  -f docker-compose.override.production.yml \
-  up -d --build
+- **Frontends** — grove-sites CI publishes images to GHCR; the App Platform
+  apps auto-redeploy (`deploy_on_push`). No SSH, no compose, no cert dance.
+- **Odoo + observability droplets** — `terraform apply` in the
+  `qa-app-platform` env (droplet compose + Caddy come from the env's
+  `compose/` and cloud-init templates).
+- **Custom modules** — git-sync sidecar pulls grove-odoo-modules (see
+  [Custom Odoo Modules](#custom-odoo-modules)).
+- **URLs** — `hub.qa.gatheringatthegrove.com`, `goldberry.qa.*`, `ggg.qa.*`,
+  `nursery.qa.*`, `odoo.qa.*` (plus firewall-allowlisted `oo.qa.*` /
+  `keep.qa.*` for observability).
 
-# Check logs
-docker compose logs -f odoo
-```
+### Production (Phase 6 — pending)
 
-### Full Upgrade (staging → production)
+Production is **not yet deployable**: `infra/terraform/environments/production/`
+is a gated stub behind a "DO NOT DEPLOY YET" banner until ADR-007 Phase 6
+replicates the QA shape (larger sizes, HA Managed Postgres). Status updates
+land in that env's README.
 
-```bash
-# 1. Backup database first!
-docker compose exec postgres pg_dump -U odoo -Fc odoo > backup_$(date +%Y%m%d).dump
+### Reference docs
 
-# 2. Pull everything fresh
-docker compose down
-git pull
-docker compose pull
-docker compose build --no-cache
-
-# 3. Set APP_ENV=staging in .env temporarily to update all modules
-# 4. Start and monitor
-docker compose -f docker-compose.yml \
-  -f docker-compose.override.grove.yml \
-  -f docker-compose.override.production.yml \
-  up -d
-docker compose logs -f odoo
-
-# 5. After upgrade completes, set APP_ENV=production in .env
-# 6. Restart
-docker compose restart odoo
-```
+| Doc | What it covers |
+|-----|----------------|
+| [docs/DEPLOY-OVERVIEW.md](docs/DEPLOY-OVERVIEW.md) | Which doc/env to use for local, QA, prod |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Legacy checklist; still canonical for the prod `GITSYNC_REF` bump procedure |
+| [docs/ADR/007-level-3-app-platform-migration.md](docs/ADR/007-level-3-app-platform-migration.md) | The Level 3 decision + phased execution plan |
+| [docs/ADR/008-observability-openobserve-supersedes-adr004.md](docs/ADR/008-observability-openobserve-supersedes-adr004.md) | OpenObserve + Keep observability plane |
+| [docs/ADR/](docs/ADR/) | All architecture decision records (001-008) |
 
 ## Troubleshooting
 
@@ -599,16 +576,17 @@ docker compose restart ghost-goldberry
 
 Also verify that `nginx/grove-ghost.conf` is mounted into the nginx container.
 
-### TLS certificate issues
+### TLS certificate issues (QA/prod)
+
+Frontend TLS is managed by App Platform — if a frontend cert misbehaves,
+check the app in the DO console. For the droplet hosts (Caddy):
 
 ```bash
-# Check ACME companion logs
-docker compose logs letsencrypt
+# Verify DNS resolves
+dig +short odoo.qa.gatheringatthegrove.com
 
-# Verify DNS resolves to your server
-dig +short erp.goldberrygrove.farm
-
-# If using staging certs, switch to production ACME_CA_URI in .env
+# Check Caddy logs on the droplet, then see ADR-005 for the
+# cert-resilience layers (staging-cert auto-upgrade runs every 6h)
 ```
 
 ### Disk space

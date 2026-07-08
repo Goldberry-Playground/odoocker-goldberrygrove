@@ -1,6 +1,6 @@
 # ADR 007: Level 3 — migrate QA + prod to DO App Platform + Managed Postgres
 
-**Status:** Accepted (planning)
+**Status:** Accepted — executed for QA (Phases 1-5 complete, 2026-07-07); prod (Phase 6) pending
 **Date:** 2026-06-26
 **Deciders:** Josh Dunbar
 **Implementation target:** start after 2026-06-27 21:30 UTC (LE rate-limit clears + today's PRs validate end-to-end)
