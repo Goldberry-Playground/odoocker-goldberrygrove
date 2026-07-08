@@ -1,5 +1,5 @@
 variable "cloudflare_api_token" {
-  description = "Cloudflare API token. Needs Zone -> Zone -> Read AND Zone -> Firewall Services -> Edit on every zone in var.zone_names. From GoldberryGrove Infra / cloudflare_api_token."
+  description = "Cloudflare API token. Needs Zone -> Zone -> Read AND Zone -> Firewall Services -> Edit on every zone in var.zone_names, PLUS Zone -> Cache Rules -> Edit on gatheringatthegrove.com (for the GOL-93 Odoo /web/image/* cache ruleset). From GoldberryGrove Infra / cloudflare_api_token."
   type        = string
   sensitive   = true
 }
