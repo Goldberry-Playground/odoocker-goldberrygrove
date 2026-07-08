@@ -3,9 +3,14 @@
 #
 # Build-out order (Grove Production Launch spec, 2026-07-04):
 #   1. blogs.tf      - Ghost blogs droplet + blog.* DNS + backups   (Track 1)
-#   2. Managed PG    - (Track 2, later PR)
-#   3. Odoo droplet  - (Track 2, later PR)
-#   4. App Platform  - (Track 2, later PR)
+#   2. postgres.tf   - Managed Postgres (basic tier, backups/PITR)  (Track 2, GOL-105)
+#   3. odoo.tf       - Odoo droplet + Caddy + durable filestore vol (Track 2, GOL-105)
+#   4. App Platform  - hub + 3 tenant frontends, pro tier           (Track 2, GOL-105 child)
+#
+# Track 2 apply is GATED on the QA L3 soak sign-off (~2026-07-21+) and the
+# @CEO final go (GOL-105). App Platform (step 4) is carved into a child issue
+# because its custom domains are the four live brand APEXES - the launch
+# cutover is a one-way door needing CEO coordination.
 #
 # Track 1 replaces the two hand-managed Ghost snowflake droplets
 # (gatheratthegrove-blog-nyc, ghostgoldberrygrove-nyc1). Until the launch

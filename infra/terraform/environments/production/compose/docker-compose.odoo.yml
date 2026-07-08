@@ -1,0 +1,105 @@
+# docker-compose for the Level 3 PRODUCTION Odoo droplet (ADR-007 Phase 6).
+#
+# Copied from the validated QA L3 compose (environments/qa-app-platform/
+# compose/docker-compose.qa.yml). Two deliberate divergences from QA:
+#   1. caddy: official `caddy` image + Origin CA cert files (no ACME, no
+#      grove-caddy DO-DNS plugin) - matches the blogs droplet, since prod
+#      Odoo is Cloudflare-proxied. No /mnt/caddy-data ACME volume needed.
+#   2. odoo: APP_ENV=production (single fixed Managed-PG DB, --init=base on
+#      first boot, no --update=all churn on restart - see odoo/entrypoint.sh).
+#
+# Three services: caddy (TLS + reverse proxy), odoo, and custom-modules-sync
+# (git-sync sidecar that delivers grove_headless et al. into /workspace/current;
+# ADDONS_PATH in /etc/grove/.env includes it). Postgres is OFFLOADED to DO
+# Managed PG - Odoo connects over the private VPC network via env.
+
+services:
+  caddy:
+    image: caddy:${CADDY_TAG:-2-alpine}
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /etc/grove/Caddyfile:/etc/caddy/Caddyfile:ro
+      - /etc/grove/certs:/certs:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - grove
+    depends_on:
+      odoo:
+        condition: service_started
+
+  odoo:
+    image: ghcr.io/goldberry-playground/grove-odoo:${ODOO_TAG:-latest}
+    restart: unless-stopped
+    expose:
+      - "8069"
+      - "8072" # longpolling
+    environment:
+      HOST: ${DB_HOST}
+      PORT: ${DB_PORT}
+      USER: ${DB_USER}
+      PASSWORD: ${DB_PASSWORD}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      ADMIN_PASSWD: ${ODOO_ADMIN_PASSWORD}
+      # production branch of the entrypoint dispatcher: fixed single DB
+      # (DB_NAME), --init=base first-boot bootstrap, no --update=all on
+      # restart. See odoo/entrypoint.sh (fixed for the L3 single-DB shape
+      # under GOL-105).
+      APP_ENV: production
+      WORKERS: "2"
+      # Trust Caddy's X-Forwarded-* headers (CSRF + URL generation).
+      PROXY_MODE: "true"
+      LIST_DB: "false" # one fixed DB; hide the selector
+    volumes:
+      # Durable DO block volume (GOL-93). Survives a droplet replace so product
+      # photos + ir.attachment binaries are not lost on recreate. cloud-init
+      # chowns it to 101:101 (official odoo image uid:gid) before this comes up.
+      - /mnt/odoo-filestore:/var/lib/odoo
+      # LOAD-BEARING: grove-odoo's entrypoint runs /odoorc.sh (substitutes the
+      # placeholder strings in /etc/odoo/odoo.conf) ONLY when /.env exists in
+      # the container. Without this mount Odoo crash-loops on a raw ${DB_PORT}.
+      - /etc/grove/.env:/.env:ro
+      # Custom modules delivered by the custom-modules-sync sidecar below.
+      - custom-modules-data:/workspace:ro
+    networks:
+      - grove
+    depends_on:
+      custom-modules-sync:
+        condition: service_started
+
+  # git-sync clones grove-odoo-modules and maintains /workspace/current ->
+  # latest. The repo is PUBLIC, so no credentials here - keep /etc/grove/.env
+  # credential-light (it is mode 0644).
+  custom-modules-sync:
+    image: registry.k8s.io/git-sync/git-sync:${GIT_SYNC_TAG:-v4.2.3@sha256:19cc7c317d125c5737ecb9a9159d00b5d97f39c45225c6483de365d62fc09fa8}
+    restart: unless-stopped
+    user: "0:0"
+    volumes:
+      - custom-modules-data:/workspace
+    environment:
+      - GITSYNC_REPO=${CUSTOM_MODULES_REPO:-https://github.com/Goldberry-Playground/grove-odoo-modules.git}
+      - GITSYNC_REF=${CUSTOM_MODULES_REF:-main}
+      - GITSYNC_ROOT=/workspace
+      - GITSYNC_LINK=current
+      - GITSYNC_DEPTH=1
+      - GITSYNC_PERIOD=${CUSTOM_MODULES_SYNC_PERIOD:-60s}
+    networks:
+      - grove
+
+networks:
+  grove:
+    driver: bridge
+
+volumes:
+  caddy-data:
+  caddy-config:
+  # No odoo-filestore named volume - the filestore is a durable DO block volume
+  # bind-mounted at /mnt/odoo-filestore (GOL-93).
+  custom-modules-data:
