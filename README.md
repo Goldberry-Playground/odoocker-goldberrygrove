@@ -10,7 +10,7 @@ Multi-tenant Odoo 19 + Ghost CMS stack for the **Gather at the Grove** ecosystem
 | George George George Woodworking, LLC | woodworkingeorge.com | blog.woodworkingeorge.com |
 | At The Grove Nursery, LLC | atthegrovenursery.com | blog.atthegrovenursery.com |
 
-> Fork of [odoocker](https://github.com/odoocker/odoocker) with Grove-specific overlays.
+> Standalone deployment stack, originally derived from the now-unmaintained [odoocker](https://github.com/odoocker/odoocker) project (upstream last updated Aug 2024; fully diverged since).
 
 ## Table of Contents
 
@@ -622,7 +622,6 @@ Always backup before any destructive operation.
 |------|---------|
 | [grove-sites](https://github.com/Goldberry-Playground/grove-sites) | Next.js monorepo — React frontends consuming Odoo and Ghost APIs |
 | [grove-odoo-modules](https://github.com/Goldberry-Playground/grove-odoo-modules) | Custom Odoo 19 modules — `grove_headless` REST API |
-| [odoocker](https://github.com/odoocker/odoocker) | Upstream framework this repo is forked from |
 
 ## License
 
