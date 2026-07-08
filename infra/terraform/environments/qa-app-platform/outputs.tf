@@ -34,6 +34,11 @@ output "caddy_data_volume_id" {
   value       = digitalocean_volume.caddy_data.id
 }
 
+output "odoo_filestore_volume_id" {
+  description = "Volume ID of the durable Odoo filestore (/var/lib/odoo) block volume (GOL-93). Survives droplet replacement so product photos + ir.attachment binaries are not lost on recreate. The Phase-6 prod backup job snapshots this volume's contents to Spaces."
+  value       = digitalocean_volume.odoo_filestore.id
+}
+
 # === Observability outputs ===
 
 output "obs_droplet_ip" {

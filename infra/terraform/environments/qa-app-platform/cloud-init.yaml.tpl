@@ -30,11 +30,17 @@ packages:
   - postgresql-client       # smoke-test connectivity to Managed PG (psql)
   - lsb-release
 
-# Persistent Caddy /data volume - same pattern as monolith QA (ADR-005 PR-A).
-# Bind via LABEL=data so the device name doesn't matter and re-attaches
-# survive reboot. The systemd mount unit options retry on transient failures.
+# Persistent volumes - same pattern as monolith QA (ADR-005 PR-A).
+# Bind via LABEL so the device name doesn't matter and re-attaches survive
+# reboot. The systemd mount unit options retry on transient failures.
+#   - LABEL=data      -> Caddy /data (LE certs + ACME account)
+#   - LABEL=filestore -> Odoo filestore /var/lib/odoo (product photos +
+#     ir.attachment binaries). DISTINCT label so LABEL= mounts stay
+#     unambiguous with both volumes attached. Survives droplet replace so a
+#     recreate never wipes product photos (GOL-93).
 mounts:
   - ["LABEL=data", "/mnt/caddy-data", "ext4", "defaults,nofail,noatime,discard,x-systemd.device-timeout=120,x-systemd.mount-timeout=30", "0", "2"]
+  - ["LABEL=filestore", "/mnt/odoo-filestore", "ext4", "defaults,nofail,noatime,discard,x-systemd.device-timeout=120,x-systemd.mount-timeout=30", "0", "2"]
 
 write_files:
   # /etc/grove/.env - consumed by docker compose. Mode 0644 (not 0600)
@@ -116,6 +122,14 @@ runcmd:
       [ $i -eq 60 ] && { echo "::error::Managed PG not ready after 5 min"; exit 1; }
       sleep 5
     done
+
+  # -- Make the durable filestore volume writable by the container's `odoo`
+  #    user. The grove-odoo image is FROM odoo:* (official), whose `odoo`
+  #    user is uid:gid 101:101; the bind-mounted host dir must be owned by it
+  #    or Odoo can't write attachments (product-image 500s). The `mounts:`
+  #    module has already mounted LABEL=filestore at /mnt/odoo-filestore by
+  #    the time runcmd fires. GOL-93.
+  - mkdir -p /mnt/odoo-filestore && chown -R 101:101 /mnt/odoo-filestore
 
   # -- Bring up the compose stack
   - cd /etc/grove && docker compose --env-file /etc/grove/.env up -d > /var/log/grove-qa-l3-up.log 2>&1

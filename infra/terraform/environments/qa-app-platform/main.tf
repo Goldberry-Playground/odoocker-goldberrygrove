@@ -198,6 +198,35 @@ resource "digitalocean_volume_attachment" "caddy_data" {
   volume_id  = digitalocean_volume.caddy_data.id
 }
 
+# ── Persistent Odoo filestore volume (GOL-93) ───────────────────────────────
+# The Odoo filestore (/var/lib/odoo) holds every product photo and all
+# ir.attachment binaries. Without a dedicated block volume it lives on the
+# droplet's ephemeral disk, so a droplet REPLACE wipes every photo — observed
+# in QA as asset-bundle 500s + orphaned ir.attachment rows after a recreate.
+#
+# Same volume + attachment + LABEL-mount plumbing as caddy_data above, but a
+# DISTINCT filesystem label ("filestore" vs "data") so cloud-init's LABEL=
+# mount stays unambiguous when both volumes are attached.
+#
+# This is the reusable pattern Phase-6 prod copies (sized up). Exercising a
+# droplet-replace against THIS volume in QA is the acceptance gate for the
+# prod launch blocker (GOL-93: "Must survive a droplet-replace test before
+# launch") — prod itself can't be replace-tested.
+resource "digitalocean_volume" "odoo_filestore" {
+  region                   = var.region
+  name                     = "${var.region}-grove-qa-l3-odoo-filestore"
+  size                     = var.odoo_filestore_volume_size_gb
+  initial_filesystem_type  = "ext4"
+  initial_filesystem_label = "filestore"
+  tags                     = local.tags
+  description              = "Persistent Odoo filestore (/var/lib/odoo) for the Level 3 Odoo droplet. Survives droplet teardown so product photos are not lost on recreate (GOL-93)."
+}
+
+resource "digitalocean_volume_attachment" "odoo_filestore" {
+  droplet_id = digitalocean_droplet.odoo.id
+  volume_id  = digitalocean_volume.odoo_filestore.id
+}
+
 # ── Odoo droplet ────────────────────────────────────────────────────────────
 # Tiny droplet running ONLY Odoo + Caddy. Postgres is offloaded to Managed
 # PG (above); frontends move to App Platform (Phase 2). This is the only
