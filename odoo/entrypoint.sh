@@ -191,10 +191,21 @@ case "$1" in
             fi
 
             if [ ${APP_ENV} = 'production' ] ; then
-                # Bring up Odoo ready for production.
-                echo odoo --config ${ODOO_RC} --database= --init=${INIT} --update=${UPDATE} --load=${LOAD} --workers=${WORKERS} --log-level=${LOG_LEVEL} --without-demo=${WITHOUT_DEMO} --load-language= --dev=
+                # Level-3 production (ADR-007 Phase 6, GOL-105): a single fixed
+                # database on DO Managed Postgres (DB_NAME), the same single-DB
+                # shape validated under APP_ENV=qa. The legacy empty-`--database=`
+                # form here assumed the old multi-DB/dbfilter model and never
+                # targeted the fixed L3 DB -- it could not bootstrap a fresh
+                # Managed-PG database. Now: --init=base on an EMPTY DB triggers
+                # Odoo's create-DB-and-install-base path on first boot of a fresh
+                # droplet; on later restarts (DB already populated) it is a no-op.
+                # Deliberately NO --update=all on restart: prod module upgrades
+                # are a deliberate deploy action, not a side effect of every
+                # `restart: unless-stopped` bounce (which would risk downtime +
+                # partial migrations). Demo data OFF.
+                echo odoo --config ${ODOO_RC} --database=${DB_NAME:-grove_prod} --init=${INIT:-base} --load=${LOAD:-web} --workers=${WORKERS:-2} --log-level=${LOG_LEVEL:-info} --without-demo=all
 
-                exec odoo --config ${ODOO_RC} --database= --init=${INIT} --update=${UPDATE} --load-language= --dev=
+                exec odoo --config ${ODOO_RC} --database=${DB_NAME:-grove_prod} --init=${INIT:-base} --without-demo=all --workers=${WORKERS:-2}
             fi
         fi
         ;;
