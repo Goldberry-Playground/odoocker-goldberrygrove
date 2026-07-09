@@ -118,10 +118,20 @@ runcmd:
       sleep 5
     done
 
-  # -- Make the durable filestore writable by the container's `odoo` user
-  # (official odoo image uid:gid 101:101), else attachment writes 500. The
-  # mounts: module has mounted LABEL=filestore by the time runcmd fires. GOL-93.
-  - mkdir -p /mnt/odoo-filestore && chown -R 101:101 /mnt/odoo-filestore
+  # -- Make the durable filestore writable by the container's `odoo` user, else
+  # attachment writes 500. Resolve uid:gid FROM THE IMAGE, not hardcoded: the
+  # official odoo:19 `odoo` user is 100:101, NOT 101:101 (verified 2026-07-09
+  # via `docker exec … id odoo`); GOL-93 shipped 101:101, which would leave the
+  # fresh volume unwritable. The probe pulls grove-odoo (compose-up reuses it);
+  # the 100:101 fallback is correct if the probe fails. The mounts: module has
+  # already mounted LABEL=filestore by the time runcmd fires.
+  - |
+    . /etc/grove/.env
+    IMG="ghcr.io/goldberry-playground/grove-odoo:$${ODOO_TAG:-latest}"
+    OUID=$(docker run --rm --entrypoint id "$IMG" -u odoo 2>/dev/null || echo 100)
+    OGID=$(docker run --rm --entrypoint id "$IMG" -g odoo 2>/dev/null || echo 101)
+    mkdir -p /mnt/odoo-filestore
+    chown -R "$OUID:$OGID" /mnt/odoo-filestore
 
   # -- Bring up the compose stack
   - cd /etc/grove && docker compose --env-file /etc/grove/.env up -d > /var/log/grove-prod-odoo-up.log 2>&1
