@@ -458,6 +458,34 @@ docker compose up -d --build
 
 ## Best Practices
 
+### Cloud-init / droplet invariants
+
+1. **Never hardcode a container's uid:gid — resolve it from the image.** The
+   grove-odoo image is `FROM` the official `odoo:19`, whose `odoo` user is
+   **`uid=100 gid=101`**, NOT 101:101. When a `runcmd` chowns a bind-mounted
+   host dir (e.g. the durable filestore volume at `/mnt/odoo-filestore`) for the
+   container to write, resolve the numbers from the image rather than guessing —
+   a wrong uid makes Odoo unable to write attachments (product-image 500s), the
+   exact failure a durable volume is meant to prevent. This bit GOL-93 (#192) +
+   the GOL-105 prod scaffold (#195); fixed in #198. Canonical pattern:
+   ```sh
+   . /etc/grove/.env
+   IMG="ghcr.io/goldberry-playground/grove-odoo:${ODOO_TAG:-latest}"
+   OUID=$(docker run --rm --entrypoint id "$IMG" -u odoo 2>/dev/null || echo 100)
+   OGID=$(docker run --rm --entrypoint id "$IMG" -g odoo 2>/dev/null || echo 101)
+   mkdir -p /mnt/odoo-filestore && chown -R "$OUID:$OGID" /mnt/odoo-filestore
+   ```
+   Verify the live value any time with `docker exec grove-odoo-1 id odoo`.
+2. **Verify a merged infra PR is actually `terraform apply`'d before relying on
+   it.** Applies for `qa-app-platform` / `production` are MANUAL (no apply
+   workflow — only "QA Health" up-checks run in CI). "Merged to main" ≠ "live on
+   the droplet." Check with `lsblk` / the DO Volumes view, not the PR badge.
+3. **Changing `user_data` (cloud-init OR the base64-embedded compose) forces a
+   droplet REPLACE.** Anything on the droplet's root disk (a named docker volume,
+   `/etc/grove` edits made by hand) is destroyed on the next apply. Durable state
+   must live on an attached block volume (`LABEL=`-mounted), and existing
+   root-disk data must be copied off before the replacing apply.
+
 ### Environment Isolation
 
 1. **Never share `.env` files** between environments — each gets its own copy

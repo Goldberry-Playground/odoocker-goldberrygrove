@@ -33,6 +33,12 @@ Ghost is NOT the website — it's a headless content source. Next.js is the fron
 | Sandbox/QA | `override.grove.yml` + `override.sandbox.yml` | `APP_ENV=staging`, sandbox DB |
 | Production | `override.grove.yml` + `override.production.yml` | Memory limits, `restart: unless-stopped`, git-sync active |
 
+## Deploy invariants (read before touching cloud-init / Terraform envs)
+
+- **Never hardcode a container uid:gid in a cloud-init `chown` — resolve it from the image.** The grove-odoo image's `odoo` user is **`uid=100 gid=101`** (FROM official `odoo:19`), NOT 101:101. Hardcoding the wrong uid makes Odoo unable to write its filestore (attachment/product-image 500s). Bit GOL-93 (#192) + GOL-105 (#195); fixed in #198. Full pattern + rationale: `.claude/skills/deploy-test/SKILL.md` → "Cloud-init / droplet invariants".
+- **"Merged to main" ≠ "applied."** `qa-app-platform` / `production` applies are manual (only "QA Health" runs in CI). Verify with `lsblk` / DO Volumes, not the PR badge.
+- **Changing `user_data` (cloud-init or the base64-embedded compose) forces a droplet REPLACE** — root-disk state is destroyed; durable data must be on a `LABEL=`-mounted block volume.
+
 ## Local Development
 
 Uses **OrbStack** as Docker runtime. Verify: `docker context ls` should show `orbstack *`.
