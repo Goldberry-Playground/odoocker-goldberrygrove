@@ -16,20 +16,14 @@ name: Docker — Odoo Image
 # Consumed by: preview/ TF env's docker-compose.preview.yml (PR #32), and
 # release.yml's verify-image step (renamed in this PR to match).
 #
-# ── Infisical identity assignment ──────────────────────────────────────────
-# Identity:   gh-oidc-odoocker-shared (UUID c502a60d-4b37-4e15-9fd7-8186c80c2ad0)
-# Project:    grove-odoocker (slug grove-odoocker-qu8p)
-# Trust:      bound_subject repo+ref; NO workflow_ref binding (shared)
-# Co-tenants: terraform-drift.yml, sandbox-reaper.yml, sandbox-deploy.yml
-#             — see infra/terraform/environments/infisical-identities/README.md
-#
+# ── Secrets ─────────────────────────────────────────────────────────────────
 # Currently fetches: nothing — this workflow uses only the GH-built-in
-# GITHUB_TOKEN for GHCR push (no Infisical secrets needed at build time).
-# The identity assignment is documented here so future additions (e.g., a
-# private base-image registry credential, a Trivy DB token) can use it
-# without re-deriving which slot fits. If you ADD a fetch step here, also
-# add `id-token: write` to job permissions and the Infisical/secrets-action
-# step using the env constants below.
+# GITHUB_TOKEN for GHCR push (no external secrets needed at build time).
+# If you ADD a secret here (e.g., a private base-image registry credential or
+# a Trivy DB token), load it from 1Password with the load-secrets-action +
+# OP_CI_SA_TOKEN pattern used by terraform-drift.yml / qa-health.yml
+# (op://Grove Prod/odoocker/<NAME>). Secrets come from 1Password per ADR-0001
+# Phase 3 (Infisical is retired) — never from GH Actions secrets.* directly.
 ###############################################################################
 
 on:
