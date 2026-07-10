@@ -39,13 +39,10 @@ jobs:
 
     permissions:
       contents: read
-      id-token: write   # OIDC for Infisical (webhook URL)
+      # no id-token needed: 1Password uses a service-account token, not OIDC
       actions: read     # streak history of the SOURCE workflow
 
     env:
-      INFISICAL_PROJECT_SLUG: grove-odoocker-qu8p
-      INFISICAL_ENV_SLUG: prod
-      INFISICAL_IDENTITY_ID: c502a60d-4b37-4e15-9fd7-8186c80c2ad0
       # workflow_run payload fields are repo-defined (workflow name) or
       # GitHub-generated (conclusion, urls) -- passed via env regardless,
       # per the injection-safe pattern.
@@ -59,16 +56,17 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         timeout-minutes: 2
 
-      - name: Fetch secrets from Infisical (OIDC)
-        uses: Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995 # v1.0.16
+      # Load the Discord webhook from 1Password (ADR-0001 Phase 3 — retires
+      # Infisical). export-env exposes DISCORD_OPS_WEBHOOK_URL to the Discord
+      # step below. Read-only grove-ci-prod-ro SA (OP_CI_SA_TOKEN).
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
         timeout-minutes: 2
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_CI_SA_TOKEN }}
+          DISCORD_OPS_WEBHOOK_URL: op://Grove Prod/odoocker/DISCORD_OPS_WEBHOOK_URL
         with:
-          method: oidc
-          identity-id: ${{ env.INFISICAL_IDENTITY_ID }}
-          project-slug: ${{ env.INFISICAL_PROJECT_SLUG }}
-          env-slug: ${{ env.INFISICAL_ENV_SLUG }}
-          secret-path: /
-          export-type: env
+          export-env: true
 
       - name: Discord
         timeout-minutes: 2

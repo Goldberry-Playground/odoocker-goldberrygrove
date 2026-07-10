@@ -5,11 +5,11 @@ name: Infracost
 # the next DO invoice. Pairs with the runtime DO-billing bridge (actuals) — this
 # is the pre-merge estimate.
 #
-# ── PREREQ (operator setup — NOT yet done; this workflow fails until it is) ──
-# Seed INFRACOST_API_KEY in Infisical grove-odoocker /prod. The key is free:
-# `infracost auth login` (or https://dashboard.infracost.io) → copy the key →
-# add it as INFRACOST_API_KEY. It's a pricing-DB lookup key, not a cloud
-# credential. Same self-documenting-prereq pattern as terraform-drift.yml.
+# ── PREREQ (operator setup — NOT yet done; this workflow skips until it is) ──
+# Seed INFRACOST_API_KEY in 1Password (op://Grove Prod/odoocker/INFRACOST_API_KEY).
+# The key is free: `infracost auth login` (or https://dashboard.infracost.io) →
+# copy the key → add it to the odoocker item. It's a pricing-DB lookup key, not
+# a cloud credential. Same self-documenting-prereq pattern as terraform-drift.yml.
 #
 # ── No DO creds needed ──
 # Infracost parses the Terraform HCL directly (no `terraform init` / no provider
@@ -35,33 +35,32 @@ jobs:
     permissions:
       contents: read
       pull-requests: write   # post/update the single cost comment
-      id-token: write        # OIDC → Infisical (per ADR 003; NEVER secrets.*)
-
-    env:
-      # Shared OIDC identity — same one terraform-drift.yml / sandbox-*.yml use.
-      # See infra/terraform/environments/infisical-identities/README.md.
-      INFISICAL_PROJECT_SLUG: grove-odoocker-qu8p
-      INFISICAL_ENV_SLUG: prod
-      INFISICAL_IDENTITY_ID: c502a60d-4b37-4e15-9fd7-8186c80c2ad0
+      # no id-token needed: 1Password uses a service-account token, not OIDC
 
     steps:
-      # Fetch INFRACOST_API_KEY from Infisical via GitHub OIDC (exports it as an
-      # env var for later steps). id-token: write mints the JWT for the exchange.
-      - name: Fetch secrets from Infisical (OIDC)
-        uses: Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995 # v1.0.16
+      # Load INFRACOST_API_KEY from 1Password (ADR-0001 Phase 3 — retires
+      # Infisical), exported to the job env for later steps. Read-only
+      # grove-ci-prod-ro SA (OP_CI_SA_TOKEN).
+      #
+      # continue-on-error is deliberate: load-secrets-action hard-fails if an
+      # op:// ref can't resolve, but this required check MUST NOT block merges
+      # before the key is seeded. If the key is absent the step fails, the env
+      # var stays unset, and the gate below skips the cost diff (job green) —
+      # the same graceful-skip contract the old Infisical fetch gave.
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
+        continue-on-error: true
         timeout-minutes: 2
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_CI_SA_TOKEN }}
+          INFRACOST_API_KEY: op://Grove Prod/odoocker/INFRACOST_API_KEY
         with:
-          method: oidc
-          identity-id: ${{ env.INFISICAL_IDENTITY_ID }}
-          project-slug: ${{ env.INFISICAL_PROJECT_SLUG }}
-          env-slug: ${{ env.INFISICAL_ENV_SLUG }}
-          secret-path: /
-          export-type: env
+          export-env: true
 
       # Skip gracefully (job stays green) until INFRACOST_API_KEY is seeded in
-      # Infisical. A required check must not block merges before the key exists;
+      # 1Password. A required check must not block merges before the key exists;
       # once it's present every pricing step below runs. INFRACOST_API_KEY is
-      # exported to the job env by the Infisical fetch step above (or simply
+      # exported to the job env by the load-secrets step above (or simply
       # absent if not yet seeded).
       - name: Gate on the Infracost API key
         id: gate
@@ -70,7 +69,7 @@ jobs:
           if [ -n "$INFRACOST_API_KEY" ]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::notice::INFRACOST_API_KEY not set in Infisical — skipping the cost diff. Seed it in grove-odoocker /prod to enable."
+            echo "::notice::INFRACOST_API_KEY not set in 1Password — skipping the cost diff. Seed op://Grove Prod/odoocker/INFRACOST_API_KEY to enable."
             echo "enabled=false" >> "$GITHUB_OUTPUT"
           fi
 
