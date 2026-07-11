@@ -1,0 +1,39 @@
+# Keep workflow — route severity=warning alerts to the Discord warning channel.
+#
+# SINGULAR `workflow:` doc (Keep 0.54.1 expects one workflow per uploaded file).
+# Uploaded by scripts/setup-monitoring.py via POST /workflows (multipart, field
+# `file`).
+#
+# GOL-278 verified live on grove-obs:
+#   - trigger match uses CEL (`cel: severity == "warning"`). The legacy
+#     `filters: [{key, value}]` form did NOT fire the workflow in 0.54.1.
+#   - the discord webhook is configured INLINE (config.authentication.webhook_url)
+#     rather than via "{{ providers.<name> }}". Keep 0.54.1's API-installed
+#     providers get non-deterministic UUID ids + soft-delete name residue, making
+#     the provider-reference lookup unreliable; inline config is self-contained and
+#     verified to deliver. setup-monitoring.py substitutes __DISCORD_WEBHOOK_WARNING__
+#     from env at upload time, so no secret lives in the repo.
+#   - the discord action param is `content`.
+#
+# alert fields ({{ alert.name }}, {{ alert.message }}, {{ alert.runbook_key }})
+# come from the OpenObserve → Keep event body (openobserve/keep-destination.json)
+# or a direct POST /alerts/event.
+workflow:
+  id: route-warning-to-discord
+  name: Warning to Discord
+  description: Route severity=warning alerts to the Discord warning channel (no @mention).
+  triggers:
+    - type: alert
+      cel: severity == "warning"
+  actions:
+    - name: discord-warning-notify
+      provider:
+        type: discord
+        config:
+          authentication:
+            webhook_url: "__DISCORD_WEBHOOK_WARNING__"
+        with:
+          content: >-
+            ⚠️ **Grove warning** — {{ alert.name }}
+            :: {{ alert.message }}
+            (runbook: docs/RUNBOOKS.md#{{ alert.runbook_key }})

@@ -1,6 +1,6 @@
 {
-  "_comment": "Grove synthetic HTTP/TCP monitors — bootstrap source of truth.",
-  "_lineage": "Consumed by scripts/setup-monitoring.py which POSTs each entry to OpenObserve's /api/{org}/synthetic endpoint. Idempotent — re-runs upsert by 'name'.",
+  "_comment": "Grove synthetic HTTP/TCP/SSL monitors — REFERENCE ONLY (GOL-278).",
+  "_lineage": "OpenObserve v0.91.1 has NO /synthetic endpoint — these are NOT OO objects and are no longer POSTed by scripts/setup-monitoring.py (the prior POST 404'd on every entry). This file describes the synthetic journeys/targets for the EXTERNAL synthetic-runner (Hurl, see synthetic/README.md), which pings these endpoints and ships pass/fail + latency to OpenObserve as OTLP metrics. The availability alerts in alerts.json (frontend/odoo/ghost/postgres/ssl) fire on that emitted uptime metric stream — extending the synthetic-runner to emit per-target uptime for these entries is the follow-up that lights them up.",
   "_url_strategy": "Targets use host.docker.internal:<port> for services on the gatheratthegrove-frontends compose project (hub + 3 storefronts), and service-name DNS (e.g. odoo:8069, ghost-goldberry:2368) for services on the shared internal network. In M2+ the host.docker.internal entries become public hostnames; service-name entries stay identical.",
   "monitors": [
     {
