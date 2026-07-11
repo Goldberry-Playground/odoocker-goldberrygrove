@@ -44,17 +44,23 @@ variable "ingest_source_cidrs" {
   default     = []
 }
 
+variable "automation_ssh_cidrs" {
+  description = "Extra CIDRs allowed SSH (22) for obs ops automation — the agenticos droplet runs setup-monitoring.py + collector wiring (/32 each). Authed by the obs-specific CI key. Empty = admin-only."
+  type        = list(string)
+  default     = []
+}
+
 # ── Observability stack config (flows into cloud-init → .env.monitoring) ──────
 variable "openobserve_tag" {
-  description = "OpenObserve image tag (pin; promoted via the release manifest once it exists)."
+  description = "OpenObserve image tag (public.ecr.aws/zinclabs/openobserve:<tag>). DIGEST-PINNED: upstream prunes old tags from public ECR (v0.17.2 vanished 2026-07-04 and every fresh obs droplet failed the pull — GOL-270 hit this on the first apply). Tag-only pins here are time bombs; keep the @sha256 suffix and match docker-compose.monitoring.yml on updates."
   type        = string
-  default     = "v0.17.2"
+  default     = "v0.91.1@sha256:e1ff0445fab3e748ac4cf630308cc8493579e50d19ad255bb3a3b8c1b710aaf7"
 }
 
 variable "keep_tag" {
-  description = "Keep image tag (pin; never :latest, per the deploy contract)."
+  description = "Keep image tag for keep-api + keep-ui (us-central1-docker.pkg.dev/keephq/keep/*). NOTE: GAR tags have NO 'v' prefix — the tag is '0.54.1', not 'v0.54.1' (GOL-270 first apply failed on keep-ui:v0.54.1 not-found). Never :latest, per the deploy contract."
   type        = string
-  default     = "v0.54.1"
+  default     = "0.54.1"
 }
 
 variable "openobserve_root_email" {

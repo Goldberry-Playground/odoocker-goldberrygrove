@@ -109,6 +109,18 @@ resource "digitalocean_firewall" "obs" {
     source_addresses = [var.admin_ip_cidr]
   }
 
+  # Automation SSH vantage — the agenticos droplet runs the obs ops automation
+  # (setup-monitoring.py, collector wiring per README). A /32 to our own box,
+  # authed by the obs-specific CI key (grove-obs-deploy). Empty = admin-only.
+  dynamic "inbound_rule" {
+    for_each = length(var.automation_ssh_cidrs) > 0 ? [1] : []
+    content {
+      protocol         = "tcp"
+      port_range       = "22"
+      source_addresses = var.automation_ssh_cidrs
+    }
+  }
+
   inbound_rule {
     protocol         = "tcp"
     port_range       = "5080" # OpenObserve UI + OTLP ingest (admin)
