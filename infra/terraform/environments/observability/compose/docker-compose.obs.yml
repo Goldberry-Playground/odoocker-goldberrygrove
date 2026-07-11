@@ -20,7 +20,7 @@ networks:
 
 services:
   openobserve:
-    image: public.ecr.aws/zinclabs/openobserve:${OPENOBSERVE_TAG:-v0.17.2}
+    image: public.ecr.aws/zinclabs/openobserve:${OPENOBSERVE_TAG:-v0.91.1@sha256:e1ff0445fab3e748ac4cf630308cc8493579e50d19ad255bb3a3b8c1b710aaf7}
     restart: unless-stopped
     environment:
       ZO_ROOT_USER_EMAIL: ${OPENOBSERVE_ROOT_EMAIL}
@@ -63,7 +63,7 @@ services:
     restart: "no"
 
   keep-backend:
-    image: us-central1-docker.pkg.dev/keephq/keep/keep-api:${KEEP_TAG:-latest}
+    image: us-central1-docker.pkg.dev/keephq/keep/keep-api:${KEEP_TAG:-0.54.1}
     # Published admin-only (grove-obs-fw :8080 rule): OpenObserve's alert
     # destination must POST to Keep via the droplet PUBLIC IP because OO v0.91.1's
     # SSRF guard rejects a private-IP destination (Keep's 172.18.x) at create
@@ -101,7 +101,7 @@ services:
       start_period: 60s
 
   keep-frontend:
-    image: us-central1-docker.pkg.dev/keephq/keep/keep-ui:${KEEP_TAG:-latest}
+    image: us-central1-docker.pkg.dev/keephq/keep/keep-ui:${KEEP_TAG:-0.54.1}
     restart: unless-stopped
     depends_on:
       - keep-backend

@@ -9,15 +9,30 @@
 # Lifecycle:  `terraform apply` provisions/updates in place.
 # Cost:       ~$12–24/mo (droplet) + Spaces (shared). See README.md.
 #
-# SCAFFOLD STATUS: fmt + validate pass, but this has NOT been `terraform apply`ed
-# yet — cloud-init + cross-plane ingest + Spaces wiring need live iteration (as
-# the qa env's PR history shows for the same class of work). Do not treat as
-# production-ready until a clean `terraform plan` + first apply is recorded.
-# Follow-ups tracked in README.md.
+# STATUS: APPLIED 2026-07-11 (GOL-270). grove-obs droplet (nyc3, s-2vcpu-4gb)
+# is live and boots a healthy OpenObserve+Keep stack from cloud-init unattended;
+# current IP via `terraform output obs_droplet_ip`. State at s3://grove-tf-state/
+# observability/terraform.tfstate. Remaining live wiring (agenticos collector
+# enablement GOL-54, setup-monitoring.py alert bootstrap, Keep :8080 API
+# reachability) tracked in README.md → Follow-ups.
 ###############################################################################
 
 provider "digitalocean" {
   token = var.do_token
+
+  # Spaces (S3) creds so this env can TF-manage the OpenObserve Parquet bucket
+  # below. Same DO Spaces keys OpenObserve itself uses (var.spaces_*).
+  spaces_access_id  = var.spaces_access_key
+  spaces_secret_key = var.spaces_secret_key
+}
+
+# OpenObserve Parquet storage bucket (S3-compatible DO Spaces). Codified here so
+# the bucket is idempotent and torn down with the env — not click-created. The
+# obs droplet's ZO_S3_BUCKET_NAME (cloud-init) points at this exact name.
+resource "digitalocean_spaces_bucket" "obs" {
+  name   = var.spaces_bucket
+  region = var.region
+  acl    = "private"
 }
 
 locals {
@@ -68,6 +83,7 @@ module "obs_droplet" {
     spaces_access_key         = var.spaces_access_key
     spaces_secret_key         = var.spaces_secret_key
     keep_webhook_token        = var.keep_webhook_token
+    keep_nextauth_secret      = var.keep_nextauth_secret
     cost_env                  = var.cost_env
     # base64 the compose so cloud-init's YAML parser never sees its content
     # (same technique the qa env uses for its compose/Caddyfile).
@@ -76,11 +92,14 @@ module "obs_droplet" {
 }
 
 # ── Firewall ──────────────────────────────────────────────────────────────
-# UIs (5080 OpenObserve, 3034 Keep) + SSH are admin-only. OTLP ingest from the
-# app-plane runners (synthetic-runner, cost-bridge) is admin-scoped for now;
-# TODO(live): add the app droplet's IP (or a DO VPC) as an ingest source, and
-# front OpenObserve ingest with the Cloudflare-WAF Bearer endpoint (spec §1)
-# for the off-droplet GitHub Actions Playwright/Hurl crons.
+# UIs (5080 OpenObserve, 3034 Keep) + SSH are admin-only (admin_ip_cidr). The
+# SEPARATE obs plane also needs CROSS-BOX OTLP ingest on 5080 from off-droplet
+# collectors — primarily the agenticos droplet (host.role=agenticos, GOL-54).
+# Those source CIDRs go in var.ingest_source_cidrs (a /32 per collector), kept
+# distinct from admin_ip_cidr so ingest never widens admin/UI access.
+# TODO(live): front OpenObserve ingest with the Cloudflare-WAF Bearer endpoint
+# (spec §1) for the off-droplet GitHub Actions Playwright/Hurl crons whose IPs
+# are dynamic and can't be pinned to a /32 here.
 resource "digitalocean_firewall" "obs" {
   name        = "grove-obs-fw"
   droplet_ids = [module.obs_droplet.droplet_id]
@@ -91,9 +110,49 @@ resource "digitalocean_firewall" "obs" {
     source_addresses = [var.admin_ip_cidr]
   }
 
+  # Automation SSH vantage — the agenticos droplet runs the obs ops automation
+  # (setup-monitoring.py, collector wiring per README). A /32 to our own box,
+  # authed by the obs-specific CI key (grove-obs-deploy). Empty = admin-only.
+  dynamic "inbound_rule" {
+    for_each = length(var.automation_ssh_cidrs) > 0 ? [1] : []
+    content {
+      protocol         = "tcp"
+      port_range       = "22"
+      source_addresses = var.automation_ssh_cidrs
+    }
+  }
+
   inbound_rule {
     protocol         = "tcp"
-    port_range       = "5080" # OpenObserve UI + OTLP ingest
+    port_range       = "5080" # OpenObserve UI + OTLP ingest (admin)
+    source_addresses = [var.admin_ip_cidr]
+  }
+
+  # Cross-plane OTLP ingest on 5080 from off-droplet collectors (agenticos
+  # droplet, etc.). Only rendered when at least one ingest CIDR is configured.
+  dynamic "inbound_rule" {
+    for_each = length(var.ingest_source_cidrs) > 0 ? [1] : []
+    content {
+      protocol         = "tcp"
+      port_range       = "5080"
+      source_addresses = var.ingest_source_cidrs
+    }
+  }
+
+  # Keep webhook/API on 8080 — admin-only. Published so OpenObserve's alert
+  # destination can POST to Keep via the droplet's PUBLIC IP: OO v0.91.1's SSRF
+  # guard REJECTS a destination whose URL resolves to a private IP (Keep's
+  # internal 172.18.x) at CREATE time, so the OO->Keep hop must target the
+  # public IP. That OO->Keep POST is a host-local hairpin (OpenObserve container
+  # -> host public IP:8080 -> Docker DNAT -> Keep) and NEVER traverses this cloud
+  # firewall, so it needs no allow entry here (verified: hairpin returned 200
+  # while 8080 had no inbound rule at all). setup-monitoring.py reaches Keep
+  # internally (keep-backend:8080 on the obs network), also not via this port.
+  # So the only external consumer is an admin debugging Keep -> admin_ip_cidr
+  # only. Keep is additionally X-API-KEY (WEBHOOK_TOKEN) gated. (GOL-279)
+  inbound_rule {
+    protocol         = "tcp"
+    port_range       = "8080" # Keep webhook/API (admin-only; OO->Keep is host-local hairpin)
     source_addresses = [var.admin_ip_cidr]
   }
 
