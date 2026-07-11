@@ -41,16 +41,33 @@ services:
       - "5080:5080"
     networks:
       - obs
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:5080/healthz", "||", "exit", "1"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
+    # No container healthcheck: the OpenObserve image is fully distroless (no
+    # sh/wget/curl/python), so any exec-based healthcheck can never run and
+    # Docker reports the container "unhealthy" even while /healthz returns 200
+    # (this false status misled the GOL-277 bring-up). Liveness is monitored
+    # externally via /healthz (setup-monitoring + the agenticos synthetic runner).
+
+  # One-shot: make the keep-data volume writable by the keep container user.
+  # The keep-api image runs as uid/gid 1000 (keep), but a fresh named volume is
+  # created root-owned (0755), so keep-api cannot create /app/data/keep.db and
+  # crash-loops with "sqlite3.OperationalError: unable to open database file"
+  # (the GOL-277 root cause). This init chowns the volume before keep-backend
+  # starts. Idempotent — safe to re-run on every `compose up`.
+  keep-init:
+    image: busybox:1.36
+    command: ["sh", "-c", "chown -R 1000:1000 /app/data"]
+    volumes:
+      - keep-data:/app/data
+    networks:
+      - obs
+    restart: "no"
 
   keep-backend:
     image: us-central1-docker.pkg.dev/keephq/keep/keep-api:${KEEP_TAG:-latest}
     restart: unless-stopped
+    depends_on:
+      keep-init:
+        condition: service_completed_successfully
     environment:
       DATABASE_CONNECTION_STRING: sqlite:////app/data/keep.db
       AUTH_TYPE: NO_AUTH
@@ -62,8 +79,11 @@ services:
       - keep-data:/app/data
     networks:
       - obs
+    # CMD-SHELL (not exec CMD): the exec form passes "||", "exit", "1" as literal
+    # argv to wget, so the check always failed and the container showed
+    # "unhealthy" despite /healthcheck returning 200. keep-api has sh + wget.
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthcheck", "||", "exit", "1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/healthcheck || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
