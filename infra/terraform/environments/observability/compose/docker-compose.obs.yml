@@ -82,8 +82,10 @@ services:
     # CMD-SHELL (not exec CMD): the exec form passes "||", "exit", "1" as literal
     # argv to wget, so the check always failed and the container showed
     # "unhealthy" despite /healthcheck returning 200. keep-api has sh + wget.
+    # Use 127.0.0.1, not localhost: inside the container localhost resolves to
+    # IPv6 ::1 first (connection refused) while the API binds IPv4 0.0.0.0 only.
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/healthcheck || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthcheck || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
