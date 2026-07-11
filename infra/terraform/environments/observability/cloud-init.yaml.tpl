@@ -2,7 +2,10 @@
 # Grove obs droplet bootstrap: install Docker, write the standalone OpenObserve +
 # Keep stack, bring it up. Alert routing + monitors/dashboards are applied
 # SEPARATELY by scripts/setup-monitoring.py run against this droplet's public
-# URLs (OPENOBSERVE_BASE_URL / KEEP_BASE_URL) from CI or an operator — not here.
+# URLs (OPENOBSERVE_BASE_URL / KEEP_BASE_URL) from CI or an operator, not here.
+# NOTE: keep this template ASCII-only. cloud-init's YAML parser rejects some
+# non-ASCII bytes (an em-dash here once broke parsing -> empty cloud config ->
+# a bare droplet with nothing installed). GOL-270.
 package_update: true
 
 write_files:
@@ -19,6 +22,7 @@ write_files:
       ZO_S3_ACCESS_KEY=${spaces_access_key}
       ZO_S3_SECRET_KEY=${spaces_secret_key}
       KEEP_WEBHOOK_TOKEN=${keep_webhook_token}
+      KEEP_NEXTAUTH_SECRET=${keep_nextauth_secret}
       # env label (qa|prod) stamped on metrics by setup-monitoring.py: ${cost_env}
 
   - path: /etc/grove-obs/docker-compose.obs.yml
