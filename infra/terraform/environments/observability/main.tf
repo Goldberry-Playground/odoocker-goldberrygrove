@@ -68,6 +68,7 @@ module "obs_droplet" {
     spaces_access_key         = var.spaces_access_key
     spaces_secret_key         = var.spaces_secret_key
     keep_webhook_token        = var.keep_webhook_token
+    keep_nextauth_secret      = var.keep_nextauth_secret
     cost_env                  = var.cost_env
     # base64 the compose so cloud-init's YAML parser never sees its content
     # (same technique the qa env uses for its compose/Caddyfile).

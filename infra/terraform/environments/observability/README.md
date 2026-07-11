@@ -41,6 +41,14 @@ KEEP_WEBHOOK_TOKEN=... DISCORD_WEBHOOK_WARNING=... DISCORD_WEBHOOK_CRITICAL=... 
 ```
 
 ## Follow-ups (need live iteration / other work)
+- **Keep API reachability for `setup-monitoring.py`:** `keep-backend` (API `:8080`)
+  is only reachable inside the compose `obs` network — it is **not** published to
+  the host nor opened in the firewall. A remote/CI `setup-monitoring.py` (which the
+  droplet-provisioning notes point at `KEEP_BASE_URL=http://<obs_ip>:8080`) therefore
+  can't reach it. On first live apply, either run `setup-monitoring.py` **from the
+  droplet** (localhost) or publish `8080` to the host and add an admin-scoped
+  `8080` firewall rule (mirroring 5080/3034). Deferred to the live pass because
+  exposing Keep's API has a blast-radius/auth call to make (see `KEEP_AUTH_TYPE`).
 - **Cross-plane ingest:** the app-plane `synthetic-runner` + `cost-bridge` ship OTLP
   to this droplet's `:5080`. Add the app droplet's IP (or a DO VPC) as an ingest
   firewall source, and point their `OPENOBSERVE_OTLP_METRICS_URL` at `<obs_ip>:5080`.

@@ -19,6 +19,7 @@ write_files:
       ZO_S3_ACCESS_KEY=${spaces_access_key}
       ZO_S3_SECRET_KEY=${spaces_secret_key}
       KEEP_WEBHOOK_TOKEN=${keep_webhook_token}
+      KEEP_NEXTAUTH_SECRET=${keep_nextauth_secret}
       # env label (qa|prod) stamped on metrics by setup-monitoring.py: ${cost_env}
 
   - path: /etc/grove-obs/docker-compose.obs.yml

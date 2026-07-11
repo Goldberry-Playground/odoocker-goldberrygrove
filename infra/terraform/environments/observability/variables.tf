@@ -46,9 +46,9 @@ variable "openobserve_tag" {
 }
 
 variable "keep_tag" {
-  description = "Keep image tag."
+  description = "Keep image tag (pin; never :latest, per the deploy contract)."
   type        = string
-  default     = "latest"
+  default     = "v0.54.1"
 }
 
 variable "openobserve_root_email" {
@@ -101,6 +101,12 @@ variable "discord_webhook_critical" {
 
 variable "keep_webhook_token" {
   description = "Keep webhook token (OpenObserve→Keep auth). Generate: openssl rand -hex 32."
+  type        = string
+  sensitive   = true
+}
+
+variable "keep_nextauth_secret" {
+  description = "Keep frontend NextAuth session secret. Generate: openssl rand -hex 32. Required — without it keep-frontend boots with the compose 'changeme' fallback the deploy contract forbids."
   type        = string
   sensitive   = true
 }
