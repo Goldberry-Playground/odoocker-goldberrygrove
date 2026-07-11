@@ -173,3 +173,131 @@ If Postgres won't start at all, you may need to roll back to a sanitized snapsho
 **Severity:** test · **Likely impact:** none.
 
 This is what `scripts/smoke-test-monitoring.sh` sends as a connectivity probe. If it arrives in Discord, the wiring works. Ignore it.
+
+---
+
+# USE (resource) runbooks
+
+> These fire from the OTel Collector hostmetrics/docker_stats streams. Two hosts
+> share the same OpenObserve streams and are separated by `host_role`:
+> `odoo-droplet` (the app/Odoo box, `otel/otelcol-config.yaml`) and `agenticos`
+> (the AgenticOS/paperclip-server box, AgenticOS repo `infra/otel/otelcol-agenticos.yaml`, GOL-54).
+> DO-native alerts (`monitor-alerts.tf`, P0) are the redundant fast layer for the
+> agenticos host. Thresholds are pending live validation against the obs-droplet.
+
+## droplet-cpu
+
+**Severity:** warning >70% / critical >90% (10m) · **Host:** odoo-droplet · **Likely impact:** slow storefront + Odoo responses; risk of container thrash.
+
+### Check first
+1. Which container is hot: OpenObserve `container_cpu_utilization{host_role='odoo-droplet'}` top-N (or on the box: `docker stats --no-stream`).
+2. Is it steady-state load or a runaway (a stuck Odoo worker / cron)?
+
+### Common fixes
+- **Runaway Odoo worker:** `make restart-odoo`.
+- **Sustained real load:** scale the droplet (see `05-resize.sh` in the odoocker infra kit) — board-gated spend.
+
+### Escalation
+If both warning + critical hold >30m with no single hot container, it's genuine capacity — escalate for a resize.
+
+---
+
+## container-ram
+
+**Severity:** warning >80% / critical >95% of limit (5m, any container) · **Host:** odoo-droplet · **Likely impact:** OOM kill of the named container (Odoo workers most likely).
+
+### Check first
+1. `docker stats --no-stream` — confirm the `{container_name}` and its limit.
+2. `dmesg | tail` for a prior "killed process" (OOM) on that container.
+
+### Common fixes
+- **Odoo worker leak:** `make restart-odoo`; if recurrent, lower `--limit-memory-hard`/worker count or raise the container `mem_limit` if the box has headroom.
+- **Wrong limit:** adjust `mem_limit` in `docker-compose.override.production.yml`.
+
+### Escalation
+Recurrent critical on the same container = right-size the limit or the droplet; escalate the spend.
+
+---
+
+## disk-data
+
+**Severity:** warning >75% / critical >90% · **Host:** odoo-droplet · **Likely impact:** near-full data volume kills MinIO writes + Postgres WAL (silent-then-catastrophic).
+
+### Check first
+1. On the box: `df -h /data /` and `du -sh /data/* | sort -h | tail`.
+2. Usual culprits: MinIO objects (OpenObserve Parquet), Postgres WAL, Docker images/logs.
+
+### Common fixes
+- **Docker bloat:** `docker system prune -f` (safe) / `docker image prune -a`.
+- **MinIO/Parquet growth:** confirm OpenObserve retention; offload to DO Spaces.
+- **Volume genuinely full:** attach/grow a DO block volume.
+
+### Escalation
+Critical (>90%) is act-now — a full volume corrupts Postgres WAL. Clear space or grow the volume immediately.
+
+---
+
+## agenticos-cpu
+
+**Severity:** warning >70% / critical >90% (10m) · **Host:** agenticos · **Likely impact:** slow/stalled agent runs; risk of thrash.
+
+### Check first
+1. Hot container via OpenObserve `container_cpu_utilization{host_role='agenticos'}` (usually `paperclip-server`, which runs every agent subprocess).
+2. Runaway agent loop vs genuine concurrency (market season).
+
+### Common fixes
+- **Runaway container:** restart it on the box.
+- **Sustained real load:** resize the AgenticOS droplet — see [GOL-51](/GOL/issues/GOL-51) autoscaling; board-gated spend.
+
+### Escalation
+Sustained critical with no single culprit = capacity; escalate a resize via GOL-51.
+
+---
+
+## agenticos-memory
+
+**Severity:** warning >70% / critical >90% host RAM (10m) · **Host:** agenticos · **Likely impact:** OOM kill — this box crashed the UI at 103% (the reason GOL-51 exists).
+
+### Check first
+1. `system_memory_utilization{host_role='agenticos'}` trend + `system_paging_utilization` (swap is the P0 safety net — is it engaging?).
+2. Top container by `container_memory_percent{host_role='agenticos'}` (usually `paperclip-server`).
+
+### Common fixes
+- **Swap absorbing it:** confirm the 4G swap file is active (`swapon --show`); it buys time, not a fix.
+- **Hot container:** restart it; if recurrent, the box needs more RAM.
+
+### Escalation
+Critical = imminent OOM. If swap is already saturated, resize the droplet now (GOL-51). The DO-native alert (`monitor-alerts.tf`) covers this same signal as the fast redundant layer.
+
+---
+
+## agenticos-container-ram
+
+**Severity:** warning >80% / critical >95% of limit (5m, any container) · **Host:** agenticos · **Likely impact:** OOM kill of the named container.
+
+### Check first
+1. `docker stats --no-stream` on the box — confirm `{container_name}` + limit.
+2. `dmesg | tail` for a prior OOM kill.
+
+### Common fixes
+- **paperclip-server growth:** restart it; if recurrent, raise its `mem_limit` (if the host has headroom) or lower agent concurrency.
+
+### Escalation
+Recurrent critical on the same container = right-size the limit or the droplet (GOL-51).
+
+---
+
+## agenticos-disk
+
+**Severity:** warning >75% / critical >90% root filesystem · **Host:** agenticos · **Likely impact:** a full disk stalls Docker + the agent runtime.
+
+### Check first
+1. `df -h /` and `du -sh /* 2>/dev/null | sort -h | tail` on the box.
+2. Usual culprits: Docker images/logs, the swap file, agent workspaces.
+
+### Common fixes
+- **Docker bloat:** `docker system prune -f` / `docker image prune -a`.
+- **Log growth:** check journald / container log rotation.
+
+### Escalation
+Critical (>90%) is act-now — free space or grow the volume before Docker/the runtime stalls.

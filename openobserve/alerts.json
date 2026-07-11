@@ -176,58 +176,134 @@
     {
       "name": "droplet-cpu-warning",
       "stream": "system_cpu_utilization",
-      "trigger_condition": "avg(system_cpu_utilization) > 0.70 over 10m",
+      "trigger_condition": "avg(system_cpu_utilization{host_role='odoo-droplet'}) > 0.70 over 10m",
       "severity": "warning",
       "destination": "keep-webhook",
       "runbook_key": "droplet-cpu",
-      "_message_template": "USE — droplet CPU >70% for 10m. Identify the hot container via docker_stats. Runbook: docs/RUNBOOKS.md#droplet-cpu",
-      "_note": "USE metric from the OTel Collector (hostmetrics). Utilization is a 0-1 fraction. Stream/field name pending live validation."
+      "_message_template": "USE — odoo-droplet CPU >70% for 10m. Identify the hot container via docker_stats. Runbook: docs/RUNBOOKS.md#droplet-cpu",
+      "_note": "USE metric from the OTel Collector (hostmetrics). Utilization is a 0-1 fraction. Scoped host_role='odoo-droplet' so it does not blend with the agenticos box sharing these streams (GOL-76). Stream/field name pending live validation."
     },
     {
       "name": "droplet-cpu-critical",
       "stream": "system_cpu_utilization",
-      "trigger_condition": "avg(system_cpu_utilization) > 0.90 over 10m",
+      "trigger_condition": "avg(system_cpu_utilization{host_role='odoo-droplet'}) > 0.90 over 10m",
       "severity": "critical",
       "destination": "keep-webhook",
       "runbook_key": "droplet-cpu",
-      "_message_template": "USE — droplet CPU >90% for 10m. Imminent thrash risk. Restart non-critical containers or scale. Runbook: docs/RUNBOOKS.md#droplet-cpu"
+      "_message_template": "USE — odoo-droplet CPU >90% for 10m. Imminent thrash risk. Restart non-critical containers or scale. Runbook: docs/RUNBOOKS.md#droplet-cpu"
     },
     {
       "name": "container-ram-warning",
       "stream": "container_memory_percent",
-      "trigger_condition": "container_memory_percent > 80 for 5m (any container)",
+      "trigger_condition": "container_memory_percent{host_role='odoo-droplet'} > 80 for 5m (any container)",
       "severity": "warning",
       "destination": "keep-webhook",
       "runbook_key": "container-ram",
-      "_message_template": "USE — [{container_name}] memory >80% of limit for 5m. Odoo workers most likely. Runbook: docs/RUNBOOKS.md#container-ram"
+      "_message_template": "USE — odoo-droplet [{container_name}] memory >80% of limit for 5m. Odoo workers most likely. Runbook: docs/RUNBOOKS.md#container-ram"
     },
     {
       "name": "container-ram-critical",
       "stream": "container_memory_percent",
-      "trigger_condition": "container_memory_percent > 95 for 5m (any container)",
+      "trigger_condition": "container_memory_percent{host_role='odoo-droplet'} > 95 for 5m (any container)",
       "severity": "critical",
       "destination": "keep-webhook",
       "runbook_key": "container-ram",
-      "_message_template": "USE — [{container_name}] memory >95% of limit — OOM kill imminent. Restart it. Runbook: docs/RUNBOOKS.md#container-ram"
+      "_message_template": "USE — odoo-droplet [{container_name}] memory >95% of limit — OOM kill imminent. Restart it. Runbook: docs/RUNBOOKS.md#container-ram"
     },
     {
       "name": "disk-data-warning",
       "stream": "system_filesystem_utilization",
-      "trigger_condition": "system_filesystem_utilization{mountpoint~=/data|/} > 0.75",
+      "trigger_condition": "system_filesystem_utilization{host_role='odoo-droplet',mountpoint~=/data|/} > 0.75",
       "severity": "warning",
       "destination": "keep-webhook",
       "runbook_key": "disk-data",
-      "_message_template": "USE — data filesystem >75% full. MinIO objects or Postgres WAL growing. Clean up or add volume. Runbook: docs/RUNBOOKS.md#disk-data"
+      "_message_template": "USE — odoo-droplet data filesystem >75% full. MinIO objects or Postgres WAL growing. Clean up or add volume. Runbook: docs/RUNBOOKS.md#disk-data"
     },
     {
       "name": "disk-data-critical",
       "stream": "system_filesystem_utilization",
-      "trigger_condition": "system_filesystem_utilization{mountpoint~=/data|/} > 0.90",
+      "trigger_condition": "system_filesystem_utilization{host_role='odoo-droplet',mountpoint~=/data|/} > 0.90",
       "severity": "critical",
       "destination": "keep-webhook",
       "runbook_key": "disk-data",
-      "_message_template": "USE — data filesystem >90% full — near-full kills MinIO writes + Postgres WAL. Immediate action. Runbook: docs/RUNBOOKS.md#disk-data",
+      "_message_template": "USE — odoo-droplet data filesystem >90% full — near-full kills MinIO writes + Postgres WAL. Immediate action. Runbook: docs/RUNBOOKS.md#disk-data",
       "_note": "Tighter than typical (75/90) because MinIO + Postgres WAL fail silently-then-catastrophically when the volume fills. postgres-connections + the RED latency/5xx alerts need the postgresql receiver + Beyla (follow-ups)."
+    },
+    {
+      "_comment": "── agenticos-* USE alerts (GOL-76) ── mirror the droplet-* patterns but scoped host_role='agenticos', consuming the GOL-54 OTel Collector streams (AgenticOS repo, otelcol-agenticos.yaml → host.role=agenticos). The AgenticOS box is the paperclip-server OOM host, so host RAM (system_memory_utilization) is the primary signal. Like every rule here, thresholds/stream names are pending live validation against the obs-droplet OpenObserve (not yet stood up — see GOL-76)."
+    },
+    {
+      "name": "agenticos-cpu-warning",
+      "stream": "system_cpu_utilization",
+      "trigger_condition": "avg(system_cpu_utilization{host_role='agenticos'}) > 0.70 over 10m",
+      "severity": "warning",
+      "destination": "keep-webhook",
+      "runbook_key": "agenticos-cpu",
+      "_message_template": "USE — agenticos CPU >70% for 10m. Identify the hot container via docker_stats (paperclip-server runs agent subprocesses). Runbook: docs/RUNBOOKS.md#agenticos-cpu"
+    },
+    {
+      "name": "agenticos-cpu-critical",
+      "stream": "system_cpu_utilization",
+      "trigger_condition": "avg(system_cpu_utilization{host_role='agenticos'}) > 0.90 over 10m",
+      "severity": "critical",
+      "destination": "keep-webhook",
+      "runbook_key": "agenticos-cpu",
+      "_message_template": "USE — agenticos CPU >90% for 10m. Imminent thrash risk. Restart non-critical containers or resize (GOL-51). Runbook: docs/RUNBOOKS.md#agenticos-cpu"
+    },
+    {
+      "name": "agenticos-memory-warning",
+      "stream": "system_memory_utilization",
+      "trigger_condition": "avg(system_memory_utilization{host_role='agenticos'}) > 0.70 over 10m",
+      "severity": "warning",
+      "destination": "keep-webhook",
+      "runbook_key": "agenticos-memory",
+      "_message_template": "USE — agenticos host RAM >70% for 10m. The OOM history (103% crash) lives here — watch swap (paging.utilization) and the top container. Runbook: docs/RUNBOOKS.md#agenticos-memory"
+    },
+    {
+      "name": "agenticos-memory-critical",
+      "stream": "system_memory_utilization",
+      "trigger_condition": "avg(system_memory_utilization{host_role='agenticos'}) > 0.90 over 10m",
+      "severity": "critical",
+      "destination": "keep-webhook",
+      "runbook_key": "agenticos-memory",
+      "_message_template": "USE — agenticos host RAM >90% for 10m — OOM kill imminent (this box crashed the UI at 103%). Swap is the safety net; restart the hot container or resize (GOL-51). Runbook: docs/RUNBOOKS.md#agenticos-memory",
+      "_note": "Host-level RAM — the AgenticOS box's primary failure mode. The DO-native monitor-alerts.tf (P0) is the redundant fast layer for this same signal."
+    },
+    {
+      "name": "agenticos-container-ram-warning",
+      "stream": "container_memory_percent",
+      "trigger_condition": "container_memory_percent{host_role='agenticos'} > 80 for 5m (any container)",
+      "severity": "warning",
+      "destination": "keep-webhook",
+      "runbook_key": "agenticos-container-ram",
+      "_message_template": "USE — agenticos [{container_name}] memory >80% of limit for 5m. paperclip-server (agent subprocesses) most likely. Runbook: docs/RUNBOOKS.md#agenticos-container-ram"
+    },
+    {
+      "name": "agenticos-container-ram-critical",
+      "stream": "container_memory_percent",
+      "trigger_condition": "container_memory_percent{host_role='agenticos'} > 95 for 5m (any container)",
+      "severity": "critical",
+      "destination": "keep-webhook",
+      "runbook_key": "agenticos-container-ram",
+      "_message_template": "USE — agenticos [{container_name}] memory >95% of limit — OOM kill imminent. Restart it. Runbook: docs/RUNBOOKS.md#agenticos-container-ram"
+    },
+    {
+      "name": "agenticos-disk-warning",
+      "stream": "system_filesystem_utilization",
+      "trigger_condition": "system_filesystem_utilization{host_role='agenticos',mountpoint~=/} > 0.75",
+      "severity": "warning",
+      "destination": "keep-webhook",
+      "runbook_key": "agenticos-disk",
+      "_message_template": "USE — agenticos root filesystem >75% full. Docker images/logs or the swap file growing. Prune or add volume. Runbook: docs/RUNBOOKS.md#agenticos-disk"
+    },
+    {
+      "name": "agenticos-disk-critical",
+      "stream": "system_filesystem_utilization",
+      "trigger_condition": "system_filesystem_utilization{host_role='agenticos',mountpoint~=/} > 0.90",
+      "severity": "critical",
+      "destination": "keep-webhook",
+      "runbook_key": "agenticos-disk",
+      "_message_template": "USE — agenticos root filesystem >90% full — a full disk stalls Docker + the agent runtime. Immediate cleanup. Runbook: docs/RUNBOOKS.md#agenticos-disk"
     },
     {
       "name": "odoo-orders-latency-warning",
