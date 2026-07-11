@@ -9,10 +9,14 @@ shared MinIO here — that's the app plane).
 
 First live apply is recorded. Board-approved separate prod obs droplet is up:
 
-- Droplet `grove-obs` — id `583893144`, `nyc3`, `s-2vcpu-4gb`, IP `161.35.186.49`
-- OpenObserve `http://161.35.186.49:5080` · Keep `http://161.35.186.49:3034`
-  (both admin-only via the firewall; `:5080` also open to the agenticos droplet
-  for cross-plane OTLP ingest)
+- Droplet `grove-obs` — `nyc3`, `s-2vcpu-4gb`. Current IP + URLs via
+  `terraform output` (`obs_droplet_ip` / `openobserve_url` / `keep_url`) — the
+  IP changes on any droplet replace, so it is not pinned here. (As of the first
+  stand-up: `159.65.46.198`.)
+- OpenObserve `:5080` · Keep `:3034` — both admin-only via the firewall; `:5080`
+  also open to the agenticos droplet for cross-plane OTLP ingest. Verified live:
+  `/healthz` 200 + root auth 200, all three containers up from unattended
+  cloud-init.
 - State: `s3://grove-tf-state/observability/terraform.tfstate` (DO Spaces, locked)
 - Secrets flow 1Password `Grove Infra` → `TF_VAR_*` → cloud-init; nothing hardcoded.
 
@@ -61,7 +65,7 @@ KEEP_WEBHOOK_TOKEN=... DISCORD_WEBHOOK_WARNING=... DISCORD_WEBHOOK_CRITICAL=... 
 - **Cross-plane ingest:** the agenticos droplet (`159.223.171.231/32`) is now an
   allowed ingest source on `:5080` via `var.ingest_source_cidrs`. Still TODO: point
   the agenticos collector's `OPENOBSERVE_OTLP_BASE`/`_METRICS_URL` at
-  `http://161.35.186.49:5080` and re-run Deploy Droplet (GOL-54). App-plane
+  `http://<obs_droplet_ip>:5080` and re-run Deploy Droplet (GOL-54). App-plane
   `synthetic-runner`/`cost-bridge` add their source `/32`s to the same var.
 - **Cloudflare-WAF Bearer ingest endpoint** (spec §1) for the off-droplet GitHub
   Actions Playwright/Hurl crons.
