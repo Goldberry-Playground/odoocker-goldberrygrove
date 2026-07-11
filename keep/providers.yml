@@ -14,21 +14,25 @@
 # ever lands in the repo.
 #
 # Two separate Discord webhooks (one per channel) because Discord's webhook →
-# channel binding is fixed at webhook creation. Severity routing lives in
-# keep/workflows/; this file only declares the delivery endpoints.
-
-# NB (GOL-278): `provider_name` IS the reference key used in workflows as
-# "{{ providers.<provider_name> }}" (Keep stores it as details.name and keys the
-# workflow provider-context by it). It MUST be a clean single-token slug — spaces
-# make it unreferenceable. So the channel is described in the comment, not the name.
+# channel binding is fixed at webhook creation.
+#
+# NB (GOL-278): installing these providers is COMPLEMENTARY — it populates Keep's
+# provider inventory/UI, but the routing workflows in keep/workflows/ do NOT
+# reference them. Keep 0.54.1's API-installed provider references
+# ("{{ providers.<name> }}") are unreliable (UUID ids, null provider_id, and
+# soft-delete name residue that 409s reinstalls), so the workflows configure the
+# discord webhook INLINE instead (config.authentication.webhook_url, injected at
+# upload from the same env var). `provider_name` is still a clean slug for a tidy
+# Keep UI. If a future Keep version makes provider references dependable, the
+# workflows can switch to "{{ providers.discord-warning }}" with no change here.
 providers:
-  # → #grove-alerts-warning (referenced by keep/workflows/route-warning.yml)
+  # → #grove-alerts-warning (workflow: keep/workflows/route-warning.yml, inline webhook)
   - provider_id: discord-warning
     provider_type: discord
     provider_name: discord-warning
     webhook_url_env: DISCORD_WEBHOOK_WARNING
 
-  # → #grove-alerts-critical (referenced by keep/workflows/route-critical.yml)
+  # → #grove-alerts-critical (workflow: keep/workflows/route-critical.yml, inline webhook)
   - provider_id: discord-critical
     provider_type: discord
     provider_name: discord-critical
