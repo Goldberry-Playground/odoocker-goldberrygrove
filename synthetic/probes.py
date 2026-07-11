@@ -148,6 +148,9 @@ def probe_ssl(mon: dict) -> dict:
     host, port = monitor_host(mon), int(mon.get("port", 443))
     timeout = float(mon.get("timeout_seconds", DEFAULT_SSL_TIMEOUT_S))
     ctx = ssl.create_default_context()
+    # Refuse the obsolete TLSv1/1.1 protocols (CodeQL py/insecure-protocol);
+    # all Grove endpoints serve TLS 1.2+, so this only tightens the probe.
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     days: int | None = None
     try:
         with socket.create_connection((host, port), timeout=timeout) as sock:
