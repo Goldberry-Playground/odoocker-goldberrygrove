@@ -18,6 +18,20 @@
 
 provider "digitalocean" {
   token = var.do_token
+
+  # Spaces (S3) creds so this env can TF-manage the OpenObserve Parquet bucket
+  # below. Same DO Spaces keys OpenObserve itself uses (var.spaces_*).
+  spaces_access_id  = var.spaces_access_key
+  spaces_secret_key = var.spaces_secret_key
+}
+
+# OpenObserve Parquet storage bucket (S3-compatible DO Spaces). Codified here so
+# the bucket is idempotent and torn down with the env — not click-created. The
+# obs droplet's ZO_S3_BUCKET_NAME (cloud-init) points at this exact name.
+resource "digitalocean_spaces_bucket" "obs" {
+  name   = var.spaces_bucket
+  region = var.region
+  acl    = "private"
 }
 
 locals {
@@ -77,11 +91,14 @@ module "obs_droplet" {
 }
 
 # ── Firewall ──────────────────────────────────────────────────────────────
-# UIs (5080 OpenObserve, 3034 Keep) + SSH are admin-only. OTLP ingest from the
-# app-plane runners (synthetic-runner, cost-bridge) is admin-scoped for now;
-# TODO(live): add the app droplet's IP (or a DO VPC) as an ingest source, and
-# front OpenObserve ingest with the Cloudflare-WAF Bearer endpoint (spec §1)
-# for the off-droplet GitHub Actions Playwright/Hurl crons.
+# UIs (5080 OpenObserve, 3034 Keep) + SSH are admin-only (admin_ip_cidr). The
+# SEPARATE obs plane also needs CROSS-BOX OTLP ingest on 5080 from off-droplet
+# collectors — primarily the agenticos droplet (host.role=agenticos, GOL-54).
+# Those source CIDRs go in var.ingest_source_cidrs (a /32 per collector), kept
+# distinct from admin_ip_cidr so ingest never widens admin/UI access.
+# TODO(live): front OpenObserve ingest with the Cloudflare-WAF Bearer endpoint
+# (spec §1) for the off-droplet GitHub Actions Playwright/Hurl crons whose IPs
+# are dynamic and can't be pinned to a /32 here.
 resource "digitalocean_firewall" "obs" {
   name        = "grove-obs-fw"
   droplet_ids = [module.obs_droplet.droplet_id]
@@ -94,8 +111,19 @@ resource "digitalocean_firewall" "obs" {
 
   inbound_rule {
     protocol         = "tcp"
-    port_range       = "5080" # OpenObserve UI + OTLP ingest
+    port_range       = "5080" # OpenObserve UI + OTLP ingest (admin)
     source_addresses = [var.admin_ip_cidr]
+  }
+
+  # Cross-plane OTLP ingest on 5080 from off-droplet collectors (agenticos
+  # droplet, etc.). Only rendered when at least one ingest CIDR is configured.
+  dynamic "inbound_rule" {
+    for_each = length(var.ingest_source_cidrs) > 0 ? [1] : []
+    content {
+      protocol         = "tcp"
+      port_range       = "5080"
+      source_addresses = var.ingest_source_cidrs
+    }
   }
 
   inbound_rule {

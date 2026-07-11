@@ -38,6 +38,12 @@ variable "admin_ip_cidr" {
   type        = string
 }
 
+variable "ingest_source_cidrs" {
+  description = "Extra CIDRs allowed to reach OpenObserve OTLP ingest on 5080 — cross-plane collectors like the agenticos droplet (/32 each). Kept distinct from admin_ip_cidr so ingest never widens admin/UI access. Empty = admin-only."
+  type        = list(string)
+  default     = []
+}
+
 # ── Observability stack config (flows into cloud-init → .env.monitoring) ──────
 variable "openobserve_tag" {
   description = "OpenObserve image tag (pin; promoted via the release manifest once it exists)."
