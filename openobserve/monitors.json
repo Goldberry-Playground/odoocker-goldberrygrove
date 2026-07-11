@@ -1,6 +1,6 @@
 {
   "_comment": "Grove synthetic HTTP/TCP/SSL monitors — REFERENCE ONLY (GOL-278).",
-  "_lineage": "OpenObserve v0.91.1 has NO /synthetic endpoint — these are NOT OO objects and are no longer POSTed by scripts/setup-monitoring.py (the prior POST 404'd on every entry). This file describes the synthetic journeys/targets for the EXTERNAL synthetic-runner (Hurl, see synthetic/README.md), which pings these endpoints and ships pass/fail + latency to OpenObserve as OTLP metrics. The availability alerts in alerts.json (frontend/odoo/ghost/postgres/ssl) fire on that emitted uptime metric stream — extending the synthetic-runner to emit per-target uptime for these entries is the follow-up that lights them up.",
+  "_lineage": "OpenObserve v0.91.1 has NO /synthetic endpoint — these are NOT OO objects and are no longer POSTed by scripts/setup-monitoring.py (the prior POST 404'd on every entry). This file is the source-of-truth target list for the EXTERNAL synthetic-runner. synthetic/probes.py (GOL-280) reads it and actively probes each entry, shipping synthetic_uptime (http/tcp 1/0) + synthetic_ssl_days (ssl days-until-expiry) OTLP metrics to OpenObserve; the availability alerts in alerts.json (frontend/odoo/ghost/postgres/ssl) fire on those streams. Per-target URL/host is overridable per-env via SYNTHETIC_MONITOR_URL_<NAME> / SYNTHETIC_MONITOR_HOST_<NAME> without editing this file.",
   "_url_strategy": "Targets use host.docker.internal:<port> for services on the gatheratthegrove-frontends compose project (hub + 3 storefronts), and service-name DNS (e.g. odoo:8069, ghost-goldberry:2368) for services on the shared internal network. In M2+ the host.docker.internal entries become public hostnames; service-name entries stay identical.",
   "monitors": [
     {
@@ -171,7 +171,7 @@
       "_note": "TCP probe only — no auth attempted. Internal network only (postgres has no host port mapping in non-local-dev envs)."
     },
     {
-      "_comment": "SSL cert expiry monitors — config-only. Local has no real certs, so these will fail until M2 droplet exists and certs are provisioned. The alert fires at 14 days remaining. Keeping them in the bootstrap so the config survives the eventual prod swap.",
+      "_comment": "SSL cert expiry monitors. These probe the PUBLIC domains directly (real certs exist today — verified live GOL-280: goldberrygrove.farm ~53d, woodworkingeorge.com/atthegrovenursery.com ~72d, gatheringatthegrove.com ~38d), so they work from any host with internet, independent of the app-plane deploy. probes.py ships synthetic_ssl_days; the ssl-expiring alert fires at 14 days remaining.",
       "name": "ssl-goldberrygrove-farm",
       "type": "ssl",
       "host": "goldberrygrove.farm",

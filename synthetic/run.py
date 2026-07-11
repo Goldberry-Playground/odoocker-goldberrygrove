@@ -40,6 +40,7 @@ from urllib import error as urlerror
 from urllib import request
 
 import canary
+import probes
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 JOURNEY_DIR = SCRIPT_DIR / "journeys"
@@ -227,6 +228,15 @@ def main() -> None:
     passed = sum(r["success"] for r in results)
     _log(f"  {passed}/{len(results)} journeys passed")
     ship(build_otlp_metrics(results, time.time_ns(), env_label))
+
+    # Availability + SSL probes (synthetic_uptime / synthetic_ssl_days streams).
+    # These light up the frontend/odoo/ghost/postgres/ssl alerts, which OpenObserve
+    # can't run itself (no /synthetic endpoint). Enabled by default; disable in
+    # envs where the availability targets aren't reachable (e.g. laptop dev).
+    if _env("SYNTHETIC_UPTIME_ENABLED", "true").strip().lower() == "true":
+        probes.emit(env_label)
+    else:
+        _log("  uptime/ssl probes disabled (SYNTHETIC_UPTIME_ENABLED!=true)")
 
 
 if __name__ == "__main__":
