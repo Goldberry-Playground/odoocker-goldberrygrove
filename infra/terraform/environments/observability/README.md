@@ -54,14 +54,19 @@ KEEP_WEBHOOK_TOKEN=... DISCORD_WEBHOOK_WARNING=... DISCORD_WEBHOOK_CRITICAL=... 
 ```
 
 ## Follow-ups (need live iteration / other work)
-- **Keep API reachability for `setup-monitoring.py`:** `keep-backend` (API `:8080`)
-  is only reachable inside the compose `obs` network — it is **not** published to
-  the host nor opened in the firewall. A remote/CI `setup-monitoring.py` (which the
-  droplet-provisioning notes point at `KEEP_BASE_URL=http://<obs_ip>:8080`) therefore
-  can't reach it. On first live apply, either run `setup-monitoring.py` **from the
-  droplet** (localhost) or publish `8080` to the host and add an admin-scoped
-  `8080` firewall rule (mirroring 5080/3034). Deferred to the live pass because
-  exposing Keep's API has a blast-radius/auth call to make (see `KEEP_AUTH_TYPE`).
+- **Keep webhook/API published on `:8080` (GOL-279) — DONE.** `keep-backend` now
+  publishes `8080:8080` (compose) and `grove-obs-fw` has an **admin-only** `8080`
+  inbound rule (mirroring 5080/3034). Rationale: OpenObserve v0.91.1's SSRF guard
+  rejects an alert destination whose URL resolves to a **private** IP at create
+  time, so OO's `keep-webhook` destination must target the droplet's **public** IP
+  (`terraform output keep_webhook_url`). That OO->Keep POST is a **host-local
+  hairpin** (OpenObserve container -> host public IP:8080 -> Docker DNAT -> Keep)
+  and never traverses the cloud firewall — verified 200/202 live. `setup-monitoring.py`
+  reaches Keep internally (`keep-backend:8080` on the `obs` network), also not via
+  this port; so the only external consumer is an admin, hence `admin_ip_cidr` only.
+  Keep is additionally X-API-KEY (`WEBHOOK_TOKEN`) gated. Next: set
+  `KEEP_EVENT_URL=<keep_webhook_url>/alerts/event?provider_id=openobserve` and re-run
+  `setup-monitoring.py` so the OO destination + alerts load (GOL-278).
 - **Cross-plane ingest:** the agenticos droplet (`159.223.171.231/32`) is now an
   allowed ingest source on `:5080` via `var.ingest_source_cidrs`. Still TODO: point
   the agenticos collector's `OPENOBSERVE_OTLP_BASE`/`_METRICS_URL` at

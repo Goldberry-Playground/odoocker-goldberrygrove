@@ -139,6 +139,23 @@ resource "digitalocean_firewall" "obs" {
     }
   }
 
+  # Keep webhook/API on 8080 — admin-only. Published so OpenObserve's alert
+  # destination can POST to Keep via the droplet's PUBLIC IP: OO v0.91.1's SSRF
+  # guard REJECTS a destination whose URL resolves to a private IP (Keep's
+  # internal 172.18.x) at CREATE time, so the OO->Keep hop must target the
+  # public IP. That OO->Keep POST is a host-local hairpin (OpenObserve container
+  # -> host public IP:8080 -> Docker DNAT -> Keep) and NEVER traverses this cloud
+  # firewall, so it needs no allow entry here (verified: hairpin returned 200
+  # while 8080 had no inbound rule at all). setup-monitoring.py reaches Keep
+  # internally (keep-backend:8080 on the obs network), also not via this port.
+  # So the only external consumer is an admin debugging Keep -> admin_ip_cidr
+  # only. Keep is additionally X-API-KEY (WEBHOOK_TOKEN) gated. (GOL-279)
+  inbound_rule {
+    protocol         = "tcp"
+    port_range       = "8080" # Keep webhook/API (admin-only; OO->Keep is host-local hairpin)
+    source_addresses = [var.admin_ip_cidr]
+  }
+
   inbound_rule {
     protocol         = "tcp"
     port_range       = "3034" # Keep UI
