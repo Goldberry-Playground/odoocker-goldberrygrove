@@ -5,20 +5,29 @@ droplet running **OpenObserve + Keep**, isolated from the app plane so monitorin
 outlives an app outage. OpenObserve stores Parquet in **DO Spaces** (there's no
 shared MinIO here — that's the app plane).
 
-## ⚠️ Scaffold status
+## Status — APPLIED 2026-07-11 (GOL-270)
 
-`terraform fmt` + `terraform validate` pass, but this env has **not been applied
-yet**. Cloud-init, cross-plane ingest, and Spaces wiring need live iteration (the
-`qa` env's PR history shows how much live debugging this class of work takes).
-Treat as a reviewed scaffold, not production-ready, until a clean `terraform plan`
-+ first apply is recorded.
+First live apply is recorded. Board-approved separate prod obs droplet is up:
+
+- Droplet `grove-obs` — id `583893144`, `nyc3`, `s-2vcpu-4gb`, IP `161.35.186.49`
+- OpenObserve `http://161.35.186.49:5080` · Keep `http://161.35.186.49:3034`
+  (both admin-only via the firewall; `:5080` also open to the agenticos droplet
+  for cross-plane OTLP ingest)
+- State: `s3://grove-tf-state/observability/terraform.tfstate` (DO Spaces, locked)
+- Secrets flow 1Password `Grove Infra` → `TF_VAR_*` → cloud-init; nothing hardcoded.
+
+Remaining before the rich alert layer produces signal: run `setup-monitoring.py`
+(monitors/alerts/dashboards + Discord routing) and enable the agenticos collector
+(GOL-54). See **Follow-ups**.
 
 ## What it manages
-1. DO SSH key (CI, long-lived) + reference to the out-of-band admin key
+1. DO SSH key (CI, long-lived, obs-specific) + reference to the out-of-band admin key
 2. Obs droplet (via the shared `modules/droplet`), no attached volume (Parquet →
    Spaces; Keep SQLite fits local disk)
-3. Firewall — SSH + OpenObserve (5080) + Keep (3034), all **admin-only**
-4. cloud-init — Docker + the standalone `compose/docker-compose.obs.yml`
+3. DO Spaces bucket `grove-openobserve-data` (OpenObserve Parquet storage)
+4. Firewall — SSH + Keep (3034) admin-only; OpenObserve (5080) admin **plus**
+   `ingest_source_cidrs` (agenticos droplet `/32`) for cross-plane OTLP ingest
+5. cloud-init — Docker + the standalone `compose/docker-compose.obs.yml`
 
 ## Apply (once validated live)
 ```bash
@@ -49,9 +58,11 @@ KEEP_WEBHOOK_TOKEN=... DISCORD_WEBHOOK_WARNING=... DISCORD_WEBHOOK_CRITICAL=... 
   droplet** (localhost) or publish `8080` to the host and add an admin-scoped
   `8080` firewall rule (mirroring 5080/3034). Deferred to the live pass because
   exposing Keep's API has a blast-radius/auth call to make (see `KEEP_AUTH_TYPE`).
-- **Cross-plane ingest:** the app-plane `synthetic-runner` + `cost-bridge` ship OTLP
-  to this droplet's `:5080`. Add the app droplet's IP (or a DO VPC) as an ingest
-  firewall source, and point their `OPENOBSERVE_OTLP_METRICS_URL` at `<obs_ip>:5080`.
+- **Cross-plane ingest:** the agenticos droplet (`159.223.171.231/32`) is now an
+  allowed ingest source on `:5080` via `var.ingest_source_cidrs`. Still TODO: point
+  the agenticos collector's `OPENOBSERVE_OTLP_BASE`/`_METRICS_URL` at
+  `http://161.35.186.49:5080` and re-run Deploy Droplet (GOL-54). App-plane
+  `synthetic-runner`/`cost-bridge` add their source `/32`s to the same var.
 - **Cloudflare-WAF Bearer ingest endpoint** (spec §1) for the off-droplet GitHub
   Actions Playwright/Hurl crons.
 - **`make` targets** (`obs-init/plan/apply/destroy`) + `op run` env-file, matching

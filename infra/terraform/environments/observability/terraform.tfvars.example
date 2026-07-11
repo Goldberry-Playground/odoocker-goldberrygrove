@@ -6,6 +6,11 @@ region        = "nyc3"
 droplet_size  = "s-2vcpu-4gb"
 admin_ip_cidr = "203.0.113.4/32" # your /32 — NEVER 0.0.0.0/0
 
+# Cross-plane OTLP ingest sources (5080) — collectors on OTHER droplets, /32 each.
+# Kept separate from admin_ip_cidr so ingest never widens admin/UI access. Empty
+# = admin-only. Prod value: the agenticos droplet -> ["159.223.171.231/32"].
+ingest_source_cidrs = []
+
 # SSH
 ci_ssh_public_key  = "ssh-ed25519 AAAA... grove-obs-deploy"
 admin_ssh_key_name = "grove-qa-admin" # reused out-of-band admin key

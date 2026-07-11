@@ -9,11 +9,11 @@
 # Lifecycle:  `terraform apply` provisions/updates in place.
 # Cost:       ~$12–24/mo (droplet) + Spaces (shared). See README.md.
 #
-# SCAFFOLD STATUS: fmt + validate pass, but this has NOT been `terraform apply`ed
-# yet — cloud-init + cross-plane ingest + Spaces wiring need live iteration (as
-# the qa env's PR history shows for the same class of work). Do not treat as
-# production-ready until a clean `terraform plan` + first apply is recorded.
-# Follow-ups tracked in README.md.
+# STATUS: APPLIED 2026-07-11 (GOL-270). grove-obs droplet 583893144 (nyc3,
+# s-2vcpu-4gb, 161.35.186.49) is live; state at s3://grove-tf-state/
+# observability/terraform.tfstate. Remaining live wiring (agenticos collector
+# enablement GOL-54, setup-monitoring.py alert bootstrap, Keep :8080 API
+# reachability) tracked in README.md → Follow-ups.
 ###############################################################################
 
 provider "digitalocean" {
