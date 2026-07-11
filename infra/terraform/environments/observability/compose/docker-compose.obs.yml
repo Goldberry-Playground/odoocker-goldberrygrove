@@ -64,6 +64,15 @@ services:
 
   keep-backend:
     image: us-central1-docker.pkg.dev/keephq/keep/keep-api:${KEEP_TAG:-latest}
+    # Published admin-only (grove-obs-fw :8080 rule): OpenObserve's alert
+    # destination must POST to Keep via the droplet PUBLIC IP because OO v0.91.1's
+    # SSRF guard rejects a private-IP destination (Keep's 172.18.x) at create
+    # time. The OO->Keep hop is a host-local hairpin (OO container -> host public
+    # IP:8080 -> Docker DNAT -> Keep), so it never traverses the cloud firewall;
+    # the firewall only gates external admin access. X-API-KEY (WEBHOOK_TOKEN)
+    # gated regardless. See observability README + `keep_webhook_url` output. (GOL-279)
+    ports:
+      - "8080:8080"
     restart: unless-stopped
     depends_on:
       keep-init:
