@@ -5,6 +5,14 @@
 #   TF_VAR_do_token = op://Goldberry Grove - Admin/GoldberryGrove Infra/do_token
 #   TF_VAR_cloudflare_api_token = op://Goldberry Grove - Admin/GoldberryGrove Infra/cloudflare_api_token
 #
+# assets-ingest endpoint secrets (GOL-290 / GOL-293). NB: the 1Password item
+# is titled `Grove Infra` (verified 2026-07-11); the two examples above say
+# `GoldberryGrove Infra` -- match whatever your real .env.op / vault uses.
+#   TF_VAR_grove_assets_access_key_id  = op://Goldberry Grove - Admin/Grove Infra/grove_assets_access_key_id
+#   TF_VAR_grove_assets_secret_key     = op://Goldberry Grove - Admin/Grove Infra/grove_assets_secret_key
+#   TF_VAR_grove_assets_optimize_token = op://Goldberry Grove - Admin/Grove Infra/grove_assets_optimize_token
+#   TF_VAR_grove_brand_pr_token        = op://Goldberry Grove - Admin/Grove Infra/grove_brand_pr_token
+#
 # This file documents the non-sensitive vars an operator might want to
 # override (defaults work for the canonical setup):
 

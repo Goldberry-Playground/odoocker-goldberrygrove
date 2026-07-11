@@ -181,3 +181,38 @@ variable "acme_endpoint" {
     error_message = "acme_endpoint must be LE prod or staging URL exactly."
   }
 }
+
+# === assets-ingest endpoint secrets (GOL-290 / GOL-293) =====================
+# All four feed the hub app's env (apps.tf). Empty-string defaults keep
+# `terraform plan` working without secrets (same philosophy as odoo_api_keys'
+# qa-stubs); real values flow via TF_VAR_* from 1Password `Grove Infra` at
+# apply time (`op run --env-file .env.op -- terraform apply`). An empty value
+# makes the corresponding endpoint fail SAFE (503 not_configured), never open.
+
+variable "grove_assets_access_key_id" {
+  description = "DO Spaces access key id for the grove-assets bucket -- injected as GROVE_ASSETS_KEY, read by grove-sites' spacesConfigFromEnv(). Read from 1Password `Grove Infra`/grove_assets_access_key_id via TF_VAR_grove_assets_access_key_id."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "grove_assets_secret_key" {
+  description = "DO Spaces secret key for the grove-assets bucket -- injected as GROVE_ASSETS_SECRET. Read from 1Password `Grove Infra`/grove_assets_secret_key via TF_VAR_grove_assets_secret_key."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "grove_assets_optimize_token" {
+  description = "Shared bearer the discord-plugin presents to POST /api/assets/optimize -- injected as GROVE_ASSETS_OPTIMIZE_TOKEN. Minted per GOL-293; read from 1Password `Grove Infra`/grove_assets_optimize_token via TF_VAR_grove_assets_optimize_token."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "grove_brand_pr_token" {
+  description = "GitHub token (contents:write + pull_requests:write on grove-sites) the brand-entry handler uses to open @grove/brand PRs -- injected as GROVE_BRAND_PR_TOKEN. Provision gated on a human GitHub account action (GOL-293); read from 1Password `Grove Infra`/grove_brand_pr_token via TF_VAR_grove_brand_pr_token once minted."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
