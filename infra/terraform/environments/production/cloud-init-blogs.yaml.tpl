@@ -45,6 +45,27 @@ write_files:
       GHOST_HUB_ADMIN_URL=${ghost_admin_urls.hub}
       GHOST_GOLDBERRY_ADMIN_URL=${ghost_admin_urls.goldberry}
 
+      # Transactional email - Mailgun SMTP (GOL-248). Shared relay host/port;
+      # per-tenant SMTP login + From come from a distinct mg.<domain> sending
+      # subdomain so a bulk-newsletter reputation dip cannot break magic links
+      # / receipts. Flip GHOST_STAFF_DEVICE_VERIFICATION=true only after the
+      # SMTP creds are populated and verified live.
+      GHOST_SMTP_HOST=${ghost_smtp_host}
+      GHOST_SMTP_PORT=${ghost_smtp_port}
+      GHOST_STAFF_DEVICE_VERIFICATION=${ghost_staff_device_verification}
+      GHOST_HUB_MAIL_FROM=${ghost_smtp.hub.from}
+      GHOST_HUB_SMTP_USER=${ghost_smtp.hub.user}
+      GHOST_HUB_SMTP_PASSWORD=${ghost_smtp.hub.pass}
+      GHOST_GOLDBERRY_MAIL_FROM=${ghost_smtp.goldberry.from}
+      GHOST_GOLDBERRY_SMTP_USER=${ghost_smtp.goldberry.user}
+      GHOST_GOLDBERRY_SMTP_PASSWORD=${ghost_smtp.goldberry.pass}
+      GHOST_GGG_MAIL_FROM=${ghost_smtp.ggg.from}
+      GHOST_GGG_SMTP_USER=${ghost_smtp.ggg.user}
+      GHOST_GGG_SMTP_PASSWORD=${ghost_smtp.ggg.pass}
+      GHOST_NURSERY_MAIL_FROM=${ghost_smtp.nursery.from}
+      GHOST_NURSERY_SMTP_USER=${ghost_smtp.nursery.user}
+      GHOST_NURSERY_SMTP_PASSWORD=${ghost_smtp.nursery.pass}
+
       MYSQL_ROOT_PASSWORD=__MYSQL_ROOT_PASSWORD__
       MYSQL_GHOST_HUB_PASSWORD=__MYSQL_GHOST_HUB_PASSWORD__
       MYSQL_GHOST_GOLDBERRY_PASSWORD=__MYSQL_GHOST_GOLDBERRY_PASSWORD__
