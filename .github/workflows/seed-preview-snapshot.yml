@@ -1,0 +1,182 @@
+# Grove Preview — bootstrap SEED snapshot into grove-preview-data.
+#
+# Why this exists (GOL-310):
+#   `preview-up` (grove-sites) gates on a `heartbeat.txt` in the
+#   grove-preview-data Space, written by the nightly `sanitize-and-upload.sh`
+#   systemd timer that runs ON THE PROD DROPLET. Prod does not exist yet
+#   (GOL-104), so the bucket has never been seeded and preview-up cannot reach
+#   `terraform apply`. This workflow bootstraps a seed from a *freshly-inited
+#   base grove_preview DB* (no prod data → nothing to leak) using the same
+#   bucket layout + sanitizer + heartbeat the prod nightly uses, so preview
+#   cloud-init `restore.sh` consumes it unchanged. Once the prod nightly runs,
+#   its fresher snapshot supersedes this seed the next day.
+#
+# Two ways to run:
+#   - workflow_dispatch (once merged to the default branch), or
+#   - add the `seed-preview` label to a PR (lets us seed from the PR branch
+#     before the merge wall clears, mirroring grove-sites' `qa` label pattern).
+name: Seed preview snapshot
+
+on:
+  workflow_dispatch:
+    inputs:
+      odoo_tag:
+        description: grove-odoo image tag to seed the base DB from
+        required: false
+        default: latest
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: seed-preview-snapshot
+  cancel-in-progress: false
+
+jobs:
+  seed:
+    # Only run on explicit dispatch, or when the `seed-preview` label is added.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.label.name == 'seed-preview'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      IMAGE: ghcr.io/goldberry-playground/grove-odoo:${{ github.event.inputs.odoo_tag || 'latest' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Load Spaces creds from 1Password
+        uses: 1password/load-secrets-action@v2
+        timeout-minutes: 2
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_CI_SA_TOKEN }}
+          SPACES_ACCESS_KEY_ID:     op://Grove Prod/odoocker/SPACES_ACCESS_KEY_ID
+          SPACES_SECRET_ACCESS_KEY: op://Grove Prod/odoocker/SPACES_SECRET_ACCESS_KEY
+        with:
+          export-env: true
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install zstd
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends zstd
+
+      - name: Init a fresh base grove_preview DB (postgres:17 + odoo APP_ENV=qa)
+        timeout-minutes: 12
+        run: |
+          # Mirror the known-good full-stack smoke in docker-odoo.yml: a
+          # postgres:17 + odoo(APP_ENV=qa, INIT=base) stack. Difference: the DB
+          # is named grove_preview so the dump matches what restore.sh loads.
+          cat > /tmp/seed.env <<'EOF'
+          POSTGRES_PASSWORD=seedpw
+          ODOO_ADMIN_PASSWORD=seedadmin
+          DB_HOST=postgres
+          DB_PORT=5432
+          DB_USER=odoo
+          DB_PASSWORD=seedpw
+          ADMIN_PASSWD=seedadmin
+          DB_NAME=grove_preview
+          INIT=base
+          WORKERS=0
+          LIST_DB=false
+          EOF
+
+          cat > /tmp/seed-compose.yml <<'EOF'
+          services:
+            postgres:
+              image: postgres:17
+              environment:
+                POSTGRES_USER: odoo
+                POSTGRES_PASSWORD: seedpw
+                POSTGRES_DB: grove_preview
+              healthcheck:
+                test: ["CMD-SHELL", "pg_isready -U odoo -d grove_preview"]
+                interval: 5s
+                timeout: 3s
+                retries: 20
+              ports:
+                - "5432:5432"
+            odoo:
+              image: SEED_IMAGE_PLACEHOLDER
+              depends_on:
+                postgres:
+                  condition: service_healthy
+              environment:
+                DB_HOST: postgres
+                DB_PORT: "5432"
+                DB_USER: odoo
+                DB_PASSWORD: seedpw
+                POSTGRES_PASSWORD: seedpw
+                ADMIN_PASSWD: seedadmin
+                APP_ENV: qa
+                DB_NAME: grove_preview
+                INIT: base
+                WORKERS: "0"
+                LIST_DB: "false"
+              volumes:
+                - /tmp/seed.env:/.env:ro
+              ports:
+                - "8069:8069"
+          EOF
+          sed -i "s|SEED_IMAGE_PLACEHOLDER|${IMAGE}|" /tmp/seed-compose.yml
+
+          docker compose -f /tmp/seed-compose.yml up -d
+
+          echo "Waiting for odoo to finish base install (/web/login 200)…"
+          ok=0
+          for i in $(seq 1 48); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://localhost:8069/web/login || echo 000)
+            echo "  attempt $i: $code"
+            if [ "$code" = "200" ]; then ok=1; break; fi
+            sleep 5
+          done
+          if [ "$ok" != "1" ]; then
+            echo "::error::odoo never served /web/login — base init failed"
+            docker compose -f /tmp/seed-compose.yml logs odoo | tail -80
+            exit 1
+          fi
+
+          # Freeze the DB: stop odoo so nothing writes during the dump.
+          docker compose -f /tmp/seed-compose.yml stop odoo
+
+          # Dump INSIDE the postgres:17 container (avoids runner pg_dump version
+          # mismatch), plain format, matching sanitize-and-upload.sh flags.
+          docker compose -f /tmp/seed-compose.yml exec -T postgres \
+            pg_dump -U odoo -d grove_preview \
+            --format=plain --no-owner --no-privileges > /tmp/grove_preview.sql
+
+          echo "dump bytes: $(wc -c < /tmp/grove_preview.sql)"
+          test -s /tmp/grove_preview.sql
+
+      - name: Package + upload seed (snapshot + filestore + heartbeat)
+        env:
+          DUMP_FILE: /tmp/grove_preview.sql
+          SPACES_ACCESS_KEY: ${{ env.SPACES_ACCESS_KEY_ID }}
+          SPACES_SECRET_KEY: ${{ env.SPACES_SECRET_ACCESS_KEY }}
+          SPACES_BUCKET: grove-preview-data
+          SPACES_ENDPOINT: https://nyc3.digitaloceanspaces.com
+        run: |
+          chmod +x scripts/preview/seed-snapshot.sh
+          scripts/preview/seed-snapshot.sh
+
+      - name: Verify heartbeat is readable
+        env:
+          AWS_ACCESS_KEY_ID: ${{ env.SPACES_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ env.SPACES_SECRET_ACCESS_KEY }}
+        run: |
+          hb=$(aws --endpoint-url https://nyc3.digitaloceanspaces.com \
+            s3 cp s3://grove-preview-data/heartbeat.txt - | tr -d '\n')
+          echo "heartbeat.txt = '$hb'"
+          test -n "$hb"
+          aws --endpoint-url https://nyc3.digitaloceanspaces.com \
+            s3 ls "s3://grove-preview-data/snapshots/prod-sanitized-${hb}.sql.zst"
+          aws --endpoint-url https://nyc3.digitaloceanspaces.com \
+            s3 ls "s3://grove-preview-data/filestore/prod-sanitized-${hb}.tar.zst"
