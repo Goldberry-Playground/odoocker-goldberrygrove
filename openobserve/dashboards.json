@@ -1,12 +1,28 @@
 {
-  "_comment": "OpenObserve dashboard for the Grove status page.",
-  "_lineage": "Consumed by scripts/setup-monitoring.py which POSTs to OpenObserve's /api/{org}/dashboards endpoint. Renders at http://localhost:5080/web/dashboards/<dashboard_id> once provisioned.",
-  "_public_access": "OpenObserve's built-in public-share feature is enabled per-panel. The 'Grove Status' dashboard is the canonical surface; eventual status.gatheringatthegrove.com (M2+) reverse-proxies to this dashboard's public-share URL. Branding deferred to a follow-up.",
+  "_comment": "OpenObserve v0.91.1 dashboards — reshaped to the v5 schema (GOL-278).",
+  "_lineage": "Consumed by scripts/setup-monitoring.py -> POST/PUT /api/{org}/dashboards (upsert by title). Prior payload 500'd; v5 requires version+tabs. Panels ship empty for v1 (referenced streams have no data yet); intended panel SQL preserved in _source_panels for the wiring follow-up.",
   "dashboards": [
     {
-      "name": "Grove Status",
+      "version": 5,
+      "title": "Grove Status",
       "description": "Public uptime + latency at-a-glance across all 4 frontends, Odoo backend, 3 Ghost CMS instances, and Postgres TCP. Read-only sharing enabled per-panel for the eventual public status page.",
-      "rows": [
+      "role": "",
+      "variables": {
+        "list": [],
+        "showDynamicFilters": false
+      },
+      "defaultDatetimeDuration": {
+        "type": "relative",
+        "relativeTimePeriod": "1h"
+      },
+      "tabs": [
+        {
+          "tabId": "default",
+          "name": "Default",
+          "panels": []
+        }
+      ],
+      "_source_panels": [
         {
           "title": "Frontends",
           "panels": [
@@ -89,14 +105,30 @@
           ]
         }
       ],
-      "public_share_enabled": true,
-      "refresh_interval_seconds": 60
+      "_refresh_interval_seconds": 60,
+      "_public_share_enabled": true
     },
     {
-      "name": "Grove CostOps",
+      "version": 5,
+      "title": "Grove CostOps",
       "description": "DigitalOcean spend + utilization at a glance (spec §6). Spend overview + a by-cost resource table (trim candidates by spend), and a Rightsizing row that correlates droplet cost (cost-bridge) with droplet/container utilization (USE metrics from the OTel Collector, §3): high cost + low utilization = a downsize candidate. A single computed cost×utilization JOIN is a follow-up once the metric stream/field names are confirmed live.",
-      "_query_note": "Cost queries target cost/do_billing_bridge.py streams (value + attrs env/type/name/size); USE queries target the OTel Collector streams (system_cpu_utilization, container_cpu_utilization, container_memory_percent, tag container_name). Exact OpenObserve OTLP column names are pending live validation — adjust after the first COST_BRIDGE_ENABLED=true + otel-collector run.",
-      "rows": [
+      "role": "",
+      "variables": {
+        "list": [],
+        "showDynamicFilters": false
+      },
+      "defaultDatetimeDuration": {
+        "type": "relative",
+        "relativeTimePeriod": "1h"
+      },
+      "tabs": [
+        {
+          "tabId": "default",
+          "name": "Default",
+          "panels": []
+        }
+      ],
+      "_source_panels": [
         {
           "title": "Spend overview",
           "panels": [
@@ -167,8 +199,8 @@
           ]
         }
       ],
-      "public_share_enabled": false,
-      "refresh_interval_seconds": 300
+      "_refresh_interval_seconds": 300,
+      "_public_share_enabled": false
     }
   ]
 }
