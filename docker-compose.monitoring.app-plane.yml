@@ -1,0 +1,90 @@
+###############################################################################
+# App-plane monitoring overlay — otel-collector + beyla + synthetic-runner
+#
+# Runs on each Odoo droplet (e.g. grove-qa-l3-odoo) to ship metrics cross-
+# plane to the grove-obs OpenObserve instance. Independent from the obs-plane
+# docker-compose.monitoring.yml which runs OO/Keep on grove-obs itself.
+#
+# Joins the existing grove_grove network created by docker-compose.yml.
+# Env vars are sourced from /etc/grove/.env.monitoring (NOT .env) because
+# this compose points at the REMOTE OO endpoint, not a local one.
+#
+# Deploy:
+#   docker compose --project-name grove-monitoring \
+#     --env-file /etc/grove/.env.monitoring \
+#     -f /etc/grove/docker-compose.monitoring.yml up -d
+#
+# Required env vars in .env.monitoring:
+#   OPENOBSERVE_OTLP_BASE        e.g. http://159.65.46.198:5080/api/default
+#   OPENOBSERVE_OTLP_METRICS_URL e.g. http://159.65.46.198:5080/api/default/v1/metrics
+#   OPENOBSERVE_ROOT_EMAIL       OO root user email
+#   OPENOBSERVE_ROOT_PASSWORD    OO root password
+#   COST_ENV                     qa | prod
+#   SYNTHETIC_ODOO_BASE          e.g. http://odoo:8069 (internal DNS)
+#   SYNTHETIC_TENANTS            e.g. goldberry,ggg,nursery
+###############################################################################
+
+name: grove-monitoring
+
+networks:
+  grove:
+    name: grove_grove
+    external: true
+
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:${OTELCOL_TAG:-latest}
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol/config.yaml"]
+    environment:
+      OPENOBSERVE_OTLP_BASE: ${OPENOBSERVE_OTLP_BASE}
+      OPENOBSERVE_ROOT_EMAIL: ${OPENOBSERVE_ROOT_EMAIL}
+      OPENOBSERVE_ROOT_PASSWORD: ${OPENOBSERVE_ROOT_PASSWORD}
+      COST_ENV: ${COST_ENV:-qa}
+      POSTGRES_ENDPOINT: ""
+      POSTGRES_MONITOR_USER: ""
+      POSTGRES_MONITOR_PASSWORD: ""
+    group_add:
+      - "988"
+    volumes:
+      - /etc/grove/otel/otelcol-config.yaml:/etc/otelcol/config.yaml:ro
+      - /:/hostfs:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - grove
+
+  beyla:
+    image: grafana/beyla:${BEYLA_TAG:-1.9.4}
+    restart: unless-stopped
+    privileged: true
+    pid: host
+    depends_on:
+      - otel-collector
+    environment:
+      BEYLA_OPEN_PORT: "8069"
+      OTEL_SERVICE_NAME: odoo
+      BEYLA_SERVICE_NAMESPACE: grove
+      BEYLA_METRICS_INTERVAL: 30s
+      BEYLA_OTEL_METRICS_FEATURES: application,application_span
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+    networks:
+      - grove
+
+  synthetic-runner:
+    image: grove-synthetic-runner:local
+    restart: unless-stopped
+    depends_on:
+      - otel-collector
+    environment:
+      SYNTHETIC_ODOO_BASE: ${SYNTHETIC_ODOO_BASE:-http://odoo:8069}
+      SYNTHETIC_TENANTS: ${SYNTHETIC_TENANTS:-goldberry,ggg,nursery}
+      SYNTHETIC_ENV: ${COST_ENV:-qa}
+      OPENOBSERVE_OTLP_METRICS_URL: ${OPENOBSERVE_OTLP_METRICS_URL}
+      OPENOBSERVE_ROOT_EMAIL: ${OPENOBSERVE_ROOT_EMAIL}
+      OPENOBSERVE_ROOT_PASSWORD: ${OPENOBSERVE_ROOT_PASSWORD}
+      SYNTHETIC_UPTIME_ENABLED: "true"
+      SYNTHETIC_CANARY_ENABLED: "false"
+      SYNTHETIC_GHOST_ENABLED: "false"
+    networks:
+      - grove
