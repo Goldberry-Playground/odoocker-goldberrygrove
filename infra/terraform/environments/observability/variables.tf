@@ -128,3 +128,61 @@ variable "cost_env" {
   type        = string
   default     = "prod"
 }
+
+# ── Public RUM ingest vhost (GOL-311) ────────────────────────────────────────
+# Browser Real-User-Monitoring beacons land on a PUBLIC, TLS + CORS front
+# (Caddy) that proxies /rum/* to openobserve:5080. Everything below wires that.
+variable "rum_public_host" {
+  description = "Browser-facing hostname for the RUM ingest endpoint (host only, no scheme). Cloudflare-proxied (orange-cloud) -> this droplet's 443. This exact string is what grove-sites sets as NEXT_PUBLIC_OO_RUM_SITE. The SDK POSTs to https://<host>/rum/v1/default/rum."
+  type        = string
+  default     = "rum.gatheringatthegrove.com"
+}
+
+variable "cors_allowed_origin_regex" {
+  description = "RE2 (Go) regexp Caddy matches the browser Origin header against; ACAO is reflected only on a match. Default = the six tenant storefront origins + preview (*.qa.gatheringatthegrove.com). Anchored ^...$ so it can't be substring-spoofed."
+  type        = string
+  default     = "^https://(gatheringatthegrove\\.com|goldberrygrove\\.farm|georgeggg\\.com|woodworkinggeorge\\.com|atthegrove\\.com|atthegrovenursery\\.com|[a-z0-9-]+\\.qa\\.gatheringatthegrove\\.com)$"
+}
+
+variable "cf_origin_cert_pem" {
+  description = "Cloudflare Origin Certificate (PEM, full chain) for rum_public_host, mounted into Caddy so Cloudflare can connect Full (Strict). Origin certs are only trusted by the Cloudflare edge, never a public CA. Source from 1Password; never commit. 15-year validity => no renewal automation needed."
+  type        = string
+  sensitive   = true
+}
+
+variable "cf_origin_key_pem" {
+  description = "Private key (PEM) paired with cf_origin_cert_pem. Written 0600 on the droplet. Source from 1Password; never commit."
+  type        = string
+  sensitive   = true
+}
+
+variable "cloudflare_ingress_cidrs" {
+  description = "Cloudflare edge IP ranges allowed to reach the public RUM vhost on 443. Locks the origin so only the CF proxy can connect (browsers never hit the droplet directly). Default is Cloudflare's published v4+v6 ranges (https://www.cloudflare.com/ips/); refresh if CF updates them."
+  type        = list(string)
+  default = [
+    # IPv4 (https://www.cloudflare.com/ips-v4)
+    "173.245.48.0/20",
+    "103.21.244.0/22",
+    "103.22.200.0/22",
+    "103.31.4.0/22",
+    "141.101.64.0/18",
+    "108.162.192.0/18",
+    "190.93.240.0/20",
+    "188.114.96.0/20",
+    "197.234.240.0/22",
+    "198.41.128.0/17",
+    "162.158.0.0/15",
+    "104.16.0.0/13",
+    "104.24.0.0/14",
+    "172.64.0.0/13",
+    "131.0.72.0/22",
+    # IPv6 (https://www.cloudflare.com/ips-v6)
+    "2400:cb00::/32",
+    "2606:4700::/32",
+    "2803:f800::/32",
+    "2405:b500::/32",
+    "2405:8100::/32",
+    "2a06:98c0::/29",
+    "2c0f:f248::/32",
+  ]
+}

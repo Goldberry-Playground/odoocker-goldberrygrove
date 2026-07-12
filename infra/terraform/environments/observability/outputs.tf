@@ -8,6 +8,18 @@ output "obs_droplet_id" {
   value       = module.obs_droplet.droplet_id
 }
 
+# ── Public RUM ingest (GOL-311) ──────────────────────────────────────────────
+# The A record for rum_public_host must point (orange-cloud) at obs_droplet_ip.
+output "rum_public_host" {
+  description = "Browser-facing RUM hostname. Set grove-sites NEXT_PUBLIC_OO_RUM_SITE to exactly this (host only, no scheme)."
+  value       = var.rum_public_host
+}
+
+output "rum_ingest_url" {
+  description = "Full RUM ingest URL the @openobserve/browser-rum SDK POSTs to (org=default, stream=rum). Handy for a curl/OPTIONS smoke test."
+  value       = "https://${var.rum_public_host}/rum/v1/default/rum"
+}
+
 output "openobserve_url" {
   description = "OpenObserve UI (admin-only via the firewall)."
   value       = "http://${module.obs_droplet.ipv4_address}:5080"

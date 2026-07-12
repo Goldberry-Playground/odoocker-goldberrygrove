@@ -30,6 +30,24 @@ write_files:
     permissions: "0644"
     content: ${compose_obs_b64}
 
+  # Public RUM ingest vhost (GOL-311): Caddyfile + Cloudflare Origin Certificate.
+  # b64-encoded so cloud-init's YAML parser never sees Caddyfile braces / PEM
+  # bodies (same technique as the compose above). The private key is 0600.
+  - path: /etc/grove-obs/caddy/Caddyfile
+    encoding: b64
+    permissions: "0644"
+    content: ${caddyfile_rum_b64}
+
+  - path: /etc/grove-obs/caddy/certs/rum.crt
+    encoding: b64
+    permissions: "0644"
+    content: ${cf_origin_cert_b64}
+
+  - path: /etc/grove-obs/caddy/certs/rum.key
+    encoding: b64
+    permissions: "0600"
+    content: ${cf_origin_key_b64}
+
 runcmd:
   - curl -fsSL https://get.docker.com | sh
   - systemctl enable --now docker
