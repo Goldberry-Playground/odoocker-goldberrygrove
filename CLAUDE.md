@@ -70,3 +70,9 @@ Update the dev profile password: `odoo-mcp edit-profile --name dev --password <y
 - `docs/DEPLOYMENT.md` — Production deployment checklist
 - `docs/DEVELOPMENT.md` — Local development guide
 - `docs/ADR/` — Architecture Decision Records
+
+## Pull requests: Draft vs. Ready
+
+Open WIP as a **Draft** PR; only mark it **Ready** when the change is
+self-contained, you ran the smallest local verify, and you expect CI to be
+green. Full rule: [`docs/pr-policy.md`](docs/pr-policy.md).
