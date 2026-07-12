@@ -54,38 +54,27 @@ jobs:
         timeout-minutes: 2
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_CI_SA_TOKEN }}
-          SPACES_ACCESS_KEY_ID:     op://Grove Prod/odoocker/SPACES_ACCESS_KEY_ID
-          SPACES_SECRET_ACCESS_KEY: op://Grove Prod/odoocker/SPACES_SECRET_ACCESS_KEY
-          DIGITALOCEAN_TOKEN:       op://Grove Prod/odoocker/DIGITALOCEAN_TOKEN
+          # tf-provider-auth: fullaccess Spaces key (DO00U6TUX6NRKCM2ELQA), used to
+          # create the bucket if absent and to upload the seed. The bucket-scoped key
+          # will be minted by bootstrap TF later; until then this fullaccess key fills
+          # the gap.  Both fields live in "Goldberry Grove - Admin/Grove Infra".
+          SPACES_FULLACCESS_KEY_ID:     "op://Goldberry Grove - Admin/Grove Infra/spaces_bootstrap_access_key_id"
+          SPACES_FULLACCESS_SECRET_KEY: "op://Goldberry Grove - Admin/Grove Infra/spaces_bootstrap_secret_key "
+          DIGITALOCEAN_TOKEN:           "op://Goldberry Grove - Admin/Grove Infra/do_token"
         with:
           export-env: true
 
       - name: Bootstrap bucket grove-preview-data (create if absent)
         # The bootstrap TF creates the bucket + a scoped RW key. Until that TF is
-        # applied, the bucket doesn't exist. Here we create it using the DO REST
-        # API + a temporary unrestricted Spaces key so the seed can proceed.
-        # If the bucket already exists, the `s3 mb` call is a no-op (409 Conflict
-        # which aws CLI converts to a harmless warning on pre-existing buckets).
+        # applied, the bucket may not exist. We create it here using the fullaccess
+        # tf-provider-auth key (DO00U6TUX6NRKCM2ELQA, loaded above) so the seed
+        # can proceed. s3 mb is idempotent (409 on pre-existing bucket is a no-op).
         timeout-minutes: 3
-        env:
-          SPACES_ENDPOINT: https://nyc3.digitaloceanspaces.com
         run: |
-          # Mint a temporary account-wide Spaces key using the DO API token.
-          resp=$(curl -sf -X POST "https://api.digitalocean.com/v2/spaces/keys" \
-            -H "Authorization: Bearer ${DIGITALOCEAN_TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d '{"name":"preview-seed-bootstrap-tmp"}')
-          TMP_KEY=$(echo "$resp" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['key']['access_key'])")
-          TMP_SECRET=$(echo "$resp" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['key']['secret_key'])")
-          # The access_key is the unique identifier used for DELETE /v2/spaces/keys/{access_key}
-          echo "TMP_SPACES_KEY_ID=$TMP_KEY" >> "$GITHUB_ENV"
-
-          # Create bucket (idempotent)
-          AWS_ACCESS_KEY_ID="$TMP_KEY" AWS_SECRET_ACCESS_KEY="$TMP_SECRET" \
-            aws --endpoint-url "$SPACES_ENDPOINT" s3 mb s3://grove-preview-data --region nyc3 || true
-
-          echo "BOOTSTRAP_ACCESS_KEY=$TMP_KEY"   >> "$GITHUB_ENV"
-          echo "BOOTSTRAP_SECRET_KEY=$TMP_SECRET" >> "$GITHUB_ENV"
+          AWS_ACCESS_KEY_ID="$SPACES_FULLACCESS_KEY_ID" \
+          AWS_SECRET_ACCESS_KEY="$SPACES_FULLACCESS_SECRET_KEY" \
+            aws --endpoint-url https://nyc3.digitaloceanspaces.com \
+              s3 mb s3://grove-preview-data --region nyc3 2>&1 || true
 
       - name: Log in to ghcr.io
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
@@ -187,11 +176,8 @@ jobs:
       - name: Package + upload seed (snapshot + filestore + heartbeat)
         env:
           DUMP_FILE: /tmp/grove_preview.sql
-          # Use the bootstrap key if the bucket was just created; fall back to the
-          # regular scoped key if bootstrap already ran (SPACES_ACCESS_KEY_ID may
-          # be grove-tf-state scoped, but BOOTSTRAP_ACCESS_KEY is always present).
-          SPACES_ACCESS_KEY: ${{ env.BOOTSTRAP_ACCESS_KEY }}
-          SPACES_SECRET_KEY: ${{ env.BOOTSTRAP_SECRET_KEY }}
+          SPACES_ACCESS_KEY: ${{ env.SPACES_FULLACCESS_KEY_ID }}
+          SPACES_SECRET_KEY: ${{ env.SPACES_FULLACCESS_SECRET_KEY }}
           SPACES_BUCKET: grove-preview-data
           SPACES_ENDPOINT: https://nyc3.digitaloceanspaces.com
         run: |
@@ -200,8 +186,8 @@ jobs:
 
       - name: Verify heartbeat is readable
         env:
-          AWS_ACCESS_KEY_ID: ${{ env.BOOTSTRAP_ACCESS_KEY }}
-          AWS_SECRET_ACCESS_KEY: ${{ env.BOOTSTRAP_SECRET_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ env.SPACES_FULLACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ env.SPACES_FULLACCESS_SECRET_KEY }}
         run: |
           hb=$(aws --endpoint-url https://nyc3.digitaloceanspaces.com \
             s3 cp s3://grove-preview-data/heartbeat.txt - | tr -d '\n')
@@ -211,12 +197,3 @@ jobs:
             s3 ls "s3://grove-preview-data/snapshots/prod-sanitized-${hb}.sql.zst"
           aws --endpoint-url https://nyc3.digitaloceanspaces.com \
             s3 ls "s3://grove-preview-data/filestore/prod-sanitized-${hb}.tar.zst"
-
-      - name: Revoke temporary bootstrap Spaces key
-        if: always() && env.TMP_SPACES_KEY_ID != ''
-        run: |
-          curl -sf -X DELETE \
-            "https://api.digitalocean.com/v2/spaces/keys/${TMP_SPACES_KEY_ID}" \
-            -H "Authorization: Bearer ${DIGITALOCEAN_TOKEN}" && \
-            echo "Revoked bootstrap key ${TMP_SPACES_KEY_ID}" || \
-            echo "Warning: could not revoke key ${TMP_SPACES_KEY_ID} — revoke manually"
