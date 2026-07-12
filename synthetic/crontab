@@ -3,4 +3,4 @@
 # ship results to OpenObserve as OTLP metrics. supercronic logs each run to
 # stdout and exits non-zero only on a scheduler fault (never on a journey
 # failure — those are reported as metrics by run.py).
-* * * * * python3 /app/run.py
+* * * * * /usr/local/bin/python3 /app/run.py

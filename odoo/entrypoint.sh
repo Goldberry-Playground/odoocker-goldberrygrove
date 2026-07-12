@@ -140,8 +140,13 @@ case "$1" in
         else
             wait-for-psql.py --db_host ${HOST} --db_port ${PORT} --db_user ${USER} --db_password ${PASSWORD} --timeout=30
 
-            if [ ${APP_ENV} = 'fresh' ] || [ ${APP_ENV} = 'restore' ]; then
+            if [ ${APP_ENV} = 'fresh' ] || [ ${APP_ENV} = 'restore' ] || [ ${APP_ENV} = 'preview' ]; then
                 # Ideal for a fresh install or restore a production database.
+                # APP_ENV=preview (per-PR ephemeral droplets) is a restore case:
+                # cloud-init restore.sh loads a sanitized grove_preview snapshot
+                # BEFORE odoo boots, so odoo must just serve the existing DB with
+                # no --init/--update. Without this branch APP_ENV=preview matched
+                # no case and the container exec'd nothing → odoo silently down.
                 echo odoo --config ${ODOO_RC} --database= --init= --update= --load=${LOAD} --log-level=${LOG_LEVEL} --load-language= --workers=0 --limit-time-cpu=3600 --limit-time-real=7200
 
                 exec odoo --config ${ODOO_RC} --database= --init= --update= --load-language= --workers=0 --limit-time-cpu=3600 --limit-time-real=7200
