@@ -1,5 +1,5 @@
 #cloud-config
-# Grove Preview — bootstrap for per-PR droplet.
+# Grove Preview - bootstrap for per-PR droplet.
 # Templated by Terraform's templatefile() in main.tf locals. Substituted
 # variables: pr_number, preview_host, odoo_image_tag, frontend_image_tags,
 # snapshot_date, spaces_access_key, spaces_secret_key, ghost_content_keys,
@@ -7,7 +7,7 @@
 # caddyfile_tpl (read from compose/Caddyfile.tpl).
 
 package_update: true
-package_upgrade: false # don't burn boot time on apt upgrade — base image is recent enough
+package_upgrade: false # don't burn boot time on apt upgrade - base image is recent enough
 
 packages:
   - ca-certificates
@@ -105,7 +105,7 @@ runcmd:
   # Run restore + bring stack up. Logs to /var/log/grove-restore.log for triage.
   - /opt/grove/restore.sh > /var/log/grove-restore.log 2>&1
 
-  # Health gate sentinel — the preview-up workflow polls for this file before
+  # Health gate sentinel - the preview-up workflow polls for this file before
   # posting the URL to the PR (Task 3.3). Up to 5 minutes for the full stack
   # to be ready behind Caddy.
   - |
