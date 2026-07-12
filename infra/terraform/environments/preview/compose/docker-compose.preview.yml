@@ -1,5 +1,5 @@
 ###############################################################################
-# Grove Preview — Compose stack (single-host, ephemeral)
+# Grove Preview - Compose stack (single-host, ephemeral)
 #
 # Started from cloud-init after snapshot restore completes.
 # Template variables substituted by Terraform's templatefile() before this
@@ -10,7 +10,7 @@
 #   POSTGRES_PASSWORD, DO_API_TOKEN,
 #   GHOST_KEY_GOLDBERRY, GHOST_KEY_GGG, GHOST_KEY_NURSERY
 #
-# This is a SIMPLIFIED stack scoped to preview needs — distinct from the
+# This is a SIMPLIFIED stack scoped to preview needs - distinct from the
 # full odoocker compose (which also runs Ghost containers, nginx-proxy,
 # acme-companion, KeyDB, MinIO, pgAdmin). Previews use prod Ghost via
 # Content API (read-only, browser-safe), so no Ghost containers here.

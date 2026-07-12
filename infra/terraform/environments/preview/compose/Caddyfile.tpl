@@ -48,11 +48,11 @@ Disallow: /" 200
 	}
 
 	# Route by leftmost label. Containers listen internally:
-	#   hub       → 3000  (hub Dockerfile sets ENV PORT=3000)
-	#   goldberry → 3001  (storefront Dockerfiles set ENV PORT=3001)
-	#   ggg       → 3001
-	#   nursery   → 3001
-	#   odoo      → 8069
+	#   hub       -> 3000  (hub Dockerfile sets ENV PORT=3000)
+	#   goldberry -> 3001  (storefront Dockerfiles set ENV PORT=3001)
+	#   ggg       -> 3001
+	#   nursery   -> 3001
+	#   odoo      -> 8069
 	@hub host hub.${PREVIEW_HOST}.${PREVIEW_ZONE}
 	@goldberry host goldberry.${PREVIEW_HOST}.${PREVIEW_ZONE}
 	@ggg host ggg.${PREVIEW_HOST}.${PREVIEW_ZONE}
