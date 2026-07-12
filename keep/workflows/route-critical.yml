@@ -1,0 +1,26 @@
+# Keep workflow — route severity=critical alerts to the Discord critical channel.
+#
+# SINGULAR `workflow:` doc (Keep 0.54.1). Same verified shape as route-warning
+# (CEL trigger + inline discord webhook via __DISCORD_WEBHOOK_CRITICAL__ injected by
+# setup-monitoring.py), prefixing @here to ping online channel members — substitutes
+# for paid PagerDuty on the solo-dev tier. If a real pager is ever added, append a
+# second action here (e.g. a pagerduty provider) — downstream routing is unaffected.
+workflow:
+  id: route-critical-to-discord
+  name: Critical to Discord (with @here)
+  description: Route severity=critical alerts to the Discord critical channel WITH @here.
+  triggers:
+    - type: alert
+      cel: severity == "critical"
+  actions:
+    - name: discord-critical-notify
+      provider:
+        type: discord
+        config:
+          authentication:
+            webhook_url: "__DISCORD_WEBHOOK_CRITICAL__"
+        with:
+          content: >-
+            @here 🚨 **GROVE CRITICAL** — {{ alert.name }}
+            :: {{ alert.message }}
+            (runbook: docs/RUNBOOKS.md#{{ alert.runbook_key }})

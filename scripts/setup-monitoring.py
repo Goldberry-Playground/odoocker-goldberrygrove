@@ -2,40 +2,72 @@
 """
 Bootstrap the Grove monitoring stack — OpenObserve + Keep.
 
+Remediated (GOL-278) to the REAL, empirically-verified API contracts of the
+deployed OpenObserve v0.91.1 and Keep 0.54.1 (the previous version was authored
+against assumed shapes and 404'd/500'd on every upload). Contracts confirmed by
+probing the live grove-obs droplet:
+
+  OpenObserve v0.91.1 (Basic auth, root creds)
+    - Alerts are v2:  POST /api/v2/{org}/alerts   (v1 /api/{org}/alerts is 404)
+      v2 alerts reference a NAMED destination + template, not an inline URL.
+    - Destinations:   POST /api/{org}/alerts/destinations   (name, url, method,
+      template, headers, type). NB: OO has an SSRF guard that REJECTS private-IP
+      destination URLs — the Keep endpoint must be an SSRF-allowed address
+      (public IP / loopback with ZO_SSRF_ALLOW_LOOPBACK). See KEEP_EVENT_URL.
+    - Templates:      POST /api/{org}/alerts/templates       (name, body, type).
+    - Dashboards:     POST /api/{org}/dashboards             (v5 schema w/ tabs).
+    - There is NO /synthetic endpoint — synthetic monitors are NOT OO objects.
+      They configure the external synthetic-runner (Hurl), which ships metrics
+      to OO; the synthetic-* alerts fire on those metric streams. monitors.json
+      is therefore reference-only and is no longer POSTed here.
+
+  Keep 0.54.1 (API at ROOT — not /api/v1; auth = X-API-KEY header)
+    - Providers:  POST /providers/install  with the provider config fields at
+      TOP LEVEL (discord -> top-level webhook_url), not nested.
+    - Workflows:  POST /workflows  (multipart, field `file`) — ONE singular
+      `workflow:` doc per file. keep/workflows/*.yml is one file per workflow.
+    - Test event: POST /alerts/event?provider_id=openobserve  -> 202.
+
 Reads the canonical configs in:
-    odoocker/openobserve/monitors.json
-    odoocker/openobserve/alerts.json
-    odoocker/openobserve/dashboards.json
-    odoocker/keep/providers.yml
-    odoocker/keep/workflows.yml
+    openobserve/keep-destination.json   (OO template + Keep-webhook destination)
+    openobserve/alerts.json             (OO v2 alert objects)
+    openobserve/dashboards.json         (OO v5 dashboards)
+    keep/providers.yml                  (Keep provider install defs)
+    keep/workflows/*.yml                (one singular Keep workflow per file)
 
-POSTs each to the running OpenObserve / Keep REST API. Idempotent: re-runs
-upsert by 'name' / 'id', so this can run on every `make monitoring-up`
-without creating duplicates.
+Idempotent: re-runs upsert by name/id, so this is safe on every bootstrap.
 
-Secrets substituted from .env.monitoring at runtime:
-    DISCORD_WEBHOOK_WARNING  -> Keep providers.discord-warning.webhook_url
-    DISCORD_WEBHOOK_CRITICAL -> Keep providers.discord-critical.webhook_url
-    KEEP_WEBHOOK_TOKEN       -> OpenObserve alert destinations URL
-    OPENOBSERVE_ROOT_*       -> bearer auth on OpenObserve API
-    MINIO_ROOT_*             -> OpenObserve storage backend (already in compose env)
+Local vs remote:
+    Local `make monitoring-up` (OpenObserve + Keep side-by-side on the host):
+        defaults hit localhost. Note the SSRF caveat still applies to the OO
+        destination — set KEEP_EVENT_URL to an SSRF-allowed address.
+    Remote (run from the agenticos vantage against grove-obs): run this in a
+        python:3.12-slim container ON the grove-obs_obs network so both
+        services are reachable by service name, e.g.
+            OPENOBSERVE_BASE_URL=http://openobserve:5080 \
+            KEEP_BASE_URL=http://keep-backend:8080 \
+            ./scripts/setup-monitoring.py
 
-Mirrors the shape of scripts/setup_ghost_integration.py — see that file
-for the canonical pattern for idempotent service bootstraps in odoocker.
+Secrets (from .env.monitoring / op at runtime):
+    OPENOBSERVE_ROOT_EMAIL / OPENOBSERVE_ROOT_PASSWORD  -> OO Basic auth
+    KEEP_WEBHOOK_TOKEN        -> Keep X-API-KEY + OO destination header
+    DISCORD_WEBHOOK_WARNING   -> Keep discord-warning provider webhook_url
+    DISCORD_WEBHOOK_CRITICAL  -> Keep discord-critical provider webhook_url
 
 Usage:
-    GHOST_WEBHOOK_TOKEN=... ./scripts/setup-monitoring.py
-    # or just:
-    make monitoring-setup   # reads env from .env.monitoring automatically
+    ./scripts/setup-monitoring.py            # reads env from the shell
+    make monitoring-setup                    # reads env from .env.monitoring
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 from urllib import error as urlerror
@@ -46,22 +78,10 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
 OPENOBSERVE_DIR = REPO_ROOT / "openobserve"
 KEEP_DIR = REPO_ROOT / "keep"
+KEEP_WORKFLOWS_DIR = KEEP_DIR / "workflows"
 SYNTHETIC_DIR = REPO_ROOT / "synthetic"
 
-
-def maybe_seed_canary() -> None:
-    """Seed the synthetic checkout-canary product (opt-in).
-
-    Delegates to synthetic/canary.py --seed (the single owner of the canary
-    XML-RPC logic). No-op unless SYNTHETIC_CANARY_ENABLED=true. Run before
-    monitors so the canary journey never fires without its product.
-    """
-    if get_env("SYNTHETIC_CANARY_ENABLED", "false").strip().lower() != "true":
-        _log("  checkout-canary disabled (SYNTHETIC_CANARY_ENABLED!=true) — skipping seed")
-        return
-    canary = SYNTHETIC_DIR / "canary.py"
-    rc = subprocess.run([sys.executable, str(canary), "--seed"], check=False).returncode
-    _log("  ✓ canary product seeded" if rc == 0 else f"  ⚠ canary seed failed (rc={rc})")
+OO_ORG = os.environ.get("OPENOBSERVE_ORG", "default")
 
 
 def _log(*args: Any) -> None:
@@ -71,7 +91,6 @@ def _log(*args: Any) -> None:
 
 # ── env helpers ──────────────────────────────────────────────────────────────
 def require_env(name: str) -> str:
-    """Read an env var or exit with a helpful error."""
     val = os.environ.get(name)
     if not val:
         _log(f"ERROR: required env var {name} is not set.")
@@ -89,38 +108,44 @@ def http_request(
     method: str,
     url: str,
     *,
-    body: dict | None = None,
+    body: Any = None,
     auth: tuple[str, str] | None = None,
-    bearer: str | None = None,
-    timeout: float = 15.0,
-) -> tuple[int, dict | str]:
-    """
-    Minimal HTTP client using stdlib (avoids adding a dependency).
-    Returns (status_code, parsed_body_or_text).
-    """
-    headers = {"Content-Type": "application/json", "Accept": "application/json"}
-    if bearer:
-        headers["Authorization"] = f"Bearer {bearer}"
+    headers: dict[str, str] | None = None,
+    raw: bytes | None = None,
+    content_type: str = "application/json",
+    timeout: float = 20.0,
+) -> tuple[int, Any]:
+    """Minimal stdlib HTTP client. Returns (status_code, parsed_body_or_text)."""
+    hdrs = {"Accept": "application/json"}
+    if headers:
+        hdrs.update(headers)
     if auth:
         import base64
 
         token = base64.b64encode(f"{auth[0]}:{auth[1]}".encode()).decode()
-        headers["Authorization"] = f"Basic {token}"
-    data = json.dumps(body).encode() if body is not None else None
-    req = request.Request(url, data=data, method=method, headers=headers)
+        hdrs["Authorization"] = f"Basic {token}"
+    if raw is not None:
+        data = raw
+        hdrs["Content-Type"] = content_type
+    elif body is not None:
+        data = json.dumps(body).encode()
+        hdrs["Content-Type"] = content_type
+    else:
+        data = None
+    req = request.Request(url, data=data, method=method, headers=hdrs)
     try:
         with request.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read().decode()
+            text = resp.read().decode()
             try:
-                return resp.status, json.loads(raw)
+                return resp.status, json.loads(text)
             except json.JSONDecodeError:
-                return resp.status, raw
+                return resp.status, text
     except urlerror.HTTPError as e:
-        raw = e.read().decode() if e.fp else ""
+        text = e.read().decode() if e.fp else ""
         try:
-            return e.code, json.loads(raw)
+            return e.code, json.loads(text)
         except json.JSONDecodeError:
-            return e.code, raw
+            return e.code, text
     except urlerror.URLError as e:
         _log(f"  network error: {e.reason}")
         return 0, str(e.reason)
@@ -131,7 +156,7 @@ def wait_for(url: str, max_wait_s: int, *, name: str) -> None:
     _log(f"  waiting for {name} at {url} (up to {max_wait_s}s)...")
     deadline = time.time() + max_wait_s
     while time.time() < deadline:
-        code, _ = http_request("GET", url, timeout=3)
+        code, _ = http_request("GET", url, timeout=4)
         if code != 0:
             _log(f"  {name} responding (HTTP {code})")
             return
@@ -141,83 +166,129 @@ def wait_for(url: str, max_wait_s: int, *, name: str) -> None:
 
 
 # ── OpenObserve API ──────────────────────────────────────────────────────────
-def oo_base_url() -> str:
-    # If OPENOBSERVE_BASE_URL is set (e.g. running against a remote obs droplet
-    # in CI per ADR-007 addendum's Phase 1.5), use it verbatim and only append
-    # /api/default. Otherwise fall back to localhost:OPENOBSERVE_PORT for local
-    # `make monitoring-up` usage where this script + OpenObserve run side-by-side.
-    base = get_env("OPENOBSERVE_BASE_URL", "")
-    if base:
-        return f"{base.rstrip('/')}/api/default"
-    port = get_env("OPENOBSERVE_PORT", "5080")
-    return f"http://localhost:{port}/api/default"
+def oo_root() -> str:
+    """Scheme+host of OpenObserve (no /api suffix). Used for /healthz."""
+    return get_env("OPENOBSERVE_BASE_URL", f"http://localhost:{get_env('OPENOBSERVE_PORT', '5080')}").rstrip("/")
+
+
+def oo_api() -> str:
+    """v1 API base: {root}/api/{org} — templates, destinations, dashboards."""
+    return f"{oo_root()}/api/{OO_ORG}"
+
+
+def oo_v2_api() -> str:
+    """v2 API base: {root}/api/v2/{org} — alerts."""
+    return f"{oo_root()}/api/v2/{OO_ORG}"
 
 
 def oo_auth() -> tuple[str, str]:
     return require_env("OPENOBSERVE_ROOT_EMAIL"), require_env("OPENOBSERVE_ROOT_PASSWORD")
 
 
-def oo_bootstrap_monitors() -> None:
-    src = OPENOBSERVE_DIR / "monitors.json"
-    data = json.loads(src.read_text())
-    monitors = [m for m in data.get("monitors", []) if not m.get("_comment")]
-    _log(f"  uploading {len(monitors)} synthetic monitors...")
-    for m in monitors:
-        # Strip our _note / _comment fields — OO will reject unknown keys
-        payload = {k: v for k, v in m.items() if not k.startswith("_")}
-        code, _resp = http_request(
-            "POST",
-            f"{oo_base_url()}/synthetic",
-            body=payload,
-            auth=oo_auth(),
-        )
-        if code in (200, 201):
-            _log(f"    ✓ {m['name']}")
-        elif code == 409:
-            # Already exists — try update
-            code2, _ = http_request(
-                "PUT",
-                f"{oo_base_url()}/synthetic/{m['name']}",
-                body=payload,
-                auth=oo_auth(),
-            )
-            status = "✓ updated" if code2 in (200, 204) else f"⚠ {code2}"
-            _log(f"    {status} {m['name']}")
-        else:
-            _log(f"    ✗ {m['name']} — HTTP {code}")
+def keep_event_url() -> str:
+    """
+    The URL OpenObserve's alert destination POSTs to reach Keep.
+
+    OpenObserve v0.91.1 has an SSRF guard that rejects private-IP destination
+    URLs at CREATE time, so this cannot be the internal keep-backend service
+    name / private IP. Set KEEP_EVENT_URL to an SSRF-allowed address that
+    reaches Keep — e.g. the obs droplet's PUBLIC IP with keep-backend published
+    admin-only + firewalled (hairpin NAT verified working), or a loopback
+    address paired with ZO_SSRF_ALLOW_LOOPBACK=true.
+    """
+    explicit = get_env("KEEP_EVENT_URL", "")
+    if explicit:
+        return explicit.rstrip("/")
+    # No safe default exists (any in-network default trips the SSRF guard).
+    return ""
 
 
-def oo_bootstrap_alerts() -> None:
+def oo_upsert_template(tmpl: dict) -> None:
+    name = tmpl["name"]
+    code, resp = http_request("POST", f"{oo_api()}/alerts/templates", body=tmpl, auth=oo_auth())
+    if code in (200, 201):
+        _log(f"    ✓ template {name}")
+        return
+    # Update path — OO templates PUT by name.
+    code2, resp2 = http_request("PUT", f"{oo_api()}/alerts/templates/{name}", body=tmpl, auth=oo_auth())
+    if code2 in (200, 201, 204):
+        _log(f"    ✓ template {name} (updated)")
+    else:
+        _log(f"    ✗ template {name} — POST {code} {resp} / PUT {code2} {resp2}")
+
+
+def oo_upsert_destination(dest: dict) -> None:
+    name = dest["name"]
+    if not dest.get("url"):
+        _log(f"    ⚠ destination {name} SKIPPED — KEEP_EVENT_URL unset (see docstring re SSRF guard)")
+        return
+    code, resp = http_request("POST", f"{oo_api()}/alerts/destinations", body=dest, auth=oo_auth())
+    if code in (200, 201):
+        _log(f"    ✓ destination {name}")
+        return
+    code2, resp2 = http_request("PUT", f"{oo_api()}/alerts/destinations/{name}", body=dest, auth=oo_auth())
+    if code2 in (200, 201, 204):
+        _log(f"    ✓ destination {name} (updated)")
+    else:
+        _log(f"    ✗ destination {name} — POST {code} {resp} / PUT {code2} {resp2}")
+
+
+def oo_existing_alert_ids() -> dict[str, str]:
+    """name -> id map of existing v2 alerts, for upsert-by-name."""
+    code, resp = http_request("GET", f"{oo_v2_api()}/alerts", auth=oo_auth())
+    out: dict[str, str] = {}
+    if code == 200 and isinstance(resp, dict):
+        for a in resp.get("list", []):
+            alert = a.get("alert", a) if isinstance(a, dict) else {}
+            nm = alert.get("name") or a.get("name")
+            aid = alert.get("id") or a.get("id") or a.get("alert_id")
+            if nm and aid:
+                out[nm] = aid
+    return out
+
+
+def oo_bootstrap_alerts(dest_available: bool) -> None:
     src = OPENOBSERVE_DIR / "alerts.json"
     data = json.loads(src.read_text())
     alerts = [a for a in data.get("alerts", []) if not a.get("_comment")]
-    keep_token = require_env("KEEP_WEBHOOK_TOKEN")
-    _log(f"  uploading {len(alerts)} alert rules...")
+    _log(f"  uploading {len(alerts)} v2 alert rules...")
+    if not dest_available:
+        _log("  NOTE: KEEP_EVENT_URL unset — alerts still upsert but will fail to notify")
+        _log("        until the Keep destination exists. See docstring (SSRF guard).")
+    existing = oo_existing_alert_ids()
+    ok = 0
     for a in alerts:
         payload = {k: v for k, v in a.items() if not k.startswith("_")}
-        # Substitute the Keep webhook token into the destination URL.
-        # OpenObserve's destinations are separate API objects; for simplicity
-        # here we inline the URL into the alert config.
-        payload["destination_url"] = f"http://keep-backend:8080/alerts/event/{keep_token}"
-        code, _ = http_request(
-            "POST",
-            f"{oo_base_url()}/alerts",
-            body=payload,
-            auth=oo_auth(),
-        )
-        if code in (200, 201):
-            _log(f"    ✓ {a['name']}")
-        elif code == 409:
-            code2, _ = http_request(
-                "PUT",
-                f"{oo_base_url()}/alerts/{a['name']}",
-                body=payload,
-                auth=oo_auth(),
+        name = payload["name"]
+        if name in existing:
+            code, resp = http_request(
+                "PUT", f"{oo_v2_api()}/alerts/{existing[name]}", body=payload, auth=oo_auth()
             )
-            status = "✓ updated" if code2 in (200, 204) else f"⚠ {code2}"
-            _log(f"    {status} {a['name']}")
+            verb = "updated"
         else:
-            _log(f"    ✗ {a['name']} — HTTP {code}")
+            code, resp = http_request("POST", f"{oo_v2_api()}/alerts", body=payload, auth=oo_auth())
+            verb = "created"
+        if code in (200, 201):
+            ok += 1
+            _log(f"    ✓ {name} ({verb})")
+        else:
+            _log(f"    ✗ {name} — HTTP {code} {str(resp)[:160]}")
+    _log(f"  alerts: {ok}/{len(alerts)} upserted")
+
+
+def oo_existing_dashboards() -> dict[str, tuple[str, str]]:
+    """title -> (dashboardId, hash). OO's dashboard PUT requires the current hash
+    (concurrency guard) — a PUT without it 500s ('missing or invalid hash')."""
+    code, resp = http_request("GET", f"{oo_api()}/dashboards", auth=oo_auth())
+    out: dict[str, tuple[str, str]] = {}
+    if code == 200 and isinstance(resp, dict):
+        for d in resp.get("dashboards", []):
+            h = str(d.get("hash", ""))
+            for vk in ("v5", "v4", "v3", "v2", "v1"):
+                v = d.get(vk)
+                if v and v.get("title"):
+                    out[v["title"]] = (v.get("dashboardId", ""), h)
+    return out
 
 
 def oo_bootstrap_dashboards() -> None:
@@ -225,140 +296,212 @@ def oo_bootstrap_dashboards() -> None:
     data = json.loads(src.read_text())
     dashboards = [d for d in data.get("dashboards", []) if not d.get("_comment")]
     _log(f"  uploading {len(dashboards)} dashboards...")
+    existing = oo_existing_dashboards()
     for d in dashboards:
         payload = {k: v for k, v in d.items() if not k.startswith("_")}
-        code, _ = http_request(
-            "POST",
-            f"{oo_base_url()}/dashboards",
-            body=payload,
-            auth=oo_auth(),
-        )
-        status = "✓" if code in (200, 201, 409) else f"✗ HTTP {code}"
-        _log(f"    {status} {d['name']}")
+        title = payload.get("title", "")
+        if title in existing and existing[title][0]:
+            did, h = existing[title]
+            url = f"{oo_api()}/dashboards/{did}"
+            if h:
+                url += f"?hash={h}"
+            code, resp = http_request("PUT", url, body=payload, auth=oo_auth())
+            verb = "updated"
+        else:
+            code, resp = http_request("POST", f"{oo_api()}/dashboards", body=payload, auth=oo_auth())
+            verb = "created"
+        status = "✓" if code in (200, 201) else f"✗ HTTP {code} {str(resp)[:120]}"
+        _log(f"    {status} {title} ({verb})")
+
+
+def oo_bootstrap() -> dict:
+    """Create template + destination, return the destination dict (for reuse)."""
+    src = OPENOBSERVE_DIR / "keep-destination.json"
+    cfg = json.loads(src.read_text())
+    tmpl = cfg["template"]
+    dest = dict(cfg["destination"])
+    # Substitute the live secret + resolved Keep URL into the destination.
+    dest["url"] = keep_event_url()
+    dest.setdefault("headers", {})["X-API-KEY"] = require_env("KEEP_WEBHOOK_TOKEN")
+    _log("  upserting OO alert template + Keep-webhook destination...")
+    oo_upsert_template(tmpl)
+    oo_upsert_destination(dest)
+    return dest
 
 
 # ── Keep API ─────────────────────────────────────────────────────────────────
-def keep_base_url() -> str:
-    # If KEEP_BASE_URL is set (remote obs droplet path), use it verbatim and
-    # append /api/v1. Otherwise fall back to localhost:KEEP_BACKEND_PORT for
-    # local docker-compose.monitoring.yml usage.
-    base = get_env("KEEP_BASE_URL", "")
-    if base:
-        return f"{base.rstrip('/')}/api/v1"
-    port = get_env("KEEP_BACKEND_PORT", "8080")
-    return f"http://localhost:{port}/api/v1"
+def keep_base() -> str:
+    """Keep API root (NO /api/v1 in 0.54.1)."""
+    return get_env("KEEP_BASE_URL", f"http://localhost:{get_env('KEEP_BACKEND_PORT', '8080')}").rstrip("/")
+
+
+def keep_headers() -> dict[str, str]:
+    return {"X-API-KEY": require_env("KEEP_WEBHOOK_TOKEN")}
 
 
 def keep_bootstrap_providers() -> None:
-    """Discord webhooks substituted from env, providers POSTed to Keep."""
-    # yaml in stdlib? no. tiny parser inline to avoid a PyYAML dep on operators.
-    import re
-
+    """
+    Install Keep providers. Config fields go at the TOP LEVEL of the install
+    body (discord -> top-level webhook_url), not nested under provider_config.
+    """
     src = KEEP_DIR / "providers.yml"
     raw = src.read_text()
-
-    warning_url = require_env("DISCORD_WEBHOOK_WARNING")
-    critical_url = require_env("DISCORD_WEBHOOK_CRITICAL")
-    raw = raw.replace("{DISCORD_WEBHOOK_WARNING}", warning_url)
-    raw = raw.replace("{DISCORD_WEBHOOK_CRITICAL}", critical_url)
-
-    # Minimal YAML→dict parser: extract each provider's id, type, name, config.webhook_url
-    # Real impl would use PyYAML; this avoids the dependency for operators.
-    providers: list[dict[str, Any]] = []
-    current: dict[str, Any] | None = None
+    # Minimal flat-YAML reader: each provider is a block of scalar fields.
+    providers: list[dict[str, str]] = []
+    cur: dict[str, str] | None = None
     for line in raw.splitlines():
-        m = re.match(r"^\s*- id:\s+(\S+)", line)
+        m = re.match(r"^\s*-\s+provider_id:\s+(\S+)", line)
         if m:
-            if current:
-                providers.append(current)
-            current = {"id": m.group(1)}
+            if cur:
+                providers.append(cur)
+            cur = {"provider_id": m.group(1)}
             continue
-        if current is None:
+        if cur is None:
             continue
-        m = re.match(r"^\s+type:\s+(\S+)", line)
+        m = re.match(r"^\s+(\w+):\s+\"?(.+?)\"?\s*$", line)
         if m:
-            current["type"] = m.group(1)
-        m = re.match(r"^\s+name:\s+\"(.+)\"", line)
-        if m:
-            current["name"] = m.group(1)
-        m = re.match(r"^\s+webhook_url:\s+\"(.+)\"", line)
-        if m:
-            current.setdefault("config", {})["webhook_url"] = m.group(1)
-    if current:
-        providers.append(current)
+            cur[m.group(1)] = m.group(2)
+    if cur:
+        providers.append(cur)
 
-    _log(f"  uploading {len(providers)} Keep providers...")
+    _log(f"  installing {len(providers)} Keep providers...")
     for p in providers:
-        code, _ = http_request(
-            "POST",
-            f"{keep_base_url()}/providers/install",
-            body={
-                "provider_id": p["id"],
-                "provider_type": p["type"],
-                "provider_name": p.get("name", p["id"]),
-                "provider_config": p.get("config", {}),
-            },
+        webhook_url = require_env(p["webhook_url_env"]) if p.get("webhook_url_env") else p.get("webhook_url", "")
+        install_body = {
+            "provider_id": p["provider_id"],
+            "provider_name": p.get("provider_name", p["provider_id"]),
+            "provider_type": p["provider_type"],
+            # config fields at TOP LEVEL (verified) — NOT nested
+            "webhook_url": webhook_url,
+        }
+        code, resp = http_request(
+            "POST", f"{keep_base()}/providers/install", body=install_body, headers=keep_headers()
         )
-        status = "✓" if code in (200, 201, 409) else f"✗ HTTP {code}"
-        _log(f"    {status} {p['id']}")
+        if code in (200, 201):
+            _log(f"    ✓ {p['provider_id']}")
+        elif code in (409, 412) or (isinstance(resp, (dict, str)) and "already" in str(resp).lower()):
+            _log(f"    ✓ {p['provider_id']} (already installed)")
+        else:
+            _log(f"    ✗ {p['provider_id']} — HTTP {code} {str(resp)[:160]}")
+
+
+def _multipart(field: str, filename: str, content: bytes) -> tuple[bytes, str]:
+    boundary = f"----grove{uuid.uuid4().hex}"
+    body = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="{field}"; filename="{filename}"\r\n'
+        f"Content-Type: application/x-yaml\r\n\r\n"
+    ).encode() + content + f"\r\n--{boundary}--\r\n".encode()
+    return body, f"multipart/form-data; boundary={boundary}"
+
+
+def _keep_workflows_by_name() -> dict[str, list[str]]:
+    """name -> [workflow uuids]. Keep assigns its own UUID per workflow; the YAML
+    `id`/`name` is not a natural key, so re-POST creates duplicates. We key on the
+    `name` field to converge to exactly one workflow per managed file."""
+    code, resp = http_request("GET", f"{keep_base()}/workflows", headers=keep_headers())
+    out: dict[str, list[str]] = {}
+    if code == 200 and isinstance(resp, list):
+        for w in resp:
+            nm, wid = w.get("name"), w.get("id")
+            if nm and wid:
+                out.setdefault(nm, []).append(wid)
+    return out
+
+
+def _workflow_name(text: str) -> str:
+    m = re.search(r"^\s*name:\s*\"?(.+?)\"?\s*$", text, re.MULTILINE)
+    return m.group(1).strip() if m else ""
 
 
 def keep_bootstrap_workflows() -> None:
-    """Workflow YAML uploaded as-is to Keep (Keep parses YAML natively)."""
-    src = KEEP_DIR / "workflows.yml"
-    raw = src.read_text()
-    # Keep's workflow endpoint accepts a YAML body
-    _log("  uploading workflows.yml to Keep...")
-    headers = {"Content-Type": "application/x-yaml"}
-    req = request.Request(
-        f"{keep_base_url()}/workflows",
-        data=raw.encode(),
-        method="POST",
-        headers=headers,
-    )
-    try:
-        with request.urlopen(req, timeout=15) as resp:
-            _log(f"    ✓ workflows uploaded (HTTP {resp.status})")
-    except urlerror.HTTPError as e:
-        _log(f"    ⚠ HTTP {e.code} — {e.read().decode()[:200]}")
-    except urlerror.URLError as e:
-        _log(f"    ✗ network error: {e.reason}")
+    """
+    Upload each keep/workflows/*.yml as a SINGULAR `workflow:` doc via multipart
+    (field `file`). Keep expects one workflow per file.
+
+    Idempotent by NAME: Keep's POST /workflows always creates a new workflow (it
+    does not upsert by the YAML id), so we delete any existing workflow with the
+    same `name` first, then create — converging to exactly one per file.
+    """
+    files = sorted(KEEP_WORKFLOWS_DIR.glob("*.yml")) if KEEP_WORKFLOWS_DIR.is_dir() else []
+    if not files:
+        _log("  no keep/workflows/*.yml found — skipping")
+        return
+    _log(f"  uploading {len(files)} Keep workflows (multipart, singular docs)...")
+    existing = _keep_workflows_by_name()
+    for f in files:
+        text = f.read_text()
+        # Inject secrets: replace __ENVVAR__ placeholders with their env values.
+        # Workflows configure the discord webhook INLINE (Keep 0.54.1 installed-
+        # provider references are unreliable — UUID ids + soft-delete name residue),
+        # so the webhook is substituted here at upload time; the repo keeps only the
+        # placeholder.
+        for tok in re.findall(r"__([A-Z0-9_]+)__", text):
+            val = os.environ.get(tok)
+            if val:
+                text = text.replace(f"__{tok}__", val)
+            else:
+                _log(f"    ⚠ {f.name}: env {tok} unset — placeholder left unresolved")
+        raw = text.encode()
+        name = _workflow_name(text)
+        for wid in existing.get(name, []):
+            http_request("DELETE", f"{keep_base()}/workflows/{wid}", headers=keep_headers())
+        body, ctype = _multipart("file", f.name, raw)
+        code, resp = http_request(
+            "POST", f"{keep_base()}/workflows", raw=body, content_type=ctype, headers=keep_headers()
+        )
+        if code in (200, 201):
+            _log(f"    ✓ {f.name} ({name})")
+        else:
+            _log(f"    ✗ {f.name} — HTTP {code} {str(resp)[:160]}")
+
+
+# ── synthetic canary (opt-in) ─────────────────────────────────────────────────
+def maybe_seed_canary() -> None:
+    if get_env("SYNTHETIC_CANARY_ENABLED", "false").strip().lower() != "true":
+        _log("  checkout-canary disabled (SYNTHETIC_CANARY_ENABLED!=true) — skipping seed")
+        return
+    canary = SYNTHETIC_DIR / "canary.py"
+    if not canary.exists():
+        _log("  canary.py not present — skipping seed")
+        return
+    rc = subprocess.run([sys.executable, str(canary), "--seed"], check=False).returncode
+    _log("  ✓ canary product seeded" if rc == 0 else f"  ⚠ canary seed failed (rc={rc})")
 
 
 # ── main ─────────────────────────────────────────────────────────────────────
 def main() -> None:
-    _log("=== Grove monitoring bootstrap ===")
-    _log("")
+    _log("=== Grove monitoring bootstrap (OpenObserve v0.91.1 / Keep 0.54.1) ===\n")
 
     _log("Step 1/5: wait for OpenObserve")
-    wait_for(f"{oo_base_url().rsplit('/api/', 1)[0]}/healthz", 90, name="OpenObserve")
+    wait_for(f"{oo_root()}/healthz", 90, name="OpenObserve")
 
     _log("\nStep 2/5: wait for Keep backend")
-    wait_for(f"{keep_base_url().rsplit('/api/', 1)[0]}/healthcheck", 120, name="Keep")
+    wait_for(f"{keep_base()}/healthcheck", 120, name="Keep")
 
-    _log("\nStep 3/5: bootstrap OpenObserve")
+    _log("\nStep 3/5: bootstrap OpenObserve (template + destination + alerts + dashboards)")
     maybe_seed_canary()
-    oo_bootstrap_monitors()
-    oo_bootstrap_alerts()
+    dest = oo_bootstrap()
+    oo_bootstrap_alerts(dest_available=bool(dest.get("url")))
     oo_bootstrap_dashboards()
 
-    _log("\nStep 4/5: bootstrap Keep")
+    _log("\nStep 4/5: bootstrap Keep (providers + workflows)")
     keep_bootstrap_providers()
     keep_bootstrap_workflows()
 
     _log("\nStep 5/5: summary")
-    _log("=" * 50)
-    _log(f"  OpenObserve UI:  http://localhost:{get_env('OPENOBSERVE_PORT', '5080')}")
-    _log(f"  Keep UI:         http://localhost:{get_env('KEEP_PORT', '3034')}")
+    _log("=" * 60)
+    _log(f"  OpenObserve:  {oo_root()}")
+    _log(f"  Keep:         {keep_base()}")
+    if not dest.get("url"):
+        _log("  ⚠ KEEP_EVENT_URL unset — OO alerts will NOT reach Keep until the")
+        _log("    Keep destination is created against an SSRF-allowed URL (see docstring).")
     _log("")
-    _log("Verify Discord wiring:")
-    _log("  curl -X POST http://localhost:8080/alerts/event/$KEEP_WEBHOOK_TOKEN \\")
-    _log("    -H 'Content-Type: application/json' \\")
-    _log('    -d \'{"name":"test","severity":"warning","message":"connectivity check"}\'')
-    _log("  → should appear in your Discord warning channel within 5s")
-    _log("")
-    _log("Run end-to-end kill-test:")
-    _log("  ./scripts/smoke-test-monitoring.sh")
+    _log("Verify Discord routing (fires a test event through Keep → Discord):")
+    _log("  curl -X POST '%s/alerts/event?provider_id=openobserve' \\" % keep_base())
+    _log("    -H \"X-API-KEY: $KEEP_WEBHOOK_TOKEN\" -H 'Content-Type: application/json' \\")
+    _log('    -d \'{"name":"connectivity-check","severity":"warning","message":"hello"}\'')
+    _log("  → appears in #grove-alerts-warning within a few seconds (202 Accepted)")
 
 
 if __name__ == "__main__":
