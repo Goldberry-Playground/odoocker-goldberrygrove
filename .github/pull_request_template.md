@@ -1,3 +1,12 @@
+### :warning: Before you open this PR
+- [ ] Self-contained — no unmerged dependencies
+- [ ] Ran the smallest local verify that proves this change
+- [ ] Expect CI to be green
+
+If any box is unchecked, **open this as a Draft**. See [`docs/pr-policy.md`](../docs/pr-policy.md) for the Draft-vs-Ready rule.
+
+<hr>
+
 ### :rocket: Deployment
 - `INIT="my_custom_addon_1"`
 - `UPDATE="my_custom_addon_2"`
