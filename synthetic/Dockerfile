@@ -35,5 +35,8 @@ RUN set -eux; \
 WORKDIR /app
 COPY . /app/
 
-# supercronic runs run.py on the crontab schedule.
-CMD ["supercronic", "/app/crontab"]
+# Run run.py every 60s. supercronic's fork-exec is incompatible with some
+# Docker runtimes that restrict clone/fork syscalls; a plain shell loop avoids
+# that dependency while preserving the same 1-minute schedule. supercronic is
+# kept installed so it still works in permissive runtimes.
+CMD ["sh", "-c", "while true; do /usr/local/bin/python3 /app/run.py; sleep 60; done"]
