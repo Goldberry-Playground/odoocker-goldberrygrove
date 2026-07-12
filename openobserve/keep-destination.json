@@ -1,0 +1,21 @@
+{
+  "_comment": "OpenObserve v0.91.1 alert TEMPLATE + DESTINATION for the Keep webhook.",
+  "_lineage": "Consumed by scripts/setup-monitoring.py. v2 alerts (alerts.json) reference the destination by name; the destination renders the template and POSTs it to Keep's /alerts/event endpoint. Verified shapes against live grove-obs.",
+  "_ssrf_note": "OpenObserve's SSRF guard REJECTS a destination URL that resolves to a private IP at CREATE time — so `url` cannot be the internal keep-backend service name / private IP. The script fills `url` from KEEP_EVENT_URL, which must be an SSRF-allowed address that reaches Keep (obs droplet public IP with keep-backend published admin-only + firewalled — hairpin NAT verified; or loopback with ZO_SSRF_ALLOW_LOOPBACK=true). The X-API-KEY header value is filled from KEEP_WEBHOOK_TOKEN at runtime.",
+  "_placeholders": "OO renders {alert_name} and {stream_name}/{org_name} natively; severity/runbook_key/tenant are carried per-alert in query context_attributes and rendered as {key}. Keep's workflows filter on `severity` and template {{ alert.name }}/{{ alert.message }}/{{ alert.runbook_key }}.",
+  "template": {
+    "name": "keep-event",
+    "type": "http",
+    "title": "",
+    "body": "{\"name\":\"{alert_name}\",\"severity\":\"{severity}\",\"message\":\"{alert_name} fired on stream {stream_name}\",\"runbook_key\":\"{runbook_key}\",\"tenant\":\"{tenant}\",\"stream\":\"{stream_name}\",\"org\":\"{org_name}\"}"
+  },
+  "destination": {
+    "name": "keep-webhook",
+    "url": "",
+    "method": "post",
+    "skip_tls_verify": false,
+    "template": "keep-event",
+    "type": "http",
+    "headers": {}
+  }
+}
