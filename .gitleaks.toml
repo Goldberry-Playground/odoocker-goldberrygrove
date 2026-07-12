@@ -29,6 +29,15 @@ useDefault = true
     '''\.env\.grove\.example$''',
     # Any .env.*.example pattern added in future
     '''\.env\.[^/]+\.example$''',
+    # Terraform variable template files. `*.tfvars.example` are placeholder
+    # templates only — real *.tfvars are gitignored and secrets flow via
+    # TF_VAR_* from 1Password at apply time (see any terraform.tfvars.example
+    # header). They intentionally carry secret-shaped placeholders, including
+    # `op://` references wrapped in PEM `-----BEGIN/END ... KEY-----` markers
+    # that trip the `private-key` rule (surfaced on GOL-293; introduced by the
+    # observability RUM cert/key example on GOL-311). Same rationale + treatment
+    # as the .env.example entries above.
+    '''\.tfvars\.example$''',
     # Test fixtures directory (mock API keys, dummy credentials for unit tests)
     '''tests/fixtures/''',
     '''test/fixtures/''',
