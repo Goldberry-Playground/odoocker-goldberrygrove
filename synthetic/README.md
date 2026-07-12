@@ -11,10 +11,36 @@ supercronic (crontab, every 60s)
         ├─ hurl --test journeys/health.hurl        (shared)
         ├─ hurl --test journeys/catalog.hurl       (per tenant, X-Grove-Tenant)
         ├─ hurl --test journeys/cart-flow.hurl     (per tenant)
-        └─ POST OTLP metrics → OpenObserve
-             synthetic_journey_success      gauge 1/0  {journey,tenant,tier=api,env}
-             synthetic_journey_duration_ms  gauge ms   {...}
+        ├─ POST OTLP metrics → OpenObserve
+        │    synthetic_journey_success      gauge 1/0  {journey,tenant,tier=api,env}
+        │    synthetic_journey_duration_ms  gauge ms   {...}
+        └─ probes.emit()  (SYNTHETIC_UPTIME_ENABLED, default on)
+             synthetic_uptime               gauge 1/0  {target,tenant,tier,service,route,env,success}
+             synthetic_ssl_days             gauge days {target,host,tenant,env,days_until_expiry}
 ```
+
+## Availability + SSL probes (`probes.py`) — GOL-280
+
+Tier-1 also runs the HTTP/TCP/SSL **availability** targets in
+`openobserve/monitors.json` (storefront roots/shop/blog, hub, Odoo, Ghost admin,
+Postgres TCP, the four SSL certs) — OpenObserve v0.91.1 has **no `/synthetic`
+endpoint**, so the runner performs these probes itself and ships two streams the
+availability alerts fire on:
+
+- `synthetic_uptime` — 1/0 per target. The `frontend-down` / `odoo-down` /
+  `ghost-down` / `postgres-down` alerts filter `success=0`.
+- `synthetic_ssl_days` — days until cert expiry per host. `ssl-expiring` filters
+  `days_until_expiry<14`.
+
+`monitors.json` is the single source of truth for targets (add/remove a probe =
+config, not code). Local topology (`host.docker.internal:<port>`, service-name
+DNS) is the file default; override per target per-env without editing the file:
+`SYNTHETIC_MONITOR_URL_<NAME>` / `SYNTHETIC_MONITOR_HOST_<NAME>` (NAME = monitor
+name upper-cased, `-`→`_`). ON by default; set `SYNTHETIC_UPTIME_ENABLED=false`
+where the targets aren't reachable (a laptop with no storefront containers) so it
+doesn't emit false-down. `success` / `days_until_expiry` are emitted as explicit
+numeric OTLP attributes (not only the bare gauge value) so the alert column
+filters resolve — confirm the exact field names on first real traffic (GOL-280).
 
 - **Pass/fail** = the Hurl `--test` exit code. **Duration** = wall-clock of the run.
 - `run.py` always exits 0 — a failing journey is reported as `success=0`, not as a crashed cron job.
@@ -57,8 +83,12 @@ OPENOBSERVE_OTLP_METRICS_URL=http://localhost:5080/api/default/v1/metrics \
 OPENOBSERVE_ROOT_EMAIL=... OPENOBSERVE_ROOT_PASSWORD=... \
 python3 run.py
 
-# Unit-test the OTLP builder (no stack needed):
-python3 test_run.py
+# Unit-test the OTLP builders (no stack needed):
+python3 test_run.py && python3 test_probes.py
+
+# One-off probe run (SSL works anywhere with internet; HTTP/TCP need the targets):
+OPENOBSERVE_OTLP_METRICS_URL=http://localhost:5080/api/default/v1/metrics \
+OPENOBSERVE_ROOT_EMAIL=... OPENOBSERVE_ROOT_PASSWORD=... python3 probes.py
 ```
 
 > **Pending live validation:** the OTLP metrics endpoint path/auth (`/api/default/v1/metrics`, basic auth) is the documented OpenObserve ingest shape but hasn't been exercised end-to-end yet — confirm on first `make monitoring-up` and adjust `OPENOBSERVE_OTLP_METRICS_URL` if needed.
