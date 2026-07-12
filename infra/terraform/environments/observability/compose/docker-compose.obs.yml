@@ -116,5 +116,35 @@ services:
     networks:
       - obs
 
+  # Public RUM ingest reverse proxy (GOL-311). The ONLY public surface on
+  # grove-obs: browsers on the six tenant storefronts POST RUM beacons to
+  # https://<rum_public_host>/rum/v1/default/rum. Caddy terminates TLS with a
+  # mounted Cloudflare Origin Certificate (Cloudflare orange-cloud connects
+  # Full-Strict), scopes CORS to the tenant origins, and path-restricts to
+  # /rum/* so the OpenObserve admin UI/API (5080, admin-CIDR only) are never
+  # reachable here. :443 is firewalled to Cloudflare edge IPs (see main.tf).
+  #
+  # Plain upstream caddy image, NOT grove-caddy: we mount a static cert and issue
+  # no ACME (the DO DNS-01 plugin can't validate the Cloudflare-hosted zone), so
+  # the DNS plugin would be dead weight. Version-pinned like keep (no :latest).
+  # No container healthcheck (like openobserve): liveness is monitored EXTERNALLY
+  # via the synthetic probe hitting the public RUM endpoint (setup-monitoring).
+  caddy-rum:
+    image: caddy:2.8.4
+    restart: unless-stopped
+    depends_on:
+      - openobserve
+    ports:
+      - "443:443"
+    volumes:
+      - /etc/grove-obs/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - /etc/grove-obs/caddy/certs:/etc/caddy/certs:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - obs
+
 volumes:
   keep-data:
+  caddy-data:
+  caddy-config:
