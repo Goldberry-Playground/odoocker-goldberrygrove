@@ -16,7 +16,7 @@ output "rum_public_host" {
 }
 
 output "rum_ingest_url" {
-  description = "Full RUM ingest URL the @openobserve/browser-rum SDK POSTs to (org=default, stream=rum). Handy for a curl/OPTIONS smoke test."
+  description = "Full RUM ingest URL the @openobserve/browser-rum SDK POSTs to (org=default). NOTE: OpenObserve lands this endpoint's data in the stream literally named `_rumdata` (verified live 2026-07-12), NOT `rum` — openobserve/alerts.json rum-* alerts were re-pointed accordingly. Handy for a curl/OPTIONS smoke test."
   value       = "https://${var.rum_public_host}/rum/v1/default/rum"
 }
 

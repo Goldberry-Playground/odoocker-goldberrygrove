@@ -141,7 +141,7 @@ variable "rum_public_host" {
 variable "cors_allowed_origin_regex" {
   description = "RE2 (Go) regexp Caddy matches the browser Origin header against; ACAO is reflected only on a match. Default = the six tenant storefront origins + preview (*.qa.gatheringatthegrove.com). Anchored ^...$ so it can't be substring-spoofed."
   type        = string
-  default     = "^https://(gatheringatthegrove\\.com|goldberrygrove\\.farm|georgeggg\\.com|woodworkinggeorge\\.com|atthegrove\\.com|atthegrovenursery\\.com|[a-z0-9-]+\\.qa\\.gatheringatthegrove\\.com)$"
+  default     = "^https://(gatheringatthegrove\\.com|goldberrygrove\\.farm|georgeggg\\.com|woodworkinggeorge\\.com|woodworkingeorge\\.com|atthegrove\\.com|atthegrovenursery\\.com|[a-z0-9-]+\\.qa\\.gatheringatthegrove\\.com)$"
 }
 
 variable "cf_origin_cert_pem" {

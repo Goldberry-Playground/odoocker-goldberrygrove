@@ -1666,7 +1666,7 @@
     {
       "name": "rum-lcp-warning",
       "stream_type": "logs",
-      "stream_name": "rum",
+      "stream_name": "_rumdata",
       "is_real_time": false,
       "query_condition": {
         "type": "custom",
@@ -1714,7 +1714,7 @@
     {
       "name": "rum-inp-warning",
       "stream_type": "logs",
-      "stream_name": "rum",
+      "stream_name": "_rumdata",
       "is_real_time": false,
       "query_condition": {
         "type": "custom",
@@ -1762,7 +1762,7 @@
     {
       "name": "rum-cls-warning",
       "stream_type": "logs",
-      "stream_name": "rum",
+      "stream_name": "_rumdata",
       "is_real_time": false,
       "query_condition": {
         "type": "custom",
@@ -1810,7 +1810,7 @@
     {
       "name": "rum-purchase-drop-warning",
       "stream_type": "logs",
-      "stream_name": "rum",
+      "stream_name": "_rumdata",
       "is_real_time": false,
       "query_condition": {
         "type": "custom",
