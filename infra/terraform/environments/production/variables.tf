@@ -174,3 +174,44 @@ variable "ghost_content_keys" {
     error_message = "ghost_content_keys must contain keys: hub, goldberry, ggg, nursery."
   }
 }
+
+variable "ghost_smtp_host" {
+  description = "Mailgun SMTP relay host for Ghost transactional email (GOL-248). US region default; use smtp.eu.mailgun.org for an EU account."
+  type        = string
+  default     = "smtp.mailgun.org"
+}
+
+variable "ghost_smtp_port" {
+  description = "Mailgun SMTP submission port. 587 = STARTTLS (mail__options__secure=false)."
+  type        = string
+  default     = "587"
+}
+
+variable "ghost_staff_device_verification" {
+  description = "Ghost 6 staff-login device-verification (GOL-248). Kept false until Mailgun SMTP is populated + verified live, then flipped to \"true\" via TF_VAR_ghost_staff_device_verification so a broken transport can't 500 staff logins."
+  type        = string
+  default     = "false"
+}
+
+variable "ghost_smtp" {
+  description = "Per-tenant Mailgun SMTP credentials for Ghost transactional email (GOL-248). Each tenant sends from a distinct mg.<domain> sending subdomain. Empty stub creds keep `plan` working until Mailgun is provisioned (GOL-248 API-key step); with empty user/pass the SMTP transport is inert and staffDeviceVerification stays false, so no regression pre-cutover. Read from TF_VAR_ghost_smtp (sourced from 1Password) at cutover."
+  type = map(object({
+    user = string
+    pass = string
+    from = string
+  }))
+  sensitive = true
+  # `from` is a bare address (no display name): the droplet backup script
+  # sources this .env in bash, so spaces/<> would break `set -euo pipefail`.
+  # Ghost falls back to the publication title as the sender display name.
+  default = {
+    hub       = { user = "", pass = "", from = "noreply@mg.gatheringatthegrove.com" }
+    goldberry = { user = "", pass = "", from = "noreply@mg.goldberrygrove.farm" }
+    ggg       = { user = "", pass = "", from = "noreply@mg.woodworkingeorge.com" }
+    nursery   = { user = "", pass = "", from = "noreply@mg.atthegrovenursery.com" }
+  }
+  validation {
+    condition     = alltrue([for t in ["hub", "goldberry", "ggg", "nursery"] : contains(keys(var.ghost_smtp), t)])
+    error_message = "ghost_smtp must contain keys: hub, goldberry, ggg, nursery."
+  }
+}

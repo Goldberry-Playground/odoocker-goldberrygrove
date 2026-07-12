@@ -132,6 +132,13 @@ resource "digitalocean_droplet" "blogs" {
 
     volume_name = digitalocean_volume.blogs_data.name
 
+    # Transactional email - Mailgun SMTP (GOL-248). Per-tenant creds land at
+    # cutover via TF_VAR_ghost_smtp; empty stub => inert transport, no regression.
+    ghost_smtp_host                 = var.ghost_smtp_host
+    ghost_smtp_port                 = var.ghost_smtp_port
+    ghost_staff_device_verification = var.ghost_staff_device_verification
+    ghost_smtp                      = var.ghost_smtp
+
     origin_certs = {
       for k, z in local.tenants : z => {
         cert = cloudflare_origin_ca_certificate.origin[k].certificate

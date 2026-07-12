@@ -42,11 +42,25 @@ services:
       database__connection__password: ${MYSQL_GHOST_HUB_PASSWORD}
       database__connection__database: ghost_hub
       NODE_ENV: production
-      # Interim until SES/SMTP lands (Grove Production Launch spec): Ghost 6
-      # emails a device-verification code on staff login; with no mail
-      # transport the login 500s (EmailError - hit 2026-07-07). Re-enable
-      # alongside mail__* config.
-      security__staffDeviceVerification: "false"
+      # Transactional email via Mailgun SMTP (GOL-248). Sends from a distinct
+      # mg.<domain> sending subdomain, isolated from the bulk newsletter stream
+      # (Ghost's one-Mailgun-*API*-config is bulk-only; SMTP is a separate mail
+      # block) and from the human Workspace mail domain, so a bulk reputation
+      # dip cannot break magic links / staff device codes. Creds are injected
+      # via the droplet .env (TF var ghost_smtp); empty stub => transport is
+      # inert and staffDeviceVerification stays false until the cutover.
+      mail__transport: SMTP
+      mail__from: ${GHOST_HUB_MAIL_FROM}
+      mail__options__host: ${GHOST_SMTP_HOST}
+      mail__options__port: ${GHOST_SMTP_PORT}
+      mail__options__secure: "false"
+      mail__options__auth__user: ${GHOST_HUB_SMTP_USER}
+      mail__options__auth__pass: ${GHOST_HUB_SMTP_PASSWORD}
+      # Ghost 6 emails a device-verification code on staff login; without a
+      # working mail transport the login 500s (EmailError - hit 2026-07-07).
+      # Flip GHOST_STAFF_DEVICE_VERIFICATION=true in the droplet .env only
+      # after SMTP is verified live (GOL-248 cutover step).
+      security__staffDeviceVerification: "${GHOST_STAFF_DEVICE_VERIFICATION:-false}"
     volumes:
       - /mnt/blogs-data/ghost-hub:/var/lib/ghost/content
     networks:
@@ -67,11 +81,15 @@ services:
       database__connection__password: ${MYSQL_GHOST_GOLDBERRY_PASSWORD}
       database__connection__database: ghost_goldberry
       NODE_ENV: production
-      # Interim until SES/SMTP lands (Grove Production Launch spec): Ghost 6
-      # emails a device-verification code on staff login; with no mail
-      # transport the login 500s (EmailError - hit 2026-07-07). Re-enable
-      # alongside mail__* config.
-      security__staffDeviceVerification: "false"
+      # Transactional email via Mailgun SMTP (GOL-248) - see ghost-hub above.
+      mail__transport: SMTP
+      mail__from: ${GHOST_GOLDBERRY_MAIL_FROM}
+      mail__options__host: ${GHOST_SMTP_HOST}
+      mail__options__port: ${GHOST_SMTP_PORT}
+      mail__options__secure: "false"
+      mail__options__auth__user: ${GHOST_GOLDBERRY_SMTP_USER}
+      mail__options__auth__pass: ${GHOST_GOLDBERRY_SMTP_PASSWORD}
+      security__staffDeviceVerification: "${GHOST_STAFF_DEVICE_VERIFICATION:-false}"
     volumes:
       - /mnt/blogs-data/ghost-goldberry:/var/lib/ghost/content
     networks:
@@ -91,11 +109,15 @@ services:
       database__connection__password: ${MYSQL_GHOST_GGG_PASSWORD}
       database__connection__database: ghost_ggg
       NODE_ENV: production
-      # Interim until SES/SMTP lands (Grove Production Launch spec): Ghost 6
-      # emails a device-verification code on staff login; with no mail
-      # transport the login 500s (EmailError - hit 2026-07-07). Re-enable
-      # alongside mail__* config.
-      security__staffDeviceVerification: "false"
+      # Transactional email via Mailgun SMTP (GOL-248) - see ghost-hub above.
+      mail__transport: SMTP
+      mail__from: ${GHOST_GGG_MAIL_FROM}
+      mail__options__host: ${GHOST_SMTP_HOST}
+      mail__options__port: ${GHOST_SMTP_PORT}
+      mail__options__secure: "false"
+      mail__options__auth__user: ${GHOST_GGG_SMTP_USER}
+      mail__options__auth__pass: ${GHOST_GGG_SMTP_PASSWORD}
+      security__staffDeviceVerification: "${GHOST_STAFF_DEVICE_VERIFICATION:-false}"
     volumes:
       - /mnt/blogs-data/ghost-ggg:/var/lib/ghost/content
     networks:
@@ -115,11 +137,15 @@ services:
       database__connection__password: ${MYSQL_GHOST_NURSERY_PASSWORD}
       database__connection__database: ghost_nursery
       NODE_ENV: production
-      # Interim until SES/SMTP lands (Grove Production Launch spec): Ghost 6
-      # emails a device-verification code on staff login; with no mail
-      # transport the login 500s (EmailError - hit 2026-07-07). Re-enable
-      # alongside mail__* config.
-      security__staffDeviceVerification: "false"
+      # Transactional email via Mailgun SMTP (GOL-248) - see ghost-hub above.
+      mail__transport: SMTP
+      mail__from: ${GHOST_NURSERY_MAIL_FROM}
+      mail__options__host: ${GHOST_SMTP_HOST}
+      mail__options__port: ${GHOST_SMTP_PORT}
+      mail__options__secure: "false"
+      mail__options__auth__user: ${GHOST_NURSERY_SMTP_USER}
+      mail__options__auth__pass: ${GHOST_NURSERY_SMTP_PASSWORD}
+      security__staffDeviceVerification: "${GHOST_STAFF_DEVICE_VERIFICATION:-false}"
     volumes:
       - /mnt/blogs-data/ghost-nursery:/var/lib/ghost/content
     networks:
