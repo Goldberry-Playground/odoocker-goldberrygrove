@@ -8,10 +8,10 @@
 # frontends are on App Platform (no docker_stats there) — their USE metrics come
 # from the DO-metrics bridge (do-metrics/, polls the DO Monitoring API).
 #
-# PENDING LIVE VALIDATION: the OpenObserve OTLP metrics endpoint/auth and the
-# resulting stream/field names are the documented shapes but not yet exercised
-# end-to-end — confirm on first `make monitoring-up` and adjust the exporter +
-# the alert `stream` names if needed.
+# LIVE VALIDATED (GOL-312, 2026-07-12): basic hostmetrics land as system_cpu_time
+# (cumulative counter) + system_filesystem_usage / system_memory_usage (bytes).
+# The alerts reference system_cpu_utilization / system_filesystem_utilization /
+# system_memory_utilization — these are OPTIONAL otelcol metrics, enabled below.
 
 extensions:
   basicauth/openobserve:
@@ -36,10 +36,24 @@ receivers:
     root_path: /hostfs
     scrapers:
       cpu:
+        metrics:
+          # Enable the 0-1 utilization gauge (optional; default=disabled).
+          # Emits system_cpu_utilization stream — what the droplet-cpu alerts query.
+          system.cpu.utilization:
+            enabled: true
       load:
       memory:
+        metrics:
+          # Enable memory utilization ratio (optional; default=disabled).
+          system.memory.utilization:
+            enabled: true
       disk:
       filesystem:
+        metrics:
+          # Enable filesystem utilization ratio (optional; default=disabled).
+          # Emits system_filesystem_utilization — what the disk-data alerts query.
+          system.filesystem.utilization:
+            enabled: true
       network:
   # Per-container CPU% + memory% (of limit) via the Docker socket.
   docker_stats:
