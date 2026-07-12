@@ -347,11 +347,11 @@
       "query_condition": {
         "type": "custom",
         "conditions": {
-          "or": [
+          "and": [
             {
-              "column": "success",
-              "operator": "=",
-              "value": "0",
+              "column": "value",
+              "operator": "<",
+              "value": "1",
               "ignore_case": false
             }
           ]
@@ -364,10 +364,10 @@
         "search_event_type": null
       },
       "trigger_condition": {
-        "period": 2,
+        "period": 5,
         "operator": ">=",
-        "threshold": 2,
-        "frequency": 60,
+        "threshold": 3,
+        "frequency": 5,
         "cron": "",
         "frequency_type": "minutes",
         "silence": 30,
@@ -395,11 +395,11 @@
       "query_condition": {
         "type": "custom",
         "conditions": {
-          "or": [
+          "and": [
             {
-              "column": "success",
-              "operator": "=",
-              "value": "0",
+              "column": "value",
+              "operator": "<",
+              "value": "1",
               "ignore_case": false
             }
           ]
@@ -412,10 +412,10 @@
         "search_event_type": null
       },
       "trigger_condition": {
-        "period": 2,
+        "period": 5,
         "operator": ">=",
-        "threshold": 2,
-        "frequency": 60,
+        "threshold": 3,
+        "frequency": 5,
         "cron": "",
         "frequency_type": "minutes",
         "silence": 30,
@@ -443,11 +443,11 @@
       "query_condition": {
         "type": "custom",
         "conditions": {
-          "or": [
+          "and": [
             {
-              "column": "success",
-              "operator": "=",
-              "value": "0",
+              "column": "value",
+              "operator": "<",
+              "value": "1",
               "ignore_case": false
             }
           ]
@@ -460,10 +460,10 @@
         "search_event_type": null
       },
       "trigger_condition": {
-        "period": 2,
+        "period": 5,
         "operator": ">=",
-        "threshold": 2,
-        "frequency": 60,
+        "threshold": 3,
+        "frequency": 5,
         "cron": "",
         "frequency_type": "minutes",
         "silence": 30,
@@ -493,7 +493,7 @@
         "conditions": {
           "or": [
             {
-              "column": "duration_ms",
+              "column": "value",
               "operator": ">",
               "value": "3000",
               "ignore_case": false
@@ -1533,14 +1533,14 @@
     {
       "name": "odoo-orders-latency-warning",
       "stream_type": "metrics",
-      "stream_name": "http_server_request_duration",
+      "stream_name": "http_server_request_duration_max",
       "is_real_time": false,
       "query_condition": {
         "type": "custom",
         "conditions": {
-          "or": [
+          "and": [
             {
-              "column": "duration",
+              "column": "value",
               "operator": ">",
               "value": "3",
               "ignore_case": false
@@ -1557,8 +1557,8 @@
       "trigger_condition": {
         "period": 5,
         "operator": ">=",
-        "threshold": 1,
-        "frequency": 60,
+        "threshold": 5,
+        "frequency": 5,
         "cron": "",
         "frequency_type": "minutes",
         "silence": 30,
@@ -1581,14 +1581,14 @@
     {
       "name": "odoo-orders-latency-critical",
       "stream_type": "metrics",
-      "stream_name": "http_server_request_duration",
+      "stream_name": "http_server_request_duration_max",
       "is_real_time": false,
       "query_condition": {
         "type": "custom",
         "conditions": {
-          "or": [
+          "and": [
             {
-              "column": "duration",
+              "column": "value",
               "operator": ">",
               "value": "8",
               "ignore_case": false
@@ -1605,8 +1605,8 @@
       "trigger_condition": {
         "period": 5,
         "operator": ">=",
-        "threshold": 1,
-        "frequency": 60,
+        "threshold": 3,
+        "frequency": 5,
         "cron": "",
         "frequency_type": "minutes",
         "silence": 30,
@@ -1629,14 +1629,14 @@
     {
       "name": "odoo-products-latency-warning",
       "stream_type": "metrics",
-      "stream_name": "http_server_request_duration",
+      "stream_name": "http_server_request_duration_max",
       "is_real_time": false,
       "query_condition": {
         "type": "custom",
         "conditions": {
-          "or": [
+          "and": [
             {
-              "column": "duration",
+              "column": "value",
               "operator": ">",
               "value": "1",
               "ignore_case": false
@@ -1653,8 +1653,8 @@
       "trigger_condition": {
         "period": 5,
         "operator": ">=",
-        "threshold": 1,
-        "frequency": 60,
+        "threshold": 5,
+        "frequency": 5,
         "cron": "",
         "frequency_type": "minutes",
         "silence": 30,
@@ -1677,14 +1677,14 @@
     {
       "name": "odoo-error-rate-warning",
       "stream_type": "metrics",
-      "stream_name": "http_server_request_duration",
+      "stream_name": "http_server_request_duration_count",
       "is_real_time": false,
       "query_condition": {
         "type": "custom",
         "conditions": {
-          "or": [
+          "and": [
             {
-              "column": "status_code",
+              "column": "http_response_status_code",
               "operator": ">=",
               "value": "500",
               "ignore_case": false
@@ -1701,8 +1701,8 @@
       "trigger_condition": {
         "period": 5,
         "operator": ">=",
-        "threshold": 1,
-        "frequency": 60,
+        "threshold": 5,
+        "frequency": 5,
         "cron": "",
         "frequency_type": "minutes",
         "silence": 30,
@@ -2061,7 +2061,7 @@
     {
       "name": "rum-lcp-warning",
       "stream_type": "logs",
-      "stream_name": "rum",
+      "stream_name": "_rumdata",
       "is_real_time": false,
       "query_condition": {
         "type": "custom",
@@ -2109,7 +2109,7 @@
     {
       "name": "rum-inp-warning",
       "stream_type": "logs",
-      "stream_name": "rum",
+      "stream_name": "_rumdata",
       "is_real_time": false,
       "query_condition": {
         "type": "custom",
@@ -2157,7 +2157,7 @@
     {
       "name": "rum-cls-warning",
       "stream_type": "logs",
-      "stream_name": "rum",
+      "stream_name": "_rumdata",
       "is_real_time": false,
       "query_condition": {
         "type": "custom",
@@ -2205,7 +2205,7 @@
     {
       "name": "rum-purchase-drop-warning",
       "stream_type": "logs",
-      "stream_name": "rum",
+      "stream_name": "_rumdata",
       "is_real_time": false,
       "query_condition": {
         "type": "custom",

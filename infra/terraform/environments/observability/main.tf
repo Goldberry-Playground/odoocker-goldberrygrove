@@ -88,6 +88,16 @@ module "obs_droplet" {
     # base64 the compose so cloud-init's YAML parser never sees its content
     # (same technique the qa env uses for its compose/Caddyfile).
     compose_obs_b64 = base64encode(file("${path.module}/compose/docker-compose.obs.yml"))
+
+    # Public RUM ingest vhost (GOL-311): render the Caddyfile with the assigned
+    # hostname + CORS allowlist, then b64 it (Caddyfile braces would confuse the
+    # cloud-init YAML parser). Cert/key flow in from 1Password via the tfvars.
+    caddyfile_rum_b64 = base64encode(templatefile("${path.module}/compose/Caddyfile-rum.tpl", {
+      rum_public_host   = var.rum_public_host
+      cors_origin_regex = var.cors_allowed_origin_regex
+    }))
+    cf_origin_cert_b64 = base64encode(var.cf_origin_cert_pem)
+    cf_origin_key_b64  = base64encode(var.cf_origin_key_pem)
   })
 }
 
@@ -160,6 +170,20 @@ resource "digitalocean_firewall" "obs" {
     protocol         = "tcp"
     port_range       = "3034" # Keep UI
     source_addresses = [var.admin_ip_cidr]
+  }
+
+  # Public RUM ingest on 443 (Caddy -> openobserve:5080), GOL-311. This is the
+  # only public-facing service on grove-obs, but the port is NOT open to the
+  # whole internet: source is locked to Cloudflare's edge IP ranges because the
+  # RUM hostname (rum_public_host) is Cloudflare-proxied (orange-cloud). Browsers
+  # hit Cloudflare; Cloudflare connects to this origin. Locking 443 to CF IPs
+  # keeps the origin off direct-to-internet scanners and forces all traffic
+  # through the CF edge (WAF/bot/DDoS + hides the origin IP). Path-restriction to
+  # /rum/* and CORS scoping happen in the Caddyfile; admin OO UI stays on 5080.
+  inbound_rule {
+    protocol         = "tcp"
+    port_range       = "443"
+    source_addresses = var.cloudflare_ingress_cidrs
   }
 
   outbound_rule {

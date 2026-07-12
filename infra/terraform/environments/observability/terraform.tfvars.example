@@ -8,7 +8,9 @@ admin_ip_cidr = "203.0.113.4/32" # your /32 — NEVER 0.0.0.0/0
 
 # Cross-plane OTLP ingest sources (5080) — collectors on OTHER droplets, /32 each.
 # Kept separate from admin_ip_cidr so ingest never widens admin/UI access. Empty
-# = admin-only. Prod value: the agenticos droplet -> ["159.223.171.231/32"].
+# = admin-only. Prod value: the agenticos droplet + the grove-qa-l3-odoo app-plane
+# collector (otel-collector/beyla/synthetic-runner ship OTLP cross-plane here) ->
+# ["159.223.171.231/32", "167.71.109.184/32"]  (GOL-312).
 ingest_source_cidrs = []
 
 # SSH
@@ -31,3 +33,22 @@ spaces_access_key = "DO00..."
 spaces_secret_key = "..."
 
 cost_env = "prod"
+
+# ── Public RUM ingest vhost (GOL-311) ────────────────────────────────────────
+# rum_public_host + cors_allowed_origin_regex + cloudflare_ingress_cidrs all
+# have sane defaults in variables.tf; override only if the hostname/origins move.
+# The Cloudflare Origin Certificate + key are REQUIRED (no default) — inject from
+# 1Password, never paste literals here. Generate once in the Cloudflare dashboard
+# (SSL/TLS -> Origin Server -> Create Certificate) or the API, scoped to
+# rum.gatheringatthegrove.com (or *.gatheringatthegrove.com), 15-year validity.
+# rum_public_host = "rum.gatheringatthegrove.com"
+cf_origin_cert_pem = <<-EOT
+  -----BEGIN CERTIFICATE-----
+  ...op://Grove Prod/grove-obs-rum/origin_cert...
+  -----END CERTIFICATE-----
+EOT
+cf_origin_key_pem = <<-EOT
+  -----BEGIN PRIVATE KEY-----
+  ...op://Grove Prod/grove-obs-rum/origin_key...
+  -----END PRIVATE KEY-----
+EOT

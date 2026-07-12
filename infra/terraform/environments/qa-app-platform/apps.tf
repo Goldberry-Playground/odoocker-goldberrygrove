@@ -108,6 +108,49 @@ resource "digitalocean_app" "hub" {
         scope = "RUN_AND_BUILD_TIME"
       }
 
+      # assets-ingest endpoints (GOL-290 / GOL-293). The hub's
+      # apps/hub/lib/assets/* handlers back the discord-plugin's assets-ingest
+      # job: POST /api/assets/optimize (Spaces-backed @grove/assets pipeline)
+      # and POST /api/assets/brand-entry (@grove/brand typed-entry PRs). Each
+      # var reads lazily inside a route handler (optimizeDepsFromEnv /
+      # brandEntryDepsFromEnv via withConfig), so a missing/empty value fails
+      # SAFE as a 503 "not_configured" -- never an open door -- rather than
+      # breaking the build. GENERAL (not SECRET) for the same DO-provider drift
+      # reason as GROVE_REVALIDATE_SECRET above (#869/#514).
+      #
+      # Env-var names are grove-sites' contract (spacesConfigFromEnv reads
+      # GROVE_ASSETS_KEY/SECRET; the other GROVE_ASSETS_* have code defaults);
+      # the TF var names mirror the 1Password `Grove Infra` field names.
+      env {
+        key   = "GROVE_ASSETS_KEY"
+        value = var.grove_assets_access_key_id
+        scope = "RUN_AND_BUILD_TIME"
+      }
+
+      env {
+        key   = "GROVE_ASSETS_SECRET"
+        value = var.grove_assets_secret_key
+        scope = "RUN_AND_BUILD_TIME"
+      }
+
+      # Shared bearer the discord-plugin presents to POST /api/assets/optimize.
+      # Minted per GOL-293 and stored in 1Password `Grove Infra`.
+      env {
+        key   = "GROVE_ASSETS_OPTIMIZE_TOKEN"
+        value = var.grove_assets_optimize_token
+        scope = "RUN_AND_BUILD_TIME"
+      }
+
+      # GitHub token (contents:write + pull_requests:write on grove-sites) the
+      # brand-entry handler uses to open @grove/brand typed-entry PRs. Provision
+      # gated on a human GitHub account action (GOL-293); until populated, the
+      # /api/assets/brand-entry endpoint returns 503 while /optimize still works.
+      env {
+        key   = "GROVE_BRAND_PR_TOKEN"
+        value = var.grove_brand_pr_token
+        scope = "RUN_AND_BUILD_TIME"
+      }
+
       env {
         key   = "NEXT_TELEMETRY_DISABLED"
         value = "1"
