@@ -44,6 +44,23 @@ def test_env_override(monkeypatch=None) -> None:
         del os.environ["SYNTHETIC_MONITOR_URL_HUB_ROOT"]
 
 
+def test_port_override() -> None:
+    import os
+
+    mon = {"name": "postgres-tcp", "host": "postgres", "port": 5432}
+    assert probes.monitor_port(mon, int(mon["port"])) == 5432  # file default
+    os.environ["SYNTHETIC_MONITOR_PORT_POSTGRES_TCP"] = "25060"  # managed PG
+    try:
+        assert probes.monitor_port(mon, int(mon["port"])) == 25060
+    finally:
+        del os.environ["SYNTHETIC_MONITOR_PORT_POSTGRES_TCP"]
+
+
+def test_probe_sends_identifiable_user_agent() -> None:
+    # CF Bot Fight Mode 403s the default urllib UA on proxied targets (GOL-334).
+    assert "GroveSyntheticMonitor" in probes.USER_AGENT
+
+
 def test_build_uptime_otlp_shape() -> None:
     uptime = [
         {"success": 1, "duration_ms": 12.0, "target": "hub-root", "tenant": "hub", "tier": "frontend", "route": "root", "service": ""},

@@ -78,6 +78,12 @@ DEFAULT_HTTP_TIMEOUT_S = 10
 DEFAULT_TCP_TIMEOUT_S = 5
 DEFAULT_SSL_TIMEOUT_S = 10
 
+# Cloudflare Bot Fight Mode 403s the default `Python-urllib/x.y` User-Agent on
+# proxied (orange-cloud) targets — e.g. the ghost blog.* domains the ghost-*-admin
+# monitors probe. An honest, identifiable UA passes the WAF (verified GOL-334)
+# without impersonating a browser, so real down/degraded states still surface.
+USER_AGENT = "GroveSyntheticMonitor/1.0 (+https://gatheringatthegrove.com)"
+
 
 def _log(*args: object) -> None:
     print(*args, file=sys.stderr, flush=True)
@@ -107,6 +113,13 @@ def monitor_host(mon: dict) -> str:
     return _env(f"SYNTHETIC_MONITOR_HOST_{env_key(mon['name'])}") or mon.get("host", "")
 
 
+def monitor_port(mon: dict, default: int) -> int:
+    """Per-env TCP/SSL port override (SYNTHETIC_MONITOR_PORT_<NAME>). The managed
+    QA/prod Postgres listens on 25060, not the local-dev 5432 baked into
+    monitors.json — override without editing the source-of-truth file."""
+    return int(_env(f"SYNTHETIC_MONITOR_PORT_{env_key(mon['name'])}") or default)
+
+
 def tags_to_attrs(mon: dict) -> dict[str, str]:
     """`["tenant:hub","tier:frontend","route:root"]` -> {tenant,tier,route,...}."""
     out: dict[str, str] = {}
@@ -132,7 +145,7 @@ def probe_http(mon: dict) -> dict:
     start = time.perf_counter()
     ok = False
     try:
-        req = request.Request(url, method=mon.get("method", "GET"))
+        req = request.Request(url, method=mon.get("method", "GET"), headers={"User-Agent": USER_AGENT})
         with request.urlopen(req, timeout=timeout) as resp:
             code = resp.status
             body = resp.read().decode("utf-8", "replace") if keyword else ""
@@ -148,7 +161,7 @@ def probe_http(mon: dict) -> dict:
 
 
 def probe_tcp(mon: dict) -> dict:
-    host, port = monitor_host(mon), int(mon["port"])
+    host, port = monitor_host(mon), monitor_port(mon, int(mon["port"]))
     timeout = float(mon.get("timeout_seconds", DEFAULT_TCP_TIMEOUT_S))
     start = time.perf_counter()
     ok = False
@@ -164,7 +177,7 @@ def probe_tcp(mon: dict) -> dict:
 def probe_ssl(mon: dict) -> dict:
     """Returns identity + `days` (int days until cert expiry) or None if the TLS
     handshake failed. `reachable` mirrors success for the ssl target itself."""
-    host, port = monitor_host(mon), int(mon.get("port", 443))
+    host, port = monitor_host(mon), monitor_port(mon, int(mon.get("port", 443)))
     timeout = float(mon.get("timeout_seconds", DEFAULT_SSL_TIMEOUT_S))
     ctx = ssl.create_default_context()
     # Refuse the obsolete TLSv1/1.1 protocols (CodeQL py/insecure-protocol);
