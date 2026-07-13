@@ -128,7 +128,7 @@ runcmd:
   #    uid:gid FROM THE IMAGE rather than hardcoding: the official odoo:19
   #    `odoo` user is 100:101, NOT 101:101 (verified 2026-07-09 via
   #    `docker exec grove-odoo-1 id odoo`). GOL-93 shipped a hardcoded 101:101,
-  #    which would leave the fresh volume unwritable. The `docker run … id`
+  #    which would leave the fresh volume unwritable. The `docker run ... id`
   #    probe pulls grove-odoo, which the compose-up below reuses; the fallback
   #    (100:101) is the correct value if the probe ever fails. The `mounts:`
   #    module has already mounted LABEL=filestore at /mnt/odoo-filestore.
