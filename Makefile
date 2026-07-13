@@ -216,6 +216,28 @@ QA_L3_DIR := infra/terraform/environments/qa-app-platform
 QA_L3_INFISICAL_PROJECT := 850603f8-e175-4c38-9038-97a1e69d72e6
 QA_L3_OP_ITEM := qvkpvg24x2wbsn6owjyvn4vhx4
 
+# Shared secret→TF_VAR export block for the qa-app-platform env. The grove_assets_*
+# vars back the hub's assets-ingest endpoints (GOL-290/GOL-293). GROVE_BRAND_PR_TOKEN
+# is optional (":-" default empty) until it is minted + seeded — the brand-entry
+# endpoint fails safe (503) while /optimize works with the three assets vars.
+QA_L3_TFVARS = export AWS_ACCESS_KEY_ID="$$SPACES_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$$SPACES_SECRET_ACCESS_KEY" \
+		TF_VAR_do_token="$$DIGITALOCEAN_TOKEN" TF_VAR_cloudflare_api_token="$$CLOUDFLARE_API_TOKEN" \
+		TF_VAR_grove_revalidate_secret="$$GROVE_REVALIDATE_SECRET" TF_VAR_odoo_api_keys="$$ODOO_API_KEYS_TF_JSON" \
+		TF_VAR_grove_assets_access_key_id="$$GROVE_ASSETS_KEY" TF_VAR_grove_assets_secret_key="$$GROVE_ASSETS_SECRET" \
+		TF_VAR_grove_assets_optimize_token="$$GROVE_ASSETS_OPTIMIZE_TOKEN" TF_VAR_grove_brand_pr_token="$${GROVE_BRAND_PR_TOKEN:-}"
+
+## qa-l3-plan: preview changes to the Level 3 QA env (read-only; run before qa-l3-up)
+.PHONY: qa-l3-plan
+qa-l3-plan:
+	@INF_TOKEN="$$(infisical login --method=universal-auth \
+		--client-id="$$(op item get $(QA_L3_OP_ITEM) --fields label=infisical_admin_client_id --reveal)" \
+		--client-secret="$$(op item get $(QA_L3_OP_ITEM) --fields label=infisical_admin_client_secret --reveal)" \
+		--plain)"; \
+	infisical run --projectId=$(QA_L3_INFISICAL_PROJECT) --env=prod --token="$$INF_TOKEN" -- bash -c '\
+		$(QA_L3_TFVARS); \
+		terraform -chdir=$(QA_L3_DIR) init -backend-config=backend.hcl -input=false >/dev/null; \
+		terraform -chdir=$(QA_L3_DIR) plan -input=false'
+
 ## qa-l3-up: apply the full Level 3 QA env (droplets re-bootstrap from cloud-init)
 .PHONY: qa-l3-up
 qa-l3-up:
@@ -224,9 +246,7 @@ qa-l3-up:
 		--client-secret="$$(op item get $(QA_L3_OP_ITEM) --fields label=infisical_admin_client_secret --reveal)" \
 		--plain)"; \
 	infisical run --projectId=$(QA_L3_INFISICAL_PROJECT) --env=prod --token="$$INF_TOKEN" -- bash -c '\
-		export AWS_ACCESS_KEY_ID="$$SPACES_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$$SPACES_SECRET_ACCESS_KEY" \
-			TF_VAR_do_token="$$DIGITALOCEAN_TOKEN" TF_VAR_cloudflare_api_token="$$CLOUDFLARE_API_TOKEN" \
-			TF_VAR_grove_revalidate_secret="$$GROVE_REVALIDATE_SECRET" TF_VAR_odoo_api_keys="$$ODOO_API_KEYS_TF_JSON"; \
+		$(QA_L3_TFVARS); \
 		terraform -chdir=$(QA_L3_DIR) init -backend-config=backend.hcl -input=false >/dev/null; \
 		terraform -chdir=$(QA_L3_DIR) apply -input=false'
 
