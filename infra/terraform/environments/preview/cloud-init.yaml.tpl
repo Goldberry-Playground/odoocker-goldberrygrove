@@ -28,11 +28,11 @@ write_files:
 
   - path: /etc/grove/Caddyfile
     content: |
-${indent(6, replace(replace(caddyfile_tpl, "$${PREVIEW_HOST}", preview_host), "$${PREVIEW_ZONE}", "preview.gatheringatthegrove.com"))}
+      ${indent(6, replace(replace(caddyfile_tpl, "$${PREVIEW_HOST}", preview_host), "$${PREVIEW_ZONE}", "preview.gatheringatthegrove.com"))}
 
   - path: /etc/grove/docker-compose.yml
     content: |
-${indent(6, replace(replace(replace(replace(replace(replace(replace(compose_yml, "{{ODOO_IMAGE_TAG}}", odoo_image_tag), "{{HUB_TAG}}", frontend_image_tags["hub"]), "{{GOLDBERRY_TAG}}", frontend_image_tags["goldberry"]), "{{GGG_TAG}}", frontend_image_tags["ggg"]), "{{NURSERY_TAG}}", frontend_image_tags["nursery"]), "{{PREVIEW_HOST}}", preview_host), "{{PREVIEW_ZONE}}", "preview.gatheringatthegrove.com"))}
+      ${indent(6, replace(replace(replace(replace(replace(replace(replace(compose_yml, "{{ODOO_IMAGE_TAG}}", odoo_image_tag), "{{HUB_TAG}}", frontend_image_tags["hub"]), "{{GOLDBERRY_TAG}}", frontend_image_tags["goldberry"]), "{{GGG_TAG}}", frontend_image_tags["ggg"]), "{{NURSERY_TAG}}", frontend_image_tags["nursery"]), "{{PREVIEW_HOST}}", preview_host), "{{PREVIEW_ZONE}}", "preview.gatheringatthegrove.com"))}
 
   - path: /opt/grove/restore.sh
     permissions: "0755"
