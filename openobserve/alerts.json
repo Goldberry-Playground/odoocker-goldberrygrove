@@ -779,11 +779,17 @@
       "query_condition": {
         "type": "custom",
         "conditions": {
-          "or": [
+          "and": [
             {
               "column": "value",
               "operator": ">",
               "value": "0.70",
+              "ignore_case": false
+            },
+            {
+              "column": "host_role",
+              "operator": "=",
+              "value": "odoo-droplet",
               "ignore_case": false
             }
           ]
@@ -815,7 +821,7 @@
         "tenant": "shared"
       },
       "row_template": "",
-      "description": "USE — droplet CPU >70% for 10m. Identify the hot container via docker_stats. Runbook: docs/RUNBOOKS.md#droplet-cpu  [intent: avg(system_cpu_utilization) > 0.70 over 10m]  [note: USE metric from the OTel Collector (hostmetrics). Utilization is a 0-1 fraction. Stream/field name pending live validation.]",
+      "description": "USE — droplet CPU >70% for 10m. Identify the hot container via docker_stats. Runbook: docs/RUNBOOKS.md#droplet-cpu  [intent: avg(system_cpu_utilization) > 0.70 over 10m]  [note: USE metric from the OTel Collector (hostmetrics). Utilization is a 0-1 fraction. Stream/field name pending live validation.]  [scope: host_role='odoo-droplet' (GOL-76) so it does not blend with the agenticos box sharing this stream]",
       "enabled": true,
       "tz_offset": 0
     },
@@ -827,11 +833,17 @@
       "query_condition": {
         "type": "custom",
         "conditions": {
-          "or": [
+          "and": [
             {
               "column": "value",
               "operator": ">",
               "value": "0.90",
+              "ignore_case": false
+            },
+            {
+              "column": "host_role",
+              "operator": "=",
+              "value": "odoo-droplet",
               "ignore_case": false
             }
           ]
@@ -863,7 +875,7 @@
         "tenant": "shared"
       },
       "row_template": "",
-      "description": "USE — droplet CPU >90% for 10m. Imminent thrash risk. Restart non-critical containers or scale. Runbook: docs/RUNBOOKS.md#droplet-cpu  [intent: avg(system_cpu_utilization) > 0.90 over 10m]",
+      "description": "USE — droplet CPU >90% for 10m. Imminent thrash risk. Restart non-critical containers or scale. Runbook: docs/RUNBOOKS.md#droplet-cpu  [intent: avg(system_cpu_utilization) > 0.90 over 10m]  [scope: host_role='odoo-droplet' (GOL-76) so it does not blend with the agenticos box sharing this stream]",
       "enabled": true,
       "tz_offset": 0
     },
@@ -875,11 +887,17 @@
       "query_condition": {
         "type": "custom",
         "conditions": {
-          "or": [
+          "and": [
             {
               "column": "value",
               "operator": ">",
               "value": "80",
+              "ignore_case": false
+            },
+            {
+              "column": "host_role",
+              "operator": "=",
+              "value": "odoo-droplet",
               "ignore_case": false
             }
           ]
@@ -911,7 +929,7 @@
         "tenant": "shared"
       },
       "row_template": "",
-      "description": "USE — [{container_name}] memory >80% of limit for 5m. Odoo workers most likely. Runbook: docs/RUNBOOKS.md#container-ram  [intent: container_memory_percent > 80 for 5m (any container)]",
+      "description": "USE — [{container_name}] memory >80% of limit for 5m. Odoo workers most likely. Runbook: docs/RUNBOOKS.md#container-ram  [intent: container_memory_percent > 80 for 5m (any container)]  [scope: host_role='odoo-droplet' (GOL-76) so it does not blend with the agenticos box sharing this stream]",
       "enabled": true,
       "tz_offset": 0
     },
@@ -923,11 +941,17 @@
       "query_condition": {
         "type": "custom",
         "conditions": {
-          "or": [
+          "and": [
             {
               "column": "value",
               "operator": ">",
               "value": "95",
+              "ignore_case": false
+            },
+            {
+              "column": "host_role",
+              "operator": "=",
+              "value": "odoo-droplet",
               "ignore_case": false
             }
           ]
@@ -959,7 +983,7 @@
         "tenant": "shared"
       },
       "row_template": "",
-      "description": "USE — [{container_name}] memory >95% of limit — OOM kill imminent. Restart it. Runbook: docs/RUNBOOKS.md#container-ram  [intent: container_memory_percent > 95 for 5m (any container)]",
+      "description": "USE — [{container_name}] memory >95% of limit — OOM kill imminent. Restart it. Runbook: docs/RUNBOOKS.md#container-ram  [intent: container_memory_percent > 95 for 5m (any container)]  [scope: host_role='odoo-droplet' (GOL-76) so it does not blend with the agenticos box sharing this stream]",
       "enabled": true,
       "tz_offset": 0
     },
@@ -971,11 +995,17 @@
       "query_condition": {
         "type": "custom",
         "conditions": {
-          "or": [
+          "and": [
             {
               "column": "value",
               "operator": ">",
               "value": "0.75",
+              "ignore_case": false
+            },
+            {
+              "column": "host_role",
+              "operator": "=",
+              "value": "odoo-droplet",
               "ignore_case": false
             }
           ]
@@ -1007,7 +1037,7 @@
         "tenant": "shared"
       },
       "row_template": "",
-      "description": "USE — data filesystem >75% full. MinIO objects or Postgres WAL growing. Clean up or add volume. Runbook: docs/RUNBOOKS.md#disk-data  [intent: system_filesystem_utilization{mountpoint~=/data|/} > 0.75]",
+      "description": "USE — data filesystem >75% full. MinIO objects or Postgres WAL growing. Clean up or add volume. Runbook: docs/RUNBOOKS.md#disk-data  [intent: system_filesystem_utilization{mountpoint~=/data|/} > 0.75]  [scope: host_role='odoo-droplet' (GOL-76) so it does not blend with the agenticos box sharing this stream]",
       "enabled": true,
       "tz_offset": 0
     },
@@ -1019,11 +1049,17 @@
       "query_condition": {
         "type": "custom",
         "conditions": {
-          "or": [
+          "and": [
             {
               "column": "value",
               "operator": ">",
               "value": "0.90",
+              "ignore_case": false
+            },
+            {
+              "column": "host_role",
+              "operator": "=",
+              "value": "odoo-droplet",
               "ignore_case": false
             }
           ]
@@ -1055,12 +1091,12 @@
         "tenant": "shared"
       },
       "row_template": "",
-      "description": "USE — data filesystem >90% full — near-full kills MinIO writes + Postgres WAL. Immediate action. Runbook: docs/RUNBOOKS.md#disk-data  [intent: system_filesystem_utilization{mountpoint~=/data|/} > 0.90]  [note: Tighter than typical (75/90) because MinIO + Postgres WAL fail silently-then-catastrophically when the volume fills. postgres-connections + the RED latency/5xx alerts need the postgresql receiver + Beyla (follow-ups).]",
+      "description": "USE — data filesystem >90% full — near-full kills MinIO writes + Postgres WAL. Immediate action. Runbook: docs/RUNBOOKS.md#disk-data  [intent: system_filesystem_utilization{mountpoint~=/data|/} > 0.90]  [note: Tighter than typical (75/90) because MinIO + Postgres WAL fail silently-then-catastrophically when the volume fills. postgres-connections + the RED latency/5xx alerts need the postgresql receiver + Beyla (follow-ups).]  [scope: host_role='odoo-droplet' (GOL-76) so it does not blend with the agenticos box sharing this stream]",
       "enabled": true,
       "tz_offset": 0
     },
     {
-      "_comment": "── agenticos-* USE alerts (GOL-76) ── mirror the droplet-* patterns but scoped host_role='agenticos'. See GOL-313 / PR #218 for the collector deploy that activates these streams."
+      "_comment": "── agenticos-* USE alerts (GOL-76) ── v2 schema (per GOL-278 contract), scoped host_role='agenticos', consuming the GOL-54 OTel Collector streams (AgenticOS repo otelcol-agenticos.yaml → host.role=agenticos). Host RAM (system_memory_utilization) is the primary signal (paperclip-server OOM box). host_role column + thresholds PENDING LIVE VALIDATION once the agenticos collector ships to grove-obs."
     },
     {
       "name": "agenticos-cpu-warning",
@@ -1069,15 +1105,50 @@
       "is_real_time": false,
       "query_condition": {
         "type": "custom",
-        "conditions": {"and": [
-          {"column": "value", "operator": ">", "value": "0.70", "ignore_case": false},
-          {"column": "host_role", "operator": "=", "value": "agenticos", "ignore_case": false}
-        ]},
-        "sql": null
+        "conditions": {
+          "and": [
+            {
+              "column": "value",
+              "operator": ">",
+              "value": "0.70",
+              "ignore_case": false
+            },
+            {
+              "column": "host_role",
+              "operator": "=",
+              "value": "agenticos",
+              "ignore_case": false
+            }
+          ]
+        },
+        "sql": null,
+        "promql": null,
+        "promql_condition": null,
+        "aggregation": null,
+        "vrl_function": null,
+        "search_event_type": null
       },
-      "trigger_condition": {"period": 10, "operator": ">=", "threshold": 1, "frequency": 60, "cron": "", "frequency_type": "minutes", "silence": 30, "timezone": "UTC"},
-      "destinations": ["keep-webhook"],
-      "description": "USE — agenticos CPU >70% for 10m. Identify the hot container via docker_stats. Runbook: docs/RUNBOOKS.md#agenticos-cpu",
+      "trigger_condition": {
+        "period": 10,
+        "operator": ">=",
+        "threshold": 1,
+        "frequency": 60,
+        "cron": "",
+        "frequency_type": "minutes",
+        "silence": 30,
+        "timezone": "UTC",
+        "tolerance_in_secs": null
+      },
+      "destinations": [
+        "keep-webhook"
+      ],
+      "context_attributes": {
+        "severity": "warning",
+        "runbook_key": "agenticos-cpu",
+        "tenant": "shared"
+      },
+      "row_template": "",
+      "description": "USE — agenticos CPU >70% for 10m. Identify the hot container via docker_stats (paperclip-server runs agent subprocesses). Runbook: docs/RUNBOOKS.md#agenticos-cpu  [intent: avg(system_cpu_utilization{host_role='agenticos'}) > 0.70 over 10m]  [note: host_role='agenticos' scopes this to the AgenticOS box; consumes the GOL-54 otelcol-agenticos.yaml streams. host_role column name (flat vs nested) PENDING LIVE VALIDATION on first agenticos traffic.]",
       "enabled": true,
       "tz_offset": 0
     },
@@ -1088,15 +1159,50 @@
       "is_real_time": false,
       "query_condition": {
         "type": "custom",
-        "conditions": {"and": [
-          {"column": "value", "operator": ">", "value": "0.90", "ignore_case": false},
-          {"column": "host_role", "operator": "=", "value": "agenticos", "ignore_case": false}
-        ]},
-        "sql": null
+        "conditions": {
+          "and": [
+            {
+              "column": "value",
+              "operator": ">",
+              "value": "0.90",
+              "ignore_case": false
+            },
+            {
+              "column": "host_role",
+              "operator": "=",
+              "value": "agenticos",
+              "ignore_case": false
+            }
+          ]
+        },
+        "sql": null,
+        "promql": null,
+        "promql_condition": null,
+        "aggregation": null,
+        "vrl_function": null,
+        "search_event_type": null
       },
-      "trigger_condition": {"period": 10, "operator": ">=", "threshold": 1, "frequency": 60, "cron": "", "frequency_type": "minutes", "silence": 30, "timezone": "UTC"},
-      "destinations": ["keep-webhook"],
-      "description": "USE — agenticos CPU >90% for 10m. Imminent thrash risk. Runbook: docs/RUNBOOKS.md#agenticos-cpu",
+      "trigger_condition": {
+        "period": 10,
+        "operator": ">=",
+        "threshold": 1,
+        "frequency": 60,
+        "cron": "",
+        "frequency_type": "minutes",
+        "silence": 30,
+        "timezone": "UTC",
+        "tolerance_in_secs": null
+      },
+      "destinations": [
+        "keep-webhook"
+      ],
+      "context_attributes": {
+        "severity": "critical",
+        "runbook_key": "agenticos-cpu",
+        "tenant": "shared"
+      },
+      "row_template": "",
+      "description": "USE — agenticos CPU >90% for 10m. Imminent thrash risk. Restart non-critical containers or resize (GOL-51). Runbook: docs/RUNBOOKS.md#agenticos-cpu  [intent: avg(system_cpu_utilization{host_role='agenticos'}) > 0.90 over 10m]  [note: host_role='agenticos' scopes this to the AgenticOS box; consumes the GOL-54 otelcol-agenticos.yaml streams. host_role column name (flat vs nested) PENDING LIVE VALIDATION on first agenticos traffic.]",
       "enabled": true,
       "tz_offset": 0
     },
@@ -1107,15 +1213,50 @@
       "is_real_time": false,
       "query_condition": {
         "type": "custom",
-        "conditions": {"and": [
-          {"column": "value", "operator": ">", "value": "0.70", "ignore_case": false},
-          {"column": "host_role", "operator": "=", "value": "agenticos", "ignore_case": false}
-        ]},
-        "sql": null
+        "conditions": {
+          "and": [
+            {
+              "column": "value",
+              "operator": ">",
+              "value": "0.70",
+              "ignore_case": false
+            },
+            {
+              "column": "host_role",
+              "operator": "=",
+              "value": "agenticos",
+              "ignore_case": false
+            }
+          ]
+        },
+        "sql": null,
+        "promql": null,
+        "promql_condition": null,
+        "aggregation": null,
+        "vrl_function": null,
+        "search_event_type": null
       },
-      "trigger_condition": {"period": 10, "operator": ">=", "threshold": 1, "frequency": 60, "cron": "", "frequency_type": "minutes", "silence": 30, "timezone": "UTC"},
-      "destinations": ["keep-webhook"],
-      "description": "USE — agenticos host RAM >70% for 10m. OOM history (103% crash) — watch swap and top container. Runbook: docs/RUNBOOKS.md#agenticos-memory",
+      "trigger_condition": {
+        "period": 10,
+        "operator": ">=",
+        "threshold": 1,
+        "frequency": 60,
+        "cron": "",
+        "frequency_type": "minutes",
+        "silence": 30,
+        "timezone": "UTC",
+        "tolerance_in_secs": null
+      },
+      "destinations": [
+        "keep-webhook"
+      ],
+      "context_attributes": {
+        "severity": "warning",
+        "runbook_key": "agenticos-memory",
+        "tenant": "shared"
+      },
+      "row_template": "",
+      "description": "USE — agenticos host RAM >70% for 10m. The OOM history (103% crash) lives here — watch swap (paging.utilization) and the top container. Runbook: docs/RUNBOOKS.md#agenticos-memory  [intent: avg(system_memory_utilization{host_role='agenticos'}) > 0.70 over 10m]  [note: host_role='agenticos' scopes this to the AgenticOS box; consumes the GOL-54 otelcol-agenticos.yaml streams. host_role column name (flat vs nested) PENDING LIVE VALIDATION on first agenticos traffic.]",
       "enabled": true,
       "tz_offset": 0
     },
@@ -1126,15 +1267,50 @@
       "is_real_time": false,
       "query_condition": {
         "type": "custom",
-        "conditions": {"and": [
-          {"column": "value", "operator": ">", "value": "0.90", "ignore_case": false},
-          {"column": "host_role", "operator": "=", "value": "agenticos", "ignore_case": false}
-        ]},
-        "sql": null
+        "conditions": {
+          "and": [
+            {
+              "column": "value",
+              "operator": ">",
+              "value": "0.90",
+              "ignore_case": false
+            },
+            {
+              "column": "host_role",
+              "operator": "=",
+              "value": "agenticos",
+              "ignore_case": false
+            }
+          ]
+        },
+        "sql": null,
+        "promql": null,
+        "promql_condition": null,
+        "aggregation": null,
+        "vrl_function": null,
+        "search_event_type": null
       },
-      "trigger_condition": {"period": 10, "operator": ">=", "threshold": 1, "frequency": 60, "cron": "", "frequency_type": "minutes", "silence": 30, "timezone": "UTC"},
-      "destinations": ["keep-webhook"],
-      "description": "USE — agenticos host RAM >90% for 10m — OOM kill imminent. Runbook: docs/RUNBOOKS.md#agenticos-memory",
+      "trigger_condition": {
+        "period": 10,
+        "operator": ">=",
+        "threshold": 1,
+        "frequency": 60,
+        "cron": "",
+        "frequency_type": "minutes",
+        "silence": 30,
+        "timezone": "UTC",
+        "tolerance_in_secs": null
+      },
+      "destinations": [
+        "keep-webhook"
+      ],
+      "context_attributes": {
+        "severity": "critical",
+        "runbook_key": "agenticos-memory",
+        "tenant": "shared"
+      },
+      "row_template": "",
+      "description": "USE — agenticos host RAM >90% for 10m — OOM kill imminent (this box crashed the UI at 103%). Swap is the safety net; restart the hot container or resize (GOL-51). Runbook: docs/RUNBOOKS.md#agenticos-memory  [intent: avg(system_memory_utilization{host_role='agenticos'}) > 0.90 over 10m]  [note2: host-level RAM = the AgenticOS box's primary failure mode; DO-native monitor-alerts.tf (P0) is the redundant fast layer.]  [note: host_role='agenticos' scopes this to the AgenticOS box; consumes the GOL-54 otelcol-agenticos.yaml streams. host_role column name (flat vs nested) PENDING LIVE VALIDATION on first agenticos traffic.]",
       "enabled": true,
       "tz_offset": 0
     },
@@ -1145,15 +1321,50 @@
       "is_real_time": false,
       "query_condition": {
         "type": "custom",
-        "conditions": {"and": [
-          {"column": "value", "operator": ">", "value": "80", "ignore_case": false},
-          {"column": "host_role", "operator": "=", "value": "agenticos", "ignore_case": false}
-        ]},
-        "sql": null
+        "conditions": {
+          "and": [
+            {
+              "column": "value",
+              "operator": ">",
+              "value": "80",
+              "ignore_case": false
+            },
+            {
+              "column": "host_role",
+              "operator": "=",
+              "value": "agenticos",
+              "ignore_case": false
+            }
+          ]
+        },
+        "sql": null,
+        "promql": null,
+        "promql_condition": null,
+        "aggregation": null,
+        "vrl_function": null,
+        "search_event_type": null
       },
-      "trigger_condition": {"period": 5, "operator": ">=", "threshold": 1, "frequency": 60, "cron": "", "frequency_type": "minutes", "silence": 30, "timezone": "UTC"},
-      "destinations": ["keep-webhook"],
-      "description": "USE — agenticos [{container_name}] memory >80% of limit for 5m. Runbook: docs/RUNBOOKS.md#agenticos-container-ram",
+      "trigger_condition": {
+        "period": 5,
+        "operator": ">=",
+        "threshold": 1,
+        "frequency": 60,
+        "cron": "",
+        "frequency_type": "minutes",
+        "silence": 30,
+        "timezone": "UTC",
+        "tolerance_in_secs": null
+      },
+      "destinations": [
+        "keep-webhook"
+      ],
+      "context_attributes": {
+        "severity": "warning",
+        "runbook_key": "agenticos-container-ram",
+        "tenant": "shared"
+      },
+      "row_template": "",
+      "description": "USE — agenticos [{container_name}] memory >80% of limit for 5m. paperclip-server (agent subprocesses) most likely. Runbook: docs/RUNBOOKS.md#agenticos-container-ram  [intent: container_memory_percent{host_role='agenticos'} > 80 for 5m (any container)]  [note: host_role='agenticos' scopes this to the AgenticOS box; consumes the GOL-54 otelcol-agenticos.yaml streams. host_role column name (flat vs nested) PENDING LIVE VALIDATION on first agenticos traffic.]",
       "enabled": true,
       "tz_offset": 0
     },
@@ -1164,15 +1375,50 @@
       "is_real_time": false,
       "query_condition": {
         "type": "custom",
-        "conditions": {"and": [
-          {"column": "value", "operator": ">", "value": "95", "ignore_case": false},
-          {"column": "host_role", "operator": "=", "value": "agenticos", "ignore_case": false}
-        ]},
-        "sql": null
+        "conditions": {
+          "and": [
+            {
+              "column": "value",
+              "operator": ">",
+              "value": "95",
+              "ignore_case": false
+            },
+            {
+              "column": "host_role",
+              "operator": "=",
+              "value": "agenticos",
+              "ignore_case": false
+            }
+          ]
+        },
+        "sql": null,
+        "promql": null,
+        "promql_condition": null,
+        "aggregation": null,
+        "vrl_function": null,
+        "search_event_type": null
       },
-      "trigger_condition": {"period": 5, "operator": ">=", "threshold": 1, "frequency": 60, "cron": "", "frequency_type": "minutes", "silence": 30, "timezone": "UTC"},
-      "destinations": ["keep-webhook"],
-      "description": "USE — agenticos [{container_name}] memory >95% of limit — OOM kill imminent. Runbook: docs/RUNBOOKS.md#agenticos-container-ram",
+      "trigger_condition": {
+        "period": 5,
+        "operator": ">=",
+        "threshold": 1,
+        "frequency": 60,
+        "cron": "",
+        "frequency_type": "minutes",
+        "silence": 30,
+        "timezone": "UTC",
+        "tolerance_in_secs": null
+      },
+      "destinations": [
+        "keep-webhook"
+      ],
+      "context_attributes": {
+        "severity": "critical",
+        "runbook_key": "agenticos-container-ram",
+        "tenant": "shared"
+      },
+      "row_template": "",
+      "description": "USE — agenticos [{container_name}] memory >95% of limit — OOM kill imminent. Restart it. Runbook: docs/RUNBOOKS.md#agenticos-container-ram  [intent: container_memory_percent{host_role='agenticos'} > 95 for 5m (any container)]  [note: host_role='agenticos' scopes this to the AgenticOS box; consumes the GOL-54 otelcol-agenticos.yaml streams. host_role column name (flat vs nested) PENDING LIVE VALIDATION on first agenticos traffic.]",
       "enabled": true,
       "tz_offset": 0
     },
@@ -1183,15 +1429,50 @@
       "is_real_time": false,
       "query_condition": {
         "type": "custom",
-        "conditions": {"and": [
-          {"column": "value", "operator": ">", "value": "0.75", "ignore_case": false},
-          {"column": "host_role", "operator": "=", "value": "agenticos", "ignore_case": false}
-        ]},
-        "sql": null
+        "conditions": {
+          "and": [
+            {
+              "column": "value",
+              "operator": ">",
+              "value": "0.75",
+              "ignore_case": false
+            },
+            {
+              "column": "host_role",
+              "operator": "=",
+              "value": "agenticos",
+              "ignore_case": false
+            }
+          ]
+        },
+        "sql": null,
+        "promql": null,
+        "promql_condition": null,
+        "aggregation": null,
+        "vrl_function": null,
+        "search_event_type": null
       },
-      "trigger_condition": {"period": 5, "operator": ">=", "threshold": 1, "frequency": 60, "cron": "", "frequency_type": "minutes", "silence": 30, "timezone": "UTC"},
-      "destinations": ["keep-webhook"],
-      "description": "USE — agenticos root filesystem >75% full. Runbook: docs/RUNBOOKS.md#agenticos-disk",
+      "trigger_condition": {
+        "period": 5,
+        "operator": ">=",
+        "threshold": 1,
+        "frequency": 60,
+        "cron": "",
+        "frequency_type": "minutes",
+        "silence": 30,
+        "timezone": "UTC",
+        "tolerance_in_secs": null
+      },
+      "destinations": [
+        "keep-webhook"
+      ],
+      "context_attributes": {
+        "severity": "warning",
+        "runbook_key": "agenticos-disk",
+        "tenant": "shared"
+      },
+      "row_template": "",
+      "description": "USE — agenticos root filesystem >75% full. Docker images/logs or the swap file growing. Prune or add volume. Runbook: docs/RUNBOOKS.md#agenticos-disk  [intent: system_filesystem_utilization{host_role='agenticos',mountpoint~=/} > 0.75]  [note: host_role='agenticos' scopes this to the AgenticOS box; consumes the GOL-54 otelcol-agenticos.yaml streams. host_role column name (flat vs nested) PENDING LIVE VALIDATION on first agenticos traffic.]",
       "enabled": true,
       "tz_offset": 0
     },
@@ -1202,15 +1483,50 @@
       "is_real_time": false,
       "query_condition": {
         "type": "custom",
-        "conditions": {"and": [
-          {"column": "value", "operator": ">", "value": "0.90", "ignore_case": false},
-          {"column": "host_role", "operator": "=", "value": "agenticos", "ignore_case": false}
-        ]},
-        "sql": null
+        "conditions": {
+          "and": [
+            {
+              "column": "value",
+              "operator": ">",
+              "value": "0.90",
+              "ignore_case": false
+            },
+            {
+              "column": "host_role",
+              "operator": "=",
+              "value": "agenticos",
+              "ignore_case": false
+            }
+          ]
+        },
+        "sql": null,
+        "promql": null,
+        "promql_condition": null,
+        "aggregation": null,
+        "vrl_function": null,
+        "search_event_type": null
       },
-      "trigger_condition": {"period": 5, "operator": ">=", "threshold": 1, "frequency": 60, "cron": "", "frequency_type": "minutes", "silence": 30, "timezone": "UTC"},
-      "destinations": ["keep-webhook"],
-      "description": "USE — agenticos root filesystem >90% full — full disk stalls Docker + agent runtime. Runbook: docs/RUNBOOKS.md#agenticos-disk",
+      "trigger_condition": {
+        "period": 5,
+        "operator": ">=",
+        "threshold": 1,
+        "frequency": 60,
+        "cron": "",
+        "frequency_type": "minutes",
+        "silence": 30,
+        "timezone": "UTC",
+        "tolerance_in_secs": null
+      },
+      "destinations": [
+        "keep-webhook"
+      ],
+      "context_attributes": {
+        "severity": "critical",
+        "runbook_key": "agenticos-disk",
+        "tenant": "shared"
+      },
+      "row_template": "",
+      "description": "USE — agenticos root filesystem >90% full — a full disk stalls Docker + the agent runtime. Immediate cleanup. Runbook: docs/RUNBOOKS.md#agenticos-disk  [intent: system_filesystem_utilization{host_role='agenticos',mountpoint~=/} > 0.90]  [note: host_role='agenticos' scopes this to the AgenticOS box; consumes the GOL-54 otelcol-agenticos.yaml streams. host_role column name (flat vs nested) PENDING LIVE VALIDATION on first agenticos traffic.]",
       "enabled": true,
       "tz_offset": 0
     },
