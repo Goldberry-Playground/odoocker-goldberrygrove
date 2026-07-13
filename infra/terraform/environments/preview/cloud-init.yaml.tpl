@@ -14,7 +14,7 @@ packages:
   - curl
   - gnupg
   - zstd
-  - awscli
+  - unzip
 
 write_files:
   - path: /etc/grove/.env
@@ -101,6 +101,12 @@ runcmd:
   # the placeholder in /etc/grove/.env (write_files runs before runcmd, so we
   # couldn't inline it earlier).
   - PGPW=$(openssl rand -hex 24) && sed -i "s|__POSTGRES_PASSWORD__|$PGPW|" /etc/grove/.env
+
+  # AWS CLI v2 via the official installer -- Ubuntu 24.04 (noble) dropped the
+  # apt `awscli` package, so restore.sh's `aws s3 cp` needs this. Installs to
+  # /usr/local/bin/aws.
+  - curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+  - unzip -q -o /tmp/awscliv2.zip -d /tmp && /tmp/aws/install --update
 
   # Run restore + bring stack up. Logs to /var/log/grove-restore.log for triage.
   - /opt/grove/restore.sh > /var/log/grove-restore.log 2>&1
