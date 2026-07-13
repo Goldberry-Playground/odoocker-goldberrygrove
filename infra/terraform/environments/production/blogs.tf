@@ -75,6 +75,13 @@ resource "digitalocean_volume" "blogs_data" {
   initial_filesystem_label = "blogsdata"
   tags                     = local.tags
   description              = "All blog state: MySQL data dir + 4 Ghost content dirs. Survives droplet replacement."
+
+  # Live blog content for all four brands (MySQL + Ghost content dirs).
+  # The nightly Spaces backup covers data-level loss, but volume deletion
+  # should still require deliberately removing this guard. (#237)
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "digitalocean_volume_attachment" "blogs_data" {

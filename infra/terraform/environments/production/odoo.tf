@@ -52,6 +52,12 @@ resource "digitalocean_volume" "odoo_filestore" {
   initial_filesystem_label = "filestore"
   tags                     = concat(local.tags, ["role-odoo"])
   description              = "Durable Odoo filestore (/var/lib/odoo) for the Level 3 prod Odoo droplet. Survives droplet teardown so product photos + ir.attachment binaries are not lost on recreate (GOL-93). GOL-99 wires the nightly backup into this volume."
+
+  # Every product photo / ir.attachment binary lives here, and until
+  # GOL-99 lands there is no volume backup — deletion is unrecoverable. (#237)
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "digitalocean_volume_attachment" "odoo_filestore" {
