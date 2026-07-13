@@ -96,10 +96,72 @@ write_files:
 
       rm -f /tmp/snap.sql.zst /tmp/filestore.tar.zst
 
+      echo "[restore] minting storefront Odoo API key"
+      # The storefronts (goldberry/ggg/nursery) fail closed at runtime if
+      # ODOO_API_KEY is missing (tenant.secrets.ts requireEnv). Mint a single
+      # global-scope (NULL) key against the restored DB and inject it into .env
+      # before the stack comes up. grove_headless resolves the tenant from the
+      # X-Grove-Tenant header, so one key serves all three. A one-off `run`
+      # container reuses the odoo entrypoint (odoo.conf from DB_* env) and needs
+      # only postgres, which is already healthy above. (GOL-344 Task 2)
+      KEY=""
+      for attempt in 1 2 3; do
+        KEY=$(docker compose --env-file /etc/grove/.env run --rm --no-deps -T odoo \
+                odoo shell -d grove_preview --no-http --logfile=/dev/null \
+                < /opt/grove/mint_key.py 2>>/var/log/grove-mint.log \
+              | sed -n 's/^APIKEY://p' | head -n1)
+        [ -n "$KEY" ] && break
+        echo "[restore] mint attempt $attempt failed; retrying in 10s"
+        sleep 10
+      done
+      if [ -n "$KEY" ]; then
+        sed -i '/^ODOO_API_KEY=/d' /etc/grove/.env # idempotent
+        echo "ODOO_API_KEY=$KEY" >> /etc/grove/.env
+        echo "[restore] ODOO_API_KEY minted and written to /etc/grove/.env"
+      else
+        echo "[restore] WARN: ODOO_API_KEY mint failed - storefronts will fail closed" >&2
+      fi
+
       echo "[restore] starting full stack"
       docker compose --env-file /etc/grove/.env up -d
 
       echo "[restore] done"
+
+  - path: /opt/grove/mint_key.py
+    permissions: "0600"
+    content: |
+      # Mint a global-scope (NULL) Odoo API key for the preview storefronts and
+      # print it once as "APIKEY:<key>". Fed to `odoo shell` over stdin (see
+      # restore.sh). _generate is private, so this can't run over RPC - it must
+      # execute in-process where `env` is bound. Mirrors the documented pattern
+      # in skills/odoo-logistics/scripts/mint_logistics_key.py. NULL scope is
+      # what Odoo 19 bearer auth requires (a NULL-scope key satisfies any scope
+      # check); the admin-owned key is acceptable only because the preview
+      # droplet is ephemeral with sanitized data. (GOL-344 Task 2)
+      import inspect, sys
+
+      KEY_NAME = "preview-storefront"
+      SCOPE = None  # NULL scope - accepted for any scope by Odoo 19 bearer auth
+
+      user = env.ref("base.user_admin")  # uid 2 - always present in any DB
+      Apikeys = env["res.users.apikeys"].sudo()
+
+      # Idempotent: revoke any prior key of this name (SQL delete - the ORM
+      # unlink path is gated by an identity re-check we can't satisfy in a shell).
+      prior = Apikeys.search([("user_id", "=", user.id), ("name", "=", KEY_NAME)])
+      if prior:
+          env.cr.execute("DELETE FROM res_users_apikeys WHERE id IN %s", (tuple(prior.ids),))
+          Apikeys.invalidate_model()
+
+      generate = env["res.users.apikeys"].with_user(user)._generate
+      kwargs = {}
+      if "expiration_date" in inspect.signature(generate).parameters:
+          kwargs["expiration_date"] = False  # non-expiring
+      key = generate(SCOPE, KEY_NAME, **kwargs)
+      env.cr.commit()
+
+      sys.stdout.write("APIKEY:" + key + "\n")
+      sys.stdout.flush()
 
 runcmd:
   # Install Docker (Ubuntu 24.04 noble) per docs.docker.com
