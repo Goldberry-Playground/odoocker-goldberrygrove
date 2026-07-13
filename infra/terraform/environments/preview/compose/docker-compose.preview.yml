@@ -8,7 +8,10 @@
 #   {{PREVIEW_HOST}} {{PREVIEW_ZONE}}
 # Env-file-sourced at runtime (cloud-init writes /etc/grove/.env):
 #   POSTGRES_PASSWORD, DO_API_TOKEN,
-#   GHOST_KEY_GOLDBERRY, GHOST_KEY_GGG, GHOST_KEY_NURSERY
+#   GHOST_KEY_GOLDBERRY, GHOST_KEY_GGG, GHOST_KEY_NURSERY,
+#   DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD, ODOO_ADMIN_PASSWORD,
+#   ADDONS_PATH (consumed by odoorc.sh inside the odoo container via the
+#   /.env bind-mount below - same contract as qa-app-platform + production)
 #
 # This is a SIMPLIFIED stack scoped to preview needs - distinct from the
 # full odoocker compose (which also runs Ghost containers, nginx-proxy,
@@ -72,11 +75,20 @@ services:
       APP_ENV: preview
       DB_NAME: grove_preview
       DB_HOST: postgres
+      DB_PORT: "5432"
       DB_USER: odoo
       DB_PASSWORD: ${POSTGRES_PASSWORD}
       DOMAIN: odoo.{{PREVIEW_HOST}}.{{PREVIEW_ZONE}}
     volumes:
       - odoo_filestore:/var/lib/odoo/filestore
+      # entrypoint.sh only renders odoo.conf (via /odoorc.sh) when /.env
+      # exists in the container; without this mount every ${VAR} in the
+      # conf template stays literal and Odoo crash-loops on
+      # `invalid integer value "${DB_PORT}"`. Same mount as
+      # qa-app-platform/compose/docker-compose.qa.yml:89 and
+      # production/compose/docker-compose.odoo.yml:68. Proven live on the
+      # PR #106 acceptance droplet (GOL-6, 2026-07-13).
+      - /etc/grove/.env:/.env:ro
     # Odoo boots slowly against a freshly-restored snapshot (registry load +
     # asset regeneration) -- the acceptance run saw a 502 at the per-PR odoo URL
     # while the frontends had already started and were hammering a not-yet-ready

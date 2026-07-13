@@ -59,11 +59,25 @@ Disallow: /" 200
     @nursery host nursery.${PREVIEW_HOST}.${PREVIEW_ZONE}
     @odoo host odoo.${PREVIEW_HOST}.${PREVIEW_ZONE}
 
-    handle @hub { reverse_proxy hub:3000 }
-    handle @goldberry { reverse_proxy goldberry:3001 }
-    handle @ggg { reverse_proxy ggg:3001 }
-    handle @nursery { reverse_proxy nursery:3001 }
-    handle @odoo { reverse_proxy odoo:8069 }
+    # Caddyfile syntax: an opening brace must end its line. A one-line
+    # `handle @x { directive }` fails to parse ("Unexpected next token
+    # after '{' on same line") and crash-loops the container. Proven live
+    # on the PR #106 acceptance droplet (GOL-6, 2026-07-13).
+    handle @hub {
+        reverse_proxy hub:3000
+    }
+    handle @goldberry {
+        reverse_proxy goldberry:3001
+    }
+    handle @ggg {
+        reverse_proxy ggg:3001
+    }
+    handle @nursery {
+        reverse_proxy nursery:3001
+    }
+    handle @odoo {
+        reverse_proxy odoo:8069
+    }
 
     handle {
         respond "Unknown preview tenant" 404
