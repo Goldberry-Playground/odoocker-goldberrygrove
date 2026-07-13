@@ -41,7 +41,7 @@ jobs:
           args: -color
 
   # Audit 2026-06-29 #5: shellcheck the operator scripts we rely on
-  # (qa-teardown-droplet, cleanup-acme-txts, caddy-prefer-prod-cert, etc).
+  # (qa-l3-teardown, cleanup-acme-txts, caddy-prefer-prod-cert, etc).
   # Dial-up 2026-06-29: severity raised error → warning after PR #127
   # fixed all warning-level findings. Next dial-up after style-level
   # findings are cleaned up: severity → style.

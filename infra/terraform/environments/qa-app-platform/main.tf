@@ -132,6 +132,15 @@ resource "digitalocean_database_cluster" "pg" {
   # Dev tier doesn't support multi-day backup windows; the cluster gets
   # 1 day of automatic backups regardless. Production (D6, separate env)
   # would set this on the basic-tier cluster.
+
+  # QA Odoo is the system of record for real orders + inventory
+  # (2026-07-09). Deleting the cluster also deletes its automated backups
+  # and PITR history with it, so `terraform destroy` must refuse until
+  # this guard is deliberately removed in a reviewed PR. Targeted compute
+  # teardown (qa-l3-teardown.sh compute) is unaffected. (#237)
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 # Odoo-side DB + DB user. These are managed via TF (instead of via the
@@ -220,6 +229,13 @@ resource "digitalocean_volume" "odoo_filestore" {
   initial_filesystem_label = "filestore"
   tags                     = local.tags
   description              = "Persistent Odoo filestore (/var/lib/odoo) for the Level 3 Odoo droplet. Survives droplet teardown so product photos are not lost on recreate (GOL-93)."
+
+  # Holds every product photo / ir.attachment binary for the live QA data
+  # (system of record since 2026-07-09), and until GOL-99 lands there is
+  # no volume backup — deletion is unrecoverable. (#237)
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "digitalocean_volume_attachment" "odoo_filestore" {

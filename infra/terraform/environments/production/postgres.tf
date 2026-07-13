@@ -32,6 +32,14 @@ resource "digitalocean_database_cluster" "pg" {
   region     = var.region
   node_count = var.pg_node_count
   tags       = concat(local.tags, ["role-postgres"])
+
+  # The production ERP database. Deleting the cluster also deletes its
+  # automated backups and PITR history with it, so `terraform destroy`
+  # must refuse until this guard is deliberately removed in a reviewed
+  # PR. (#237)
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 # Odoo-side DB + least-privilege DB user. Managed via TF (not the cluster's

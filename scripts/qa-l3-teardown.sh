@@ -16,6 +16,12 @@
 #              (IRREVERSIBLE data loss), the LE cert volume (next
 #              deploy re-issues against the LE rate limit budget), the
 #              qa DNS zone, and the Cloudflare NS delegation records.
+#              QA holds REAL order/inventory data (system of record
+#              since 2026-07-09), so the PG cluster and filestore
+#              volume carry `prevent_destroy` guards (#237): terraform
+#              will refuse `all` mode until those guards are removed
+#              in a reviewed PR. That refusal is the intended behavior,
+#              not a bug.
 #
 # Usage:
 #   bash scripts/qa-l3-teardown.sh compute
