@@ -1,0 +1,46 @@
+# Grove OTel Collector — app-plane postgresql receiver overlay (GOL-335).
+#
+# Merged AFTER otelcol-config.yaml via a second `--config` on the app-plane
+# collector (docker-compose.monitoring.app-plane.yml). Adds the `postgresql`
+# receiver — Managed PG USE metrics (postgresql_backends / postgresql_connection_max,
+# → the postgres-connections-{warning,critical} alerts) — and appends it to the
+# metrics pipeline.
+#
+# WHY a separate fragment (not the shared base config): the base
+# otelcol-config.yaml is also mounted by the obs-plane + local full-stack
+# collectors, which have NO Managed PG. An unset POSTGRES_* in the pipeline would
+# fail collector startup and take the USE/RED metrics down with it. Keeping the
+# receiver here means it is active ONLY where the app-plane overlay wires this
+# second --config in — i.e. ADR-007 QA/prod Odoo droplets, which always have a
+# Managed PG reachable on the private network.
+#
+# REQUIRES in .env.monitoring (guaranteed on ADR-007 app-plane hosts):
+#   POSTGRES_ENDPOINT         managed-pg private host:25060
+#   POSTGRES_MONITOR_USER     otel_monitor  (read-only; GRANT CONNECT on the DB)
+#   POSTGRES_MONITOR_PASSWORD (1Password: Grove Infra/pg_otel_monitor_password)
+#
+# The monitor user only needs LOGIN + CONNECT: postgresql_backends comes from the
+# public pg_stat_database view and postgresql_connection_max from pg_settings —
+# neither requires pg_monitor. (DO's doadmin cannot GRANT pg_monitor onward on
+# PG16+; not needed for these two metrics.)
+
+receivers:
+  postgresql:
+    endpoint: ${env:POSTGRES_ENDPOINT}
+    username: ${env:POSTGRES_MONITOR_USER}
+    password: ${env:POSTGRES_MONITOR_PASSWORD}
+    databases: [odoo]
+    collection_interval: 30s
+    tls:
+      # DO Managed PG requires SSL; skip CA verification (private-network host,
+      # DO-signed cert). Set insecure_skip_verify=false + supply ca_file to pin.
+      insecure_skip_verify: true
+
+service:
+  pipelines:
+    metrics:
+      # confmap merge REPLACES this list (arrays are not appended) — restate the
+      # base receivers (hostmetrics, docker_stats, otlp) plus postgresql. The
+      # processors/exporters keys are inherited from the base config's metrics
+      # pipeline (map-merge preserves keys not restated here).
+      receivers: [hostmetrics, docker_stats, otlp, postgresql]

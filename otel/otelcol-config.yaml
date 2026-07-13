@@ -65,24 +65,13 @@ receivers:
       container.memory.percent:
         enabled: true
 
-  # ── OPTIONAL: Postgres USE (connections, buffer hit ratio, ...) ─────────────
-  # OFF by default — kept OUT of the pipeline so an unset POSTGRES_* can't fail
-  # collector startup (which would take the USE + RED metrics down with it).
-  # TO ENABLE (unlocks the postgres-connections alerts):
-  #   1. Create a read-only monitoring user:  CREATE USER otel_monitor ...;
-  #      GRANT pg_monitor TO otel_monitor;   (Managed PG under ADR-007 → connect
-  #      as a client; point POSTGRES_ENDPOINT at the managed host)
-  #   2. Set POSTGRES_* in .env.monitoring (already passed to this container).
-  #   3. Uncomment the receiver below AND add `postgresql` to the metrics
-  #      pipeline `receivers:` list at the bottom.
-  # postgresql:
-  #   endpoint: ${env:POSTGRES_ENDPOINT}
-  #   username: ${env:POSTGRES_MONITOR_USER}
-  #   password: ${env:POSTGRES_MONITOR_PASSWORD}
-  #   databases: [grove]
-  #   collection_interval: 30s
-  #   tls:
-  #     insecure_skip_verify: true
+  # ── OPTIONAL: Postgres USE (connections) ───────────────────────────────────
+  # The `postgresql` receiver is defined in the app-plane overlay fragment
+  # otelcol-config.postgres.yaml, NOT here — it is merged via a second --config
+  # ONLY on ADR-007 app-plane collectors (which have a Managed PG). Keeping it
+  # out of this shared base means an unset POSTGRES_* can never fail the
+  # obs-plane / local full-stack collectors' startup. See otel/README.md +
+  # docker-compose.monitoring.app-plane.yml (GOL-335).
 
 processors:
   batch:

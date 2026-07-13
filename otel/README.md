@@ -44,19 +44,39 @@ Managed Postgres has no kernel access; its stats come from the `postgresql`
 receiver). Needs a Linux host + compatible kernel; if it can't attach it logs
 and produces no metrics (never crashes the stack).
 
-## Enabling the `postgresql` receiver (opt-in)
+## The `postgresql` receiver (app-plane — GOL-335, LIVE on QA)
 
-The receiver is **defined-but-commented** and kept out of the pipeline on purpose
-— an unset `POSTGRES_*` would fail collector startup and take the USE/RED metrics
-down with it. The `postgres-connections-{warning,critical}` alerts + `POSTGRES_*`
-env are already staged. To turn it on:
+The receiver lives in the **app-plane overlay fragment**
+`otel/otelcol-config.postgres.yaml`, merged via a second `--config` on the
+app-plane collector (`docker-compose.monitoring.app-plane.yml`). It is kept out
+of the shared base `otelcol-config.yaml` on purpose — the obs-plane + local
+full-stack collectors have no Managed PG, and an unset `POSTGRES_*` in their
+pipeline would fail startup and take the USE/RED metrics down with it. On ADR-007
+app-plane hosts a Managed PG is always reachable, so the fragment is safe there.
 
-1. `CREATE USER otel_monitor PASSWORD '…'; GRANT pg_monitor TO otel_monitor;`
-   (Managed PG under ADR-007 → point `POSTGRES_ENDPOINT` at the managed host.)
-2. Set `POSTGRES_ENDPOINT` / `POSTGRES_MONITOR_USER` / `POSTGRES_MONITOR_PASSWORD`
-   in `.env.monitoring` (already passed to the container).
-3. Uncomment the `postgresql` receiver in `otelcol-config.yaml` **and** add
-   `postgresql` to the metrics pipeline `receivers:` list.
+Enabled on `grove-qa-l3-odoo` as follows (repeat for prod):
+
+1. Create a read-only monitoring user on the Managed PG (connect from the Odoo
+   droplet — it is a trusted source on the cluster firewall):
+   ```sql
+   CREATE ROLE otel_monitor LOGIN PASSWORD '…';
+   GRANT CONNECT ON DATABASE odoo TO otel_monitor;
+   ```
+   `pg_monitor` is **not** required for the two connection metrics
+   (`postgresql_backends` ← public `pg_stat_database`, `postgresql_connection_max`
+   ← `pg_settings`) — and DO's `doadmin` cannot grant `pg_monitor` onward on
+   PG16+ anyway. Grant it only if you later add restricted receiver metrics.
+2. Set `POSTGRES_ENDPOINT` (managed host **:25060**) / `POSTGRES_MONITOR_USER` /
+   `POSTGRES_MONITOR_PASSWORD` in `.env.monitoring`. Creds are in 1Password:
+   `Grove Infra/pg_otel_monitor_{user,password}` + `pg_qa_l3_private_host`.
+3. Redeploy the app-plane overlay (it already wires the second `--config` +
+   mounts the fragment). Then re-run `setup-monitoring.py` to load the
+   `postgres-connections-{warning,critical}` alerts.
+
+> **max_connections note:** OpenObserve column conditions can't divide two metric
+> streams, so the two alerts threshold on the raw backend count vs a literal
+> (dev-tier `max_connections=25` → warn `>17`, crit `>22`). If the Managed PG is
+> resized, update those numbers to `0.70 / 0.90 × new max`.
 
 ## Not yet (documented follow-ups)
 
