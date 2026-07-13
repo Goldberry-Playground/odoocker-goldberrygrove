@@ -1,0 +1,118 @@
+# Bounded mechanical self-heal for agent PRs (GOL-308, from approved GOL-303).
+#
+# Applies the two auto-fixable checks this repo's CI enforces, and pushes ONE
+# fix commit:
+#   - Python (odoo/custom-addons/): ruff --fix + ruff format
+#       mirrors the "Lint Python (Odoo Modules)" job.
+#   - Terraform (infra/terraform/): terraform fmt -recursive
+#       mirrors the "Terraform fmt + validate" job's fmt -check gate.
+# Non-mechanical failures leave no diff and stay red for the CI failure router
+# to escalate. See grove-sites ci-autofix.yml for the full rationale and the
+# GITHUB_TOKEN re-trigger limitation (identical here).
+#
+# Guardrails: agent-authored PRs only; one autofix commit per push (skips if the
+# head commit is already a "[ci-autofix]" commit); no-op on a clean diff.
+name: CI autofix
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: ci-autofix-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  autofix:
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.pull_requests[0] != null
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Gate (agent PR + loop guard)
+        id: gate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.workflow_run.pull_requests[0].number }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          AUTHOR=$(gh pr view "$PR" --repo "$REPO" --json author -q '.author.login')
+          case "$AUTHOR" in
+            app/agenticos-developer|agenticos-developer) ;;
+            *)
+              echo "PR #$PR author '$AUTHOR' is not the agent App bot; skipping."
+              echo "proceed=false" >> "$GITHUB_OUTPUT"; exit 0 ;;
+          esac
+          HEAD_MSG=$(gh api "repos/$REPO/commits/$HEAD_SHA" -q '.commit.message' | head -1)
+          if printf '%s' "$HEAD_MSG" | grep -q '\[ci-autofix\]'; then
+            echo "Head commit is already a [ci-autofix] commit; skipping to prevent loops."
+            echo "proceed=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          HEAD_REF=$(gh pr view "$PR" --repo "$REPO" --json headRefName -q '.headRefName')
+          echo "proceed=true" >> "$GITHUB_OUTPUT"
+          echo "head_ref=$HEAD_REF" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout PR branch
+        if: steps.gate.outputs.proceed == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.gate.outputs.head_ref }}
+
+      - name: Setup Python
+        if: steps.gate.outputs.proceed == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup Terraform
+        if: steps.gate.outputs.proceed == 'true'
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Apply mechanical fixes (ruff + terraform fmt)
+        if: steps.gate.outputs.proceed == 'true'
+        run: |
+          # Python — only if custom-addons actually has .py files (matches CI's guard).
+          if find odoo/custom-addons/ -name "*.py" 2>/dev/null | grep -q .; then
+            pip install ruff
+            ruff check odoo/custom-addons/ --select E,F,I --line-length 120 --fix || true
+            ruff format odoo/custom-addons/ --line-length 120 || true
+          else
+            echo "No Python files in custom-addons/, skipping ruff."
+          fi
+          # Terraform fmt (recursive) over the tree CI fmt-checks.
+          if [ -d infra/terraform/ ]; then
+            terraform fmt -recursive infra/terraform/ || true
+          else
+            echo "No infra/terraform/, skipping terraform fmt."
+          fi
+
+      - name: Commit & push one fix commit (or skip if clean)
+        if: steps.gate.outputs.proceed == 'true'
+        env:
+          HEAD_REF: ${{ steps.gate.outputs.head_ref }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No mechanical fixes to apply — non-mechanical failure, leaving for the CI failure router (E1)."
+            exit 0
+          fi
+          git commit \
+            -m "chore(ci): apply mechanical ruff + terraform fmt fixes [ci-autofix]" \
+            -m "Automated bounded self-heal for an agent PR that failed CI on a mechanical check. One commit per push (GOL-308)." \
+            -m "Co-authored-by: Paperclip <noreply@paperclip.ing>"
+          git push origin "HEAD:$HEAD_REF"
+          echo "::notice::Pushed one [ci-autofix] commit to $HEAD_REF. NOTE: GITHUB_TOKEN pushes do not re-trigger pull_request checks — the next agent push or a maintainer 'Re-run' will re-validate."
