@@ -53,7 +53,26 @@ from urllib import request
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
-MONITORS_PATH = REPO_ROOT / "openobserve" / "monitors.json"
+
+
+def _resolve_monitors_path() -> Path:
+    """Locate openobserve/monitors.json across layouts.
+
+    In the repo it's at REPO_ROOT/openobserve/monitors.json. In the synthetic
+    container the Docker build context is only ./synthetic, so openobserve/ isn't
+    present — the deploy makes monitors.json available beside this script (bind
+    mount or a baked copy) at /app/monitors.json. SYNTHETIC_MONITORS_PATH wins.
+    """
+    env = os.environ.get("SYNTHETIC_MONITORS_PATH")
+    if env:
+        return Path(env)
+    for cand in (REPO_ROOT / "openobserve" / "monitors.json", SCRIPT_DIR / "monitors.json", Path("/app/monitors.json")):
+        if cand.exists():
+            return cand
+    return REPO_ROOT / "openobserve" / "monitors.json"  # repo default (clear error if truly absent)
+
+
+MONITORS_PATH = _resolve_monitors_path()
 
 DEFAULT_HTTP_TIMEOUT_S = 10
 DEFAULT_TCP_TIMEOUT_S = 5

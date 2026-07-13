@@ -132,10 +132,22 @@ services:
     restart: unless-stopped
     depends_on:
       - openobserve
+    # monitors.json lives in openobserve/ (shared with setup-monitoring.py) but the
+    # synthetic build context is ./synthetic, so probes.py can't bundle it. Mount it
+    # at /app/monitors.json (probes.py resolves SCRIPT_DIR/monitors.json) so the
+    # synthetic_uptime / synthetic_ssl_days probes have their target list (GOL-280).
+    volumes:
+      - ./openobserve/monitors.json:/app/monitors.json:ro
     environment:
       SYNTHETIC_ODOO_BASE: ${SYNTHETIC_ODOO_BASE:-http://odoo:8069}
       SYNTHETIC_TENANTS: ${SYNTHETIC_TENANTS:-goldberry,ggg,nursery}
       SYNTHETIC_ENV: ${SYNTHETIC_ENV:-local}
+      # Availability + SSL probes (synthetic_uptime / synthetic_ssl_days). ON by
+      # default; the targets in openobserve/monitors.json use local-dev topology
+      # (host.docker.internal, service names) — in qa/prod set per-target
+      # SYNTHETIC_MONITOR_URL_<NAME> / _HOST_<NAME> overrides (see .env.monitoring)
+      # so they resolve, else they emit false-down. (GOL-280)
+      SYNTHETIC_UPTIME_ENABLED: ${SYNTHETIC_UPTIME_ENABLED:-true}
       OPENOBSERVE_OTLP_METRICS_URL: ${OPENOBSERVE_OTLP_METRICS_URL:-http://openobserve:5080/api/default/v1/metrics}
       OPENOBSERVE_ROOT_EMAIL: ${OPENOBSERVE_ROOT_EMAIL}
       OPENOBSERVE_ROOT_PASSWORD: ${OPENOBSERVE_ROOT_PASSWORD}
