@@ -102,22 +102,32 @@ write_files:
 
       rm -f /tmp/snap.sql.zst /tmp/filestore.tar.zst
 
+      echo "[restore] starting odoo (needed to mint the storefront API key)"
+      # Bring odoo up FIRST, then mint via `docker compose exec` on the
+      # running service. We can NOT mint with `docker compose run ... odoo
+      # shell`: entrypoint.sh's APP_ENV=preview branch `exec`s the Odoo
+      # HTTP server and IGNORES the `shell` subcommand, so the one-off
+      # container never runs mint_key.py, never prints APIKEY, and hangs
+      # forever serving /web/health (a server, not a shell). `exec` on the
+      # already-running server spawns a SECOND process that honours `shell`
+      # and reads mint_key.py from stdin. Proven live on the PR #108
+      # acceptance droplet (GOL-6/GOL-344, 2026-07-13): the `run` form hung
+      # indefinitely; an in-container `exec` minted a key first try.
+      docker compose --env-file /etc/grove/.env up -d --wait odoo
+
       echo "[restore] minting storefront Odoo API key"
       # The storefronts (goldberry/ggg/nursery) fail closed at runtime if
       # ODOO_API_KEY is missing (tenant.secrets.ts requireEnv). Mint a single
       # global-scope (NULL) key against the restored DB and inject it into .env
-      # before the stack comes up. grove_headless resolves the tenant from the
-      # X-Grove-Tenant header, so one key serves all three. A one-off `run`
-      # container reuses the odoo entrypoint (odoo.conf from DB_* env) and needs
-      # only postgres, which is already healthy above. (GOL-344 Task 2)
+      # before the frontends come up. grove_headless resolves the tenant from
+      # the X-Grove-Tenant header, so one key serves all three. (GOL-344 Task 2)
       KEY=""
       for attempt in 1 2 3; do
         # `|| true`: this script runs under `set -euo pipefail`, so a failed
-        # mint (compose run nonzero -> pipefail) would otherwise abort the
-        # WHOLE restore here - skipping the retry loop, the WARN fallback,
-        # and `docker compose up`, leaving only postgres running. Proven
-        # live on the PR #108 acceptance droplet (GOL-6, 2026-07-13).
-        KEY=$(docker compose --env-file /etc/grove/.env run --rm --no-deps -T odoo \
+        # mint (nonzero -> pipefail) would otherwise abort the WHOLE restore
+        # here - skipping the retry loop, the WARN fallback, and the frontend
+        # `docker compose up`, leaving the storefronts down.
+        KEY=$(docker compose --env-file /etc/grove/.env exec -T odoo \
                 odoo shell -d grove_preview --no-http --logfile=/dev/null \
                 < /opt/grove/mint_key.py 2>>/var/log/grove-mint.log \
               | sed -n 's/^APIKEY://p' | head -n1) || true
