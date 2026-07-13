@@ -35,19 +35,28 @@ services:
   otel-collector:
     image: otel/opentelemetry-collector-contrib:${OTELCOL_TAG:-latest}
     restart: unless-stopped
-    command: ["--config=/etc/otelcol/config.yaml"]
+    # Second --config merges the postgresql receiver into the metrics pipeline
+    # (GOL-335). App-plane hosts always have a Managed PG (ADR-007), so the
+    # POSTGRES_* below MUST be set in .env.monitoring or the collector won't
+    # start. See otel/otelcol-config.postgres.yaml.
+    command:
+      - "--config=/etc/otelcol/config.yaml"
+      - "--config=/etc/otelcol/config.postgres.yaml"
     environment:
       OPENOBSERVE_OTLP_BASE: ${OPENOBSERVE_OTLP_BASE}
       OPENOBSERVE_ROOT_EMAIL: ${OPENOBSERVE_ROOT_EMAIL}
       OPENOBSERVE_ROOT_PASSWORD: ${OPENOBSERVE_ROOT_PASSWORD}
       COST_ENV: ${COST_ENV:-qa}
-      POSTGRES_ENDPOINT: ""
-      POSTGRES_MONITOR_USER: ""
-      POSTGRES_MONITOR_PASSWORD: ""
+      # Managed PG USE metrics (postgres-connections alerts). Read-only
+      # otel_monitor user; creds in 1Password (Grove Infra/pg_otel_monitor_*).
+      POSTGRES_ENDPOINT: ${POSTGRES_ENDPOINT}
+      POSTGRES_MONITOR_USER: ${POSTGRES_MONITOR_USER}
+      POSTGRES_MONITOR_PASSWORD: ${POSTGRES_MONITOR_PASSWORD}
     group_add:
       - "988"
     volumes:
       - /etc/grove/otel/otelcol-config.yaml:/etc/otelcol/config.yaml:ro
+      - /etc/grove/otel/otelcol-config.postgres.yaml:/etc/otelcol/config.postgres.yaml:ro
       - /:/hostfs:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:

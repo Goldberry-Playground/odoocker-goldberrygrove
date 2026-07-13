@@ -1734,7 +1734,7 @@
             {
               "column": "value",
               "operator": ">",
-              "value": "0.70",
+              "value": "17",
               "ignore_case": false
             }
           ]
@@ -1766,7 +1766,7 @@
         "tenant": "shared"
       },
       "row_template": "",
-      "description": "USE — Postgres connections >70% of max. Check for idle-in-transaction queries; likely an Odoo worker leak. Runbook: docs/RUNBOOKS.md#postgres-connections  [intent: postgresql_backends / postgresql_connection_max > 0.70]  [note: USE metric from the OTel Collector `postgresql` receiver — OFF until a read-only pg_monitor user + POSTGRES_* env are set and the receiver is added to the metrics pipeline (see otel/README.md). Stream/field names pending live validation.]",
+      "description": "USE — Postgres connections >70% of max (>17 of 25). Check for idle-in-transaction queries; likely an Odoo worker leak. Runbook: docs/RUNBOOKS.md#postgres-connections  [intent: postgresql_backends > 0.70 * max_connections; the threshold is the raw backend count because OpenObserve column conditions cannot divide two metric streams. max_connections=25 on the dev-tier Managed PG (GOL-335) — if the cluster is resized, update 17/22 to 0.70/0.90 * new max.]  [note: USE metric from the OTel Collector `postgresql` receiver on db=odoo — LIVE on grove-qa-l3-odoo (GOL-335).]",
       "enabled": true,
       "tz_offset": 0
     },
@@ -1782,7 +1782,7 @@
             {
               "column": "value",
               "operator": ">",
-              "value": "0.90",
+              "value": "22",
               "ignore_case": false
             }
           ]
@@ -1814,7 +1814,7 @@
         "tenant": "shared"
       },
       "row_template": "",
-      "description": "USE — Postgres connections >90% of max — new connections will be refused. Restart Odoo to clear leaked connections. Runbook: docs/RUNBOOKS.md#postgres-connections  [intent: postgresql_backends / postgresql_connection_max > 0.90]",
+      "description": "USE — Postgres connections >90% of max (>22 of 25) — new connections will be refused. Restart Odoo to clear leaked connections. Runbook: docs/RUNBOOKS.md#postgres-connections  [intent: postgresql_backends > 0.90 * max_connections; raw-count threshold, max_connections=25 dev-tier Managed PG (GOL-335) — resize → update 17/22.]",
       "enabled": true,
       "tz_offset": 0
     },
