@@ -44,4 +44,12 @@ RUN xcaddy build \
     --with github.com/caddy-dns/digitalocean@v0.0.0-20250606074528-04bde2867106
 
 FROM caddy:2
+# CI-unblock (incidental to GOL-345, unrelated to the cert logic): the floating
+# caddy:2 Alpine base currently ships c-ares 1.34.6-r0, which the Trivy gate
+# (docker-caddy.yml, ignore-unfixed=true) flags as HIGH CVE-2026-33630 -- fixed
+# upstream in 1.34.8-r0. A fixable HIGH blocks the build, so ANY grove-caddy
+# rebuild fails here until the caddy base catches up. Pull the patched OS
+# package explicitly (`apk upgrade`, not `apk add`, so no exact-pin churn) --
+# the caddy binary itself scans clean (0 gobinary vulns).
+RUN apk upgrade --no-cache c-ares
 COPY --from=builder /usr/bin/caddy /usr/bin/caddy
