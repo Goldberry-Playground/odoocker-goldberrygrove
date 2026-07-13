@@ -26,6 +26,22 @@ write_files:
       GHOST_KEY_GGG=${ghost_content_keys["ggg"]}
       GHOST_KEY_NURSERY=${ghost_content_keys["nursery"]}
 
+      # Consumed by odoorc.sh inside the odoo container (via the /.env
+      # bind-mount in docker-compose.preview.yml) to render odoo.conf.
+      # Without these the conf keeps literal $${DB_PORT} placeholders and
+      # Odoo crash-loops. Mirrors qa-app-platform's /etc/grove/.env keys.
+      DB_HOST=postgres
+      DB_PORT=5432
+      DB_NAME=grove_preview
+      DB_USER=odoo
+      DB_PASSWORD=__POSTGRES_PASSWORD__
+      ODOO_ADMIN_PASSWORD=__ODOO_ADMIN_PASSWORD__
+      # Only list dirs that EXIST in the image/mounts - Odoo refuses to
+      # start on a nonexistent addons dir (2026-07-05 incident). No
+      # git-sync sidecar in the preview stack yet, so /workspace/current
+      # is the empty dir entrypoint.sh mkdirs.
+      ADDONS_PATH=/usr/lib/python3/dist-packages/odoo/addons,/workspace/current
+
   - path: /etc/grove/Caddyfile
     content: |
       ${indent(6, replace(replace(caddyfile_tpl, "$${PREVIEW_HOST}", preview_host), "$${PREVIEW_ZONE}", "preview.gatheringatthegrove.com"))}
@@ -99,8 +115,11 @@ runcmd:
 
   # Generate the POSTGRES_PASSWORD now that openssl is available, and substitute
   # the placeholder in /etc/grove/.env (write_files runs before runcmd, so we
-  # couldn't inline it earlier).
+  # couldn't inline it earlier). Two lines carry the placeholder
+  # (POSTGRES_PASSWORD for the postgres container, DB_PASSWORD for
+  # odoorc.sh) - sed replaces once per line, covering both.
   - PGPW=$(openssl rand -hex 24) && sed -i "s|__POSTGRES_PASSWORD__|$PGPW|" /etc/grove/.env
+  - OAPW=$(openssl rand -hex 16) && sed -i "s|__ODOO_ADMIN_PASSWORD__|$OAPW|" /etc/grove/.env
 
   # AWS CLI v2 via the official installer -- Ubuntu 24.04 (noble) dropped the
   # apt `awscli` package, so restore.sh's `aws s3 cp` needs this. Installs to
