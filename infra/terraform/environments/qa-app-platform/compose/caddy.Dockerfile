@@ -18,9 +18,30 @@
 # `:latest`/`:builder` (which IS effectively :latest). caddy:2-builder +
 # caddy:2 give us reproducible behavior across rebuilds. Bumping to Caddy 3
 # becomes an intentional decision (edit this Dockerfile + verify upstream
-# plugin compatibility).
+# plugin compatibility). caddy:2-builder floats to the latest Caddy 2.x, which
+# is >= 2.10 -- required by the pinned plugin below (libdns v1.0.0 interface).
 FROM caddy:2-builder AS builder
-RUN xcaddy build --with github.com/caddy-dns/digitalocean
+# GOL-345: pin caddy-dns/digitalocean to a commit PAST the libdns cleanup fix.
+#
+# The plugin was previously UNPINNED (`--with .../digitalocean`). Two problems:
+#   1. Reproducibility: `@latest` drifts; a cached `RUN xcaddy build` layer can
+#      freeze an OLD resolution. This shared image (QA + prod + preview) was
+#      last built from a layer predating the 2025-06-06 upstream fix, so every
+#      fresh preview droplet inherited the buggy plugin.
+#   2. Correctness: the pre-2025-06 libdns/digitalocean failed to DELETE the
+#      temporary _acme-challenge TXT after DNS-01 (strconv.Atoi on an empty
+#      record ID -> "invalid syntax"; libdns/digitalocean#4 class). The stale
+#      TXT tripped Let's Encrypt secondary validation, prod issuance failed,
+#      and the Caddyfile multi-issuer fallback landed on LE *staging* (browser
+#      "not trusted" warning). It recurred on every preview boot.
+#
+# Commit 04bde2867106 (2025-06-06) is caddy-dns/digitalocean master AND its
+# current `@latest`; its go.mod requires the refactored libdns/digitalocean
+# (dfa7af5, which preserves the record ID so cleanup no longer Atoi's "") and
+# caddy v2.10.0 + libdns/libdns v1.0.0. Pinning here also cache-busts the stale
+# xcaddy layer, forcing a fresh module resolution to the fixed code.
+RUN xcaddy build \
+    --with github.com/caddy-dns/digitalocean@v0.0.0-20250606074528-04bde2867106
 
 FROM caddy:2
 COPY --from=builder /usr/bin/caddy /usr/bin/caddy
