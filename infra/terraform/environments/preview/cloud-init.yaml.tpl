@@ -17,8 +17,14 @@ packages:
   - unzip
 
 write_files:
+  # 0644 not 0600: the file is bind-mounted read-only into the odoo
+  # container (/.env) where odoorc.sh reads it as the non-root `odoo`
+  # user - 0600 root:root is unreadable there and boots die on
+  # "/odoorc.sh: line 62: .env: Permission denied". Same permission
+  # qa-app-platform uses for its /etc/grove/.env. Proven live on the
+  # PR #108 acceptance droplet (GOL-6, 2026-07-13).
   - path: /etc/grove/.env
-    permissions: "0600"
+    permissions: "0644"
     content: |
       POSTGRES_PASSWORD=__POSTGRES_PASSWORD__
       DO_API_TOKEN=${do_token_for_caddy}
@@ -106,10 +112,15 @@ write_files:
       # only postgres, which is already healthy above. (GOL-344 Task 2)
       KEY=""
       for attempt in 1 2 3; do
+        # `|| true`: this script runs under `set -euo pipefail`, so a failed
+        # mint (compose run nonzero -> pipefail) would otherwise abort the
+        # WHOLE restore here - skipping the retry loop, the WARN fallback,
+        # and `docker compose up`, leaving only postgres running. Proven
+        # live on the PR #108 acceptance droplet (GOL-6, 2026-07-13).
         KEY=$(docker compose --env-file /etc/grove/.env run --rm --no-deps -T odoo \
                 odoo shell -d grove_preview --no-http --logfile=/dev/null \
                 < /opt/grove/mint_key.py 2>>/var/log/grove-mint.log \
-              | sed -n 's/^APIKEY://p' | head -n1)
+              | sed -n 's/^APIKEY://p' | head -n1) || true
         [ -n "$KEY" ] && break
         echo "[restore] mint attempt $attempt failed; retrying in 10s"
         sleep 10
