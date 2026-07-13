@@ -89,6 +89,22 @@ services:
       # production/compose/docker-compose.odoo.yml:68. Proven live on the
       # PR #106 acceptance droplet (GOL-6, 2026-07-13).
       - /etc/grove/.env:/.env:ro
+    # Odoo boots slowly against a freshly-restored snapshot (registry load +
+    # asset regeneration) -- the acceptance run saw a 502 at the per-PR odoo URL
+    # while the frontends had already started and were hammering a not-yet-ready
+    # backend (GOL-344 Task 3). /web/health returns 200 only once the HTTP
+    # workers can serve; gating the frontends on service_healthy (below) means
+    # they don't start -- and Caddy doesn't route to them -- until Odoo answers.
+    # curl isn't in the odoo image, so probe with the always-present python3.
+    # start_period covers the slow first boot without counting early failures.
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "python3 -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8069/web/health', timeout=5).status==200 else 1)\""
+      interval: 10s
+      timeout: 8s
+      retries: 30
+      start_period: 90s
     depends_on:
       postgres:
         condition: service_healthy
@@ -103,7 +119,7 @@ services:
       HUB_GHOST_CONTENT_API_KEY: ${GHOST_KEY_GOLDBERRY}
     depends_on:
       odoo:
-        condition: service_started
+        condition: service_healthy
 
   goldberry:
     image: ghcr.io/goldberry-playground/grove-goldberry:{{GOLDBERRY_TAG}}
@@ -113,11 +129,17 @@ services:
       TENANT_ID: goldberry
       NEXT_PUBLIC_TENANT_ID: goldberry
       ODOO_URL: http://odoo:8069
+      # Storefronts fail closed at runtime if ODOO_API_KEY is missing
+      # (apps/*/tenant.secrets.ts requireEnv -> throws under NODE_ENV=production).
+      # Minted post-restore inside the droplet and written to /etc/grove/.env
+      # (GOL-344 Task 2). One global-scope key serves all tenants -- grove_headless
+      # resolves the company from the X-Grove-Tenant header, not the key.
+      ODOO_API_KEY: ${ODOO_API_KEY}
       GHOST_URL: https://blog.goldberrygrove.farm
       GHOST_CONTENT_KEY: ${GHOST_KEY_GOLDBERRY}
     depends_on:
       odoo:
-        condition: service_started
+        condition: service_healthy
 
   ggg:
     image: ghcr.io/goldberry-playground/grove-ggg:{{GGG_TAG}}
@@ -127,11 +149,12 @@ services:
       TENANT_ID: ggg
       NEXT_PUBLIC_TENANT_ID: ggg
       ODOO_URL: http://odoo:8069
+      ODOO_API_KEY: ${ODOO_API_KEY}
       GHOST_URL: https://blog.woodworkingeorge.com
       GHOST_CONTENT_KEY: ${GHOST_KEY_GGG}
     depends_on:
       odoo:
-        condition: service_started
+        condition: service_healthy
 
   nursery:
     image: ghcr.io/goldberry-playground/grove-nursery:{{NURSERY_TAG}}
@@ -141,11 +164,12 @@ services:
       TENANT_ID: nursery
       NEXT_PUBLIC_TENANT_ID: nursery
       ODOO_URL: http://odoo:8069
+      ODOO_API_KEY: ${ODOO_API_KEY}
       GHOST_URL: https://blog.atthegrovenursery.com
       GHOST_CONTENT_KEY: ${GHOST_KEY_NURSERY}
     depends_on:
       odoo:
-        condition: service_started
+        condition: service_healthy
 
 volumes:
   pg_data:
