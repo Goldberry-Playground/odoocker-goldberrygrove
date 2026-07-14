@@ -60,6 +60,22 @@ jobs:
           scandir: ./scripts
           severity: warning
 
+  cloud-init-ascii:
+    name: cloud-init ASCII guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Verify cloud-init inputs are pure ASCII
+        # A single non-ASCII byte (em-dash, smart quote, ellipsis, box-drawing)
+        # in rendered user_data crashes cloud-init at YAML parse time: the
+        # droplet boots on DO's default config, cloud-init SKIPS the whole
+        # user_data (no docker, no compose up), and QA/prod come up dead.
+        # This guard existed but ran nowhere until GOL-93 QA apply (2026-07-13)
+        # was bitten by a U+2026 ellipsis on cloud-init.yaml.tpl:131.
+        run: bash scripts/check-cloud-init-ascii.sh
+
   no-tracked-env-files:
     name: Reject tracked .env files
     runs-on: ubuntu-latest
