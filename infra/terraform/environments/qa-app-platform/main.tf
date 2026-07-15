@@ -297,6 +297,34 @@ resource "digitalocean_droplet" "odoo" {
   }
 }
 
+# ── Reserved IP (GOL-388) ───────────────────────────────────────────────────
+# QA mirrors the prod pattern (production/odoo.tf, GOL-382) for one reason:
+# the droplet-replace rehearsal that ADR-007's soak sign-off requires
+# ("durable filestore + droplet-replace test validated") has to run HERE,
+# before prod exists. Without a reserved IP the records below track the
+# droplet's ephemeral address, every replace rewrites DNS, and the rehearsal
+# measures a propagation gamble instead of the boot window we mean to commit
+# to. It would not be the same exercise prod will run.
+#
+# Split into IP + assignment (rather than the inline `droplet_id` argument)
+# so the address outlives the droplet — that separation IS the mechanism
+# under test.
+#
+# Deliberate divergence from prod: NO prevent_destroy here. Prod guards the
+# IP because DNS is pinned to it and DO never re-issues a released address.
+# QA is torn down on purpose after cutover (ADR-007 D4), so the same guard
+# would just wedge `terraform destroy` behind a manual state surgery step.
+
+resource "digitalocean_reserved_ip" "odoo" {
+  region = var.region
+}
+
+# Re-pointed, not recreated, when digitalocean_droplet.odoo is replaced.
+resource "digitalocean_reserved_ip_assignment" "odoo" {
+  ip_address = digitalocean_reserved_ip.odoo.ip_address
+  droplet_id = digitalocean_droplet.odoo.id
+}
+
 # ── DNS records inside the delegated qa-l3 zone ─────────────────────────────
 #
 # PHASE 1 SCOPE: only the Odoo hostname (odoo.qa-l3.<apex>) and the apex
@@ -306,24 +334,24 @@ resource "digitalocean_droplet" "odoo" {
 # they need App Platform's default URL as their CNAME target, which
 # doesn't exist yet.
 
-# Apex of the delegated zone — placeholder pointing at Odoo droplet. In
-# Phase 2 this becomes a CNAME to the hub App Platform's default URL.
+# Apex of the delegated zone — placeholder pointing at Odoo. In Phase 2 this
+# becomes a CNAME to the hub App Platform's default URL.
 resource "digitalocean_record" "qa_apex" {
   domain = digitalocean_domain.qa.name
   type   = "A"
   name   = "@"
-  value  = digitalocean_droplet.odoo.ipv4_address
+  value  = digitalocean_reserved_ip.odoo.ip_address
   ttl    = 300
 }
 
-# Odoo hostname — odoo.qa-l3.gatheringatthegrove.com → Odoo droplet.
+# Odoo hostname — odoo.qa-l3.gatheringatthegrove.com → Odoo.
 # This URL is the canonical entrypoint for Odoo's web UI + the headless
 # API endpoint consumed by App Platform frontends (cross-environment).
 resource "digitalocean_record" "odoo" {
   domain = digitalocean_domain.qa.name
   type   = "A"
   name   = "odoo"
-  value  = digitalocean_droplet.odoo.ipv4_address
+  value  = digitalocean_reserved_ip.odoo.ip_address
   ttl    = 300
 }
 

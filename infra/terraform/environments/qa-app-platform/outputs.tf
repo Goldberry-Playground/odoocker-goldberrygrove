@@ -1,6 +1,11 @@
 output "odoo_droplet_ip" {
-  description = "Public IPv4 of the Odoo droplet. Tag-discoverable as env-qa-l3."
+  description = "Ephemeral public IPv4 of the Odoo droplet itself. CHANGES ON EVERY DROPLET REPLACE - do not pin anything to it. DNS points at odoo_reserved_ip; use this only for direct droplet SSH/debug."
   value       = digitalocean_droplet.odoo.ipv4_address
+}
+
+output "odoo_reserved_ip" {
+  description = "Stable address the qa-l3 A records point at. Survives a droplet replace - this is the value the GOL-388 rehearsal asserts does not move."
+  value       = digitalocean_reserved_ip.odoo.ip_address
 }
 
 output "odoo_hostname" {

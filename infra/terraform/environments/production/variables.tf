@@ -45,6 +45,12 @@ variable "healthchecks_ping_url" {
   }
 }
 
+variable "odoo_backup_healthchecks_ping_url" {
+  description = "Healthchecks.io ping URL for the nightly Odoo FILESTORE backup dead-man's switch (GOL-99). Deliberately a SEPARATE check from var.healthchecks_ping_url: one check per job, else a green blogs ping masks a dead Odoo backup. The script pings only on success, so a silent failure trips the check. Empty string disables pings - acceptable for `plan`, but an unmonitored backup is not a backup: populate this before the prod apply (GOL-382)."
+  type        = string
+  default     = ""
+}
+
 variable "region" {
   description = "DO region for all production resources."
   type        = string

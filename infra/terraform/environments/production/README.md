@@ -69,10 +69,34 @@ hashed `user_data`.
 
 - Blogs droplet (4x Ghost 6 + MySQL 8 + Caddy) - see blogs.tf
 - blog.{zone} DNS records in all four Cloudflare brand zones
+- **Reserved IP** for the blogs droplet (GOL-387) - the blog.* records point HERE,
+  not at the droplet's ephemeral address, so a replace needs no DNS change. Same
+  prerequisite #242's day-2 model assumed, on the one droplet that is already live.
 - Cloudflare Origin CA certs (15y, per zone) for proxied TLS
 - grove-blogs-backups Spaces bucket + lifecycle
 - Apex A records for gatheringatthegrove.com + goldberrygrove.farm
   (imported from Cloudflare during migration; see apex-records.tf) (file arrives with the Task 6 migration)
+  **When they land, point them at `digitalocean_reserved_ip.blogs`, not at the droplet.**
+
+### ⚠ The blogs droplet has a PENDING REPLACE - do not run a bare `terraform apply`
+
+A plan against real prod state shows `digitalocean_droplet.blogs must be replaced`, on a
+droplet that is **live and serving all four brand blogs**. Two ForceNew attributes drive
+it (`replace_paths: [["monitoring"], ["user_data"]]`):
+
+- `user_data` drifted from what was applied. The droplet was created 2026-07-07; this env
+  first landed in git 2026-07-12 (#207), so the live box was applied from a working tree
+  that was never committed as-is. State stores `user_data` as a SHA1, so what is actually
+  on the box **cannot be recovered from Terraform**.
+- `monitoring` `false -> true` from GOL-381 (#256). Its four droplet resource alerts
+  (cpu/memory/disk/load5) were applied but the flag was not, so the `do-agent` is absent
+  and those alerts have no metric source - they report green forever. The uptime/ssl
+  alerts are external probes and are unaffected, so a hard outage still pages; what is
+  invisible is the slow burn (disk/memory/load). The replace is what makes that half real.
+
+A bare apply here rebuilds the live blogs and rewrites their DNS as a side effect of
+whatever else you were applying. Do the reserved IP first, then take the replace in a
+chosen window: [`docs/RUNBOOK-blogs-reserved-ip-cutover.md`](../../../../docs/RUNBOOK-blogs-reserved-ip-cutover.md).
 
 ## What lives here (Track 2 - GOL-105, apply gated)
 
@@ -80,8 +104,27 @@ hashed `user_data`.
   PITR, private VPC) + Odoo DB/user - see postgres.tf
 - Odoo droplet (s-2vcpu-4gb) + Caddy (Origin CA cert files) + durable filestore
   block volume (GOL-93) + Managed PG trusted-sources firewall - see odoo.tf
+- **Reserved IP** for the Odoo droplet (GOL-382) - the A record points HERE, not
+  at the droplet's ephemeral address, so an immutable droplet replace needs no
+  DNS change. This is the prerequisite #242's day-2 model assumed.
 - odoo.gatheringatthegrove.com Cloudflare-proxied A record (the record GOL-93's
   /web/image edge-cache rule was waiting on)
+- **Nightly filestore backup** (GOL-99): `grove-odoo-backups` Spaces bucket +
+  bucket-scoped key; rclone mirror at 03:00 UTC with a Healthchecks dead-man's
+  switch. Restore procedure + rehearsal:
+  [`docs/RUNBOOK-odoo-filestore-restore.md`](../../../../docs/RUNBOOK-odoo-filestore-restore.md)
+
+### Before the prod apply (GOL-382)
+
+- Set `odoo_backup_healthchecks_ping_url` in `terraform.tfvars` (create the
+  check in Healthchecks first, period 1d / grace 6h). It defaults to `""`, which
+  keeps `plan` working but leaves the backup **unmonitored** - and an
+  unmonitored backup is not a backup.
+- `prevent_destroy` is set on the stateful resources (both volumes, the Managed
+  PG cluster, both backups buckets, the reserved IP). A `terraform destroy` will
+  fail loudly on them **by design**. To genuinely remove one, delete its
+  `lifecycle` block in a reviewed commit first - that deliberate speed bump is
+  the feature.
 - Reuses Track 1's SSH keys + the hub-zone Origin CA cert (its
   `*.gatheringatthegrove.com` SAN covers `odoo.`)
 

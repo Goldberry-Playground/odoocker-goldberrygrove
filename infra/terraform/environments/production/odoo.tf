@@ -53,8 +53,10 @@ resource "digitalocean_volume" "odoo_filestore" {
   tags                     = concat(local.tags, ["role-odoo"])
   description              = "Durable Odoo filestore (/var/lib/odoo) for the Level 3 prod Odoo droplet. Survives droplet teardown so product photos + ir.attachment binaries are not lost on recreate (GOL-93). GOL-99 wires the nightly backup into this volume."
 
-  # Every product photo / ir.attachment binary lives here, and until
-  # GOL-99 lands there is no volume backup — deletion is unrecoverable. (#237)
+  # Every product photo / ir.attachment binary lives here. GOL-99 (below) now
+  # mirrors it nightly, so deletion is no longer strictly unrecoverable - but
+  # the guard stays: a restore is an incident, and the day-2 "immutable
+  # replace" model depends on this volume outliving the droplet. (#237, GOL-382)
   lifecycle {
     prevent_destroy = true
   }
@@ -63,6 +65,69 @@ resource "digitalocean_volume" "odoo_filestore" {
 resource "digitalocean_volume_attachment" "odoo_filestore" {
   droplet_id = digitalocean_droplet.odoo.id
   volume_id  = digitalocean_volume.odoo_filestore.id
+}
+
+# ── Filestore backups: bucket + scoped key (GOL-99 / GOL-382) ───────────────
+# The volume above survives a droplet replace. It does NOT survive a volume-level
+# failure, a bad migration, or an operator deleting the wrong thing - and
+# "the filestore has a durable volume" was being read as "the filestore is
+# backed up". It was not: GOL-99 was a comment, not code.
+#
+# Layout (deliberately NOT the blogs' nightly-tar pattern):
+#
+#   filestore/current/    live mirror, rclone sync'd nightly
+#   filestore/archive/    anything sync deleted or overwrote, per run (35d)
+#   filestore/manifest/   one JSON per run: file count + bytes (kept)
+#
+# Why a mirror instead of a dated tarball: Odoo's filestore is CONTENT-
+# ADDRESSED - filestore/<db>/<2-char>/<sha1-of-content>. Files are written
+# once and never mutated; only unreferenced ones are GC'd. So an incremental
+# sync transfers only genuinely new attachments, where a nightly tar would
+# re-upload the entire (50 GiB ceiling) filestore every night and keep 35
+# copies of it. That same property is why `archive/` is the safety net a mirror
+# normally lacks: sync's only destructive act is deleting, and --backup-dir
+# catches every deletion instead of propagating it.
+#
+# Content-addressing is also what makes filestore-backup + Managed-PG PITR a
+# coherent pair rather than two unrelated halves: restoring a filestore from
+# time T1 against a DB from a LATER time T2 can only ever be missing files,
+# never wrong bytes for a hash. See docs/RUNBOOK-odoo-filestore-restore.md.
+
+resource "digitalocean_spaces_bucket" "odoo_backups" {
+  name   = "grove-odoo-backups"
+  region = var.region
+  acl    = "private"
+
+  lifecycle_rule {
+    id      = "expire-archive"
+    enabled = true
+    prefix  = "filestore/archive/"
+    expiration {
+      days = 35
+    }
+  }
+  # filestore/current/ + filestore/manifest/ have no rule - a mirror you expire
+  # is not a mirror.
+
+  # #237 guarded the volume; this is the other half. Destroying the bucket is
+  # the one action that turns a recoverable incident into data loss.
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+# Bucket-scoped key for the droplet's rclone sync. Same rationale as
+# digitalocean_spaces_key.blogs_backup in blogs.tf: the all-buckets plumbing
+# key (var.spaces_access_id) is provider auth and must never land on a droplet,
+# where user_data is readable at 169.254.169.254 by any process on the box.
+# This key can touch ONLY grove-odoo-backups.
+resource "digitalocean_spaces_key" "odoo_backup" {
+  name = "grove-odoo-backup"
+
+  grant {
+    bucket     = digitalocean_spaces_bucket.odoo_backups.name
+    permission = "readwrite"
+  }
 }
 
 # ── Odoo droplet ────────────────────────────────────────────────────────────
@@ -101,6 +166,16 @@ resource "digitalocean_droplet" "odoo" {
 
     compose_yml_b64 = base64encode(file("${path.module}/compose/docker-compose.odoo.yml"))
     caddyfile_b64   = base64encode(file("${path.module}/compose/Caddyfile-odoo.tpl"))
+
+    # Nightly filestore backup (GOL-99). Bucket-scoped key, not the plumbing
+    # key. Its own Healthchecks check, NOT the blogs one: sharing a check means
+    # a green blogs ping masks a dead Odoo backup - the exact failure a
+    # dead-man's switch exists to catch.
+    spaces_access_id      = digitalocean_spaces_key.odoo_backup.access_key
+    spaces_secret_key     = digitalocean_spaces_key.odoo_backup.secret_key
+    backups_bucket        = digitalocean_spaces_bucket.odoo_backups.name
+    spaces_endpoint       = "https://${var.region}.digitaloceanspaces.com"
+    healthchecks_ping_url = var.odoo_backup_healthchecks_ping_url
   })
 
   # Backups/PITR live on Managed PG; the filestore has its own durable volume
@@ -125,16 +200,52 @@ resource "digitalocean_droplet" "odoo" {
   }
 }
 
+# ── Reserved IP (GOL-382) ───────────────────────────────────────────────────
+# The foundation the #242 day-2 model ("immutable droplet replace", ~10-min
+# window) assumed but never had. Without it the A record below points at the
+# droplet's ephemeral address, so every replace rewrites DNS and the real
+# window is bounded by propagation, not by boot - an uncontrolled outage.
+#
+# Two resources, not one, on purpose: `digitalocean_reserved_ip` also accepts
+# an inline `droplet_id`, but that couples the IP's lifecycle to the droplet's.
+# A separate assignment resource lets the droplet be destroyed and recreated
+# underneath a STABLE address - which is the entire point. The IP is what DNS
+# is pinned to, so losing it is the outage we are preventing: prevent_destroy
+# guards it (and a released reserved IP is gone for good - DO will not hand
+# the same address back).
+#
+# Note this is the ORIGIN address and the record is CF-proxied, so it is never
+# user-visible. It still matters: it is what makes a replace a no-DNS-change op.
+
+resource "digitalocean_reserved_ip" "odoo" {
+  region = var.region
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+# Re-pointed (not recreated) when digitalocean_droplet.odoo is replaced: this
+# is the resource that makes step 4's runbook a ~10-min window instead of a
+# DNS-propagation gamble.
+resource "digitalocean_reserved_ip_assignment" "odoo" {
+  ip_address = digitalocean_reserved_ip.odoo.ip_address
+  droplet_id = digitalocean_droplet.odoo.id
+}
+
 # ── DNS: odoo.gatheringatthegrove.com (Cloudflare-proxied) ───────────────────
 # PROXIED (orange-cloud) so GOL-93's /web/image/* edge cache + the account-wide
 # geo-block (environments/cloudflare-policy) apply. CF talks to the origin over
 # the Origin CA cert; set the zone SSL mode to Full (strict).
+#
+# Points at the RESERVED IP, never at digitalocean_droplet.odoo.ipv4_address
+# (GOL-382). This record must not change when the droplet is replaced.
 
 resource "cloudflare_record" "odoo" {
   zone_id = data.cloudflare_zone.brand["hub"].id
   name    = "odoo"
   type    = "A"
-  value   = digitalocean_droplet.odoo.ipv4_address
+  value   = digitalocean_reserved_ip.odoo.ip_address
   proxied = true
   ttl     = 1 # 1 = auto (required when proxied)
 }

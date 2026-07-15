@@ -49,6 +49,14 @@ resource "digitalocean_spaces_bucket" "blogs_backups" {
     }
   }
   # monthly/ prefix has no rule - kept indefinitely.
+
+  # #237 guarded blogs_data (the volume); this is the other half of the same
+  # argument. The volume guard assumes "the nightly Spaces backup covers
+  # data-level loss" - that assumption only holds if the bucket holding those
+  # backups cannot itself be destroyed. (GOL-382)
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 # Scoped Spaces key for the droplet's rclone backups. The all-buckets
@@ -182,7 +190,54 @@ resource "digitalocean_droplet" "blogs" {
   }
 }
 
+# -- Reserved IP ---------------------------------------------------------------
+# Same shape as the Odoo reserved IP (GOL-382), and for the same reason: DNS
+# must be pinned to an address the droplet can be replaced underneath.
+#
+# Two resources, not one, on purpose: `digitalocean_reserved_ip` also accepts an
+# inline `droplet_id`, but that couples the IP's lifecycle to the droplet's and
+# defeats the point. A separate assignment resource re-points (rather than
+# recreates) when digitalocean_droplet.blogs is replaced.
+#
+# This droplet is LIVE and serves all four brand blogs, so unlike the Odoo one
+# this IP is retrofitted under running traffic. See the sequencing note on
+# reserved_ip_assignment below - the order is not optional. (GOL-387)
+
+resource "digitalocean_reserved_ip" "blogs" {
+  region = var.region
+
+  # A released reserved IP is gone for good - DO will not hand the same address
+  # back, and this one is what four zones' DNS is pinned to. (GOL-382)
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+# SEQUENCING (GOL-387) - this resource cannot be reached with `-target` without
+# also replacing the live droplet, because `-target` drags in the target's
+# dependencies and digitalocean_droplet.blogs currently has a pending replace
+# (both `user_data` and `monitoring` are ForceNew and both differ from what is
+# applied). Targeting the assignment would therefore eat the exact outage this
+# resource exists to prevent.
+#
+# So the first assignment is made out-of-band against the RUNNING droplet and
+# imported, which is a no-op in state and needs no target. Only then is DNS
+# repointed; only then, in a chosen window, is the droplet replaced. The full
+# ordered procedure lives in docs/RUNBOOK-blogs-reserved-ip-cutover.md.
+resource "digitalocean_reserved_ip_assignment" "blogs" {
+  ip_address = digitalocean_reserved_ip.blogs.ip_address
+  droplet_id = digitalocean_droplet.blogs.id
+}
+
 # -- blog.* DNS records (all four brand zones, Cloudflare-proxied) --------------
+# Points at the RESERVED IP, never at digitalocean_droplet.blogs.ipv4_address
+# (GOL-387). Before this, a droplet replace dragged all four records to
+# "(known after apply)" - a TF apply plus DNS propagation in the middle of an
+# outage. Verified with `terraform graph`: no edge from these records to the
+# droplet.
+#
+# The records are CF-proxied, so the origin address is never user-visible; the
+# value here only decides where Cloudflare's edge sends traffic.
 
 resource "cloudflare_record" "blog" {
   for_each = local.tenants
@@ -190,7 +245,7 @@ resource "cloudflare_record" "blog" {
   zone_id = data.cloudflare_zone.brand[each.key].id
   name    = "blog"
   type    = "A"
-  value   = digitalocean_droplet.blogs.ipv4_address
+  value   = digitalocean_reserved_ip.blogs.ip_address
   proxied = true
   ttl     = 1 # 1 = auto (required when proxied)
 }
