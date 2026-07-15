@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Phase C seed step: bootstrap all 3 QA Ghost instances at once + emit the
-# infisical commands to push their Content Keys back into the vault.
+# 1Password commands to push their Content Keys back into the vault.
 #
 # Runs on the QA droplet AFTER a fresh deploy, when the 3 ghost-* containers
 # are healthy but before storefronts have real Content Keys. Idempotent: the
@@ -15,10 +15,10 @@
 #   ssh -i ~/.ssh/grove-qa-deploy root@<droplet_ip> \
 #     'bash -s' < scripts/setup-all-ghosts.sh
 #
-# The script prints a block of `infisical secrets set ...` commands at the
-# end. Copy those, run them on the operator laptop (where op auth is alive),
-# then re-deploy or `docker restart hub goldberry ggg nursery` so the
-# frontends pick up the new keys.
+# The script prints a block of `op item edit ...` commands at the end. Copy
+# those, run them on the operator laptop (where op auth is alive), then
+# re-deploy or `docker restart hub goldberry ggg nursery` so the frontends
+# pick up the new keys.
 #
 # Env inputs (with sensible defaults for QA):
 #   GHOST_ADMIN_PASSWORD  required. Same value for all 3 instances; QA is
@@ -101,22 +101,23 @@ for tenant in "${TENANT_ORDER[@]}"; do
   echo "  ✓ content key captured (length=${#content_key})"
 done
 
-# Emit the infisical seed block. Deliberately printed as a code block the
+# Emit the 1Password seed block. Deliberately printed as a code block the
 # operator copies wholesale -- avoids the "forgot one tenant" mistake.
+# Writes to the same Grove Infra fields the rest of the stack reads
+# (GOL-418; replaced the Infisical seed block when Infisical was retired).
 echo ""
 echo "===================================================================="
 echo "Copy + run this block on the operator laptop (where op auth is alive):"
 echo "===================================================================="
 echo ""
-echo "# --- BEGIN infisical seed for QA Ghost Content Keys ---"
-echo "infisical secrets set \\"
-echo "  --projectId=\$INFISICAL_PROJECT_ID \\"
-echo "  --env=prod \\"
-echo "  GHOST_KEY_GOLDBERRY=${KEYS[goldberry]} \\"
-echo "  GHOST_KEY_GGG=${KEYS[ggg]} \\"
-echo "  GHOST_KEY_NURSERY=${KEYS[nursery]} \\"
-echo "  >/dev/null 2>&1 && echo 'Ghost keys pushed to Infisical'"
-echo "# --- END infisical seed ---"
+echo "# --- BEGIN 1Password seed for QA Ghost Content Keys ---"
+echo "op item edit qvkpvg24x2wbsn6owjyvn4vhx4 \\"
+echo "  --vault 'Goldberry Grove - Admin' \\"
+echo "  'ghost_content_key_goldberry[password]=${KEYS[goldberry]}' \\"
+echo "  'ghost_content_key_ggg[password]=${KEYS[ggg]}' \\"
+echo "  'ghost_content_key_nursery[password]=${KEYS[nursery]}' \\"
+echo "  >/dev/null && echo 'Ghost keys pushed to 1Password'"
+echo "# --- END 1Password seed ---"
 echo ""
 echo "Then either re-run 'gh workflow run \"QA Deploy\"' OR (fast path):"
 echo "  ssh -i ~/.ssh/grove-qa-admin root@<droplet_ip> \\"

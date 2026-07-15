@@ -122,44 +122,55 @@ state-backend-destroy:
 # deploy_on_push; droplets via terraform apply in that env.
 
 # ── QA Level 3 (qa-app-platform) ────────────────────────────────────────────
-# Lifecycle for the current QA env. Secrets flow: 1Password (Infisical
-# machine identity) -> Infisical (everything else). Requires `op` signed in.
+# Lifecycle for the current QA env. Secrets flow: 1Password -> `op run
+# --env-file`, which resolves the op:// refs in $(QA_L3_DIR)/.env.op and
+# injects them as TF_VAR_*/AWS_* for the wrapped terraform. Requires `op`
+# signed in (Goldberry Grove - Admin vault). Infisical is retired (GOL-231);
+# these targets were its last local-ops consumer (GOL-418).
+#
+# GROVE_BRAND_PR_TOKEN is intentionally NOT in .env.op — it has no 1Password
+# home yet, and an op:// ref to a missing field is a hard `op run` failure.
+# It stays an optional passthrough (":-" default empty): the brand-entry
+# endpoint fails safe (503) while /optimize works with the grove_assets_* vars.
 
 QA_L3_DIR := infra/terraform/environments/qa-app-platform
-QA_L3_INFISICAL_PROJECT := 850603f8-e175-4c38-9038-97a1e69d72e6
-QA_L3_OP_ITEM := qvkpvg24x2wbsn6owjyvn4vhx4
+QA_L3_ENV_FILE := $(QA_L3_DIR)/.env.op
 
-# Shared secret→TF_VAR export block for the qa-app-platform env. The grove_assets_*
-# vars back the hub's assets-ingest endpoints (GOL-290/GOL-293). GROVE_BRAND_PR_TOKEN
-# is optional (":-" default empty) until it is minted + seeded — the brand-entry
-# endpoint fails safe (503) while /optimize works with the three assets vars.
-QA_L3_TFVARS = export AWS_ACCESS_KEY_ID="$$SPACES_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$$SPACES_SECRET_ACCESS_KEY" \
-		TF_VAR_do_token="$$DIGITALOCEAN_TOKEN" TF_VAR_cloudflare_api_token="$$CLOUDFLARE_API_TOKEN" \
-		TF_VAR_grove_revalidate_secret="$$GROVE_REVALIDATE_SECRET" TF_VAR_odoo_api_keys="$$ODOO_API_KEYS_TF_JSON" \
-		TF_VAR_grove_assets_access_key_id="$$GROVE_ASSETS_KEY" TF_VAR_grove_assets_secret_key="$$GROVE_ASSETS_SECRET" \
-		TF_VAR_grove_assets_optimize_token="$$GROVE_ASSETS_OPTIMIZE_TOKEN" TF_VAR_grove_brand_pr_token="$${GROVE_BRAND_PR_TOKEN:-}"
+# backend.hcl is gitignored (it is generated, not authored) — regenerate it on
+# every run so a clean checkout works and the config cannot drift from CI's.
+# Values mirror .github/workflows/terraform-drift.yml's "Write backend config".
+# Credentials are NOT written here: the S3 backend picks them up from the
+# AWS_* env vars `op run` injects, so no secret ever touches the filesystem.
+define QA_L3_BACKEND_HCL
+endpoint                    = "https://nyc3.digitaloceanspaces.com"
+bucket                      = "grove-tf-state"
+key                         = "qa-app-platform/terraform.tfstate"
+region                      = "us-east-1"
+skip_credentials_validation = true
+skip_metadata_api_check     = true
+skip_region_validation      = true
+skip_requesting_account_id  = true
+force_path_style            = true
+endef
+export QA_L3_BACKEND_HCL
+
+.PHONY: qa-l3-backend
+qa-l3-backend:
+	@echo "$$QA_L3_BACKEND_HCL" > $(QA_L3_DIR)/backend.hcl
 
 ## qa-l3-plan: preview changes to the Level 3 QA env (read-only; run before qa-l3-up)
 .PHONY: qa-l3-plan
-qa-l3-plan:
-	@INF_TOKEN="$$(infisical login --method=universal-auth \
-		--client-id="$$(op item get $(QA_L3_OP_ITEM) --fields label=infisical_admin_client_id --reveal)" \
-		--client-secret="$$(op item get $(QA_L3_OP_ITEM) --fields label=infisical_admin_client_secret --reveal)" \
-		--plain)"; \
-	infisical run --projectId=$(QA_L3_INFISICAL_PROJECT) --env=prod --token="$$INF_TOKEN" -- bash -c '\
-		$(QA_L3_TFVARS); \
+qa-l3-plan: qa-l3-backend
+	@op run --env-file=$(QA_L3_ENV_FILE) -- bash -c '\
+		export TF_VAR_grove_brand_pr_token="$${GROVE_BRAND_PR_TOKEN:-}"; \
 		terraform -chdir=$(QA_L3_DIR) init -backend-config=backend.hcl -input=false >/dev/null; \
 		terraform -chdir=$(QA_L3_DIR) plan -input=false'
 
 ## qa-l3-up: apply the full Level 3 QA env (droplets re-bootstrap from cloud-init)
 .PHONY: qa-l3-up
-qa-l3-up:
-	@INF_TOKEN="$$(infisical login --method=universal-auth \
-		--client-id="$$(op item get $(QA_L3_OP_ITEM) --fields label=infisical_admin_client_id --reveal)" \
-		--client-secret="$$(op item get $(QA_L3_OP_ITEM) --fields label=infisical_admin_client_secret --reveal)" \
-		--plain)"; \
-	infisical run --projectId=$(QA_L3_INFISICAL_PROJECT) --env=prod --token="$$INF_TOKEN" -- bash -c '\
-		$(QA_L3_TFVARS); \
+qa-l3-up: qa-l3-backend
+	@op run --env-file=$(QA_L3_ENV_FILE) -- bash -c '\
+		export TF_VAR_grove_brand_pr_token="$${GROVE_BRAND_PR_TOKEN:-}"; \
 		terraform -chdir=$(QA_L3_DIR) init -backend-config=backend.hcl -input=false >/dev/null; \
 		terraform -chdir=$(QA_L3_DIR) apply -input=false'
 
