@@ -183,8 +183,17 @@ resource "digitalocean_uptime_alert" "down" {
   # down_global (not `down`): fires only when the target is unreachable from
   # EVERY probe region. Single-region `down` pages on the internet being the
   # internet; this pages on the site actually being gone.
-  type       = "down_global"
-  comparison = "greater_than"
+  type = "down_global"
+
+  # `comparison` is MEANINGLESS for down_global — the condition is "all regions
+  # report down", not a numeric threshold — but the provider requires the field
+  # and DO's API normalizes whatever is sent to `less_than`. Setting anything
+  # else (e.g. the intuitive `greater_than`) makes every subsequent plan show a
+  # phantom `greater_than -> less_than` update that never converges. Measured,
+  # not guessed: applying with `greater_than` left a permanent 2-resource diff.
+  # A config that never reaches zero-diff trains people to ignore drift alerts,
+  # which is how real drift gets missed.
+  comparison = "less_than"
   period     = "2m"
   threshold  = 1
 
