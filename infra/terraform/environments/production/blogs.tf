@@ -164,9 +164,17 @@ resource "digitalocean_droplet" "blogs" {
     healthchecks_ping_url = var.healthchecks_ping_url
   })
 
-  # DO agent metrics not needed: Healthchecks covers backups, and synthetic
-  # probes cover the public surface (obs stack, Track 2).
-  monitoring = false
+  # DO metrics agent — REQUIRED by the platform-plane alerts in observability.tf
+  # (GOL-381). `v1/insights/droplet/*` alerts read the agent's stream, not the
+  # hypervisor: with the agent absent those alerts never fire and report green
+  # forever, which is worse than having no alert at all.
+  #
+  # Supersedes the prior "not needed: Healthchecks covers backups, and synthetic
+  # probes cover the public surface" rationale. That was wrong on both counts —
+  # Healthchecks only covers the nightly backup's liveness, and the synthetic
+  # probes it deferred to were never wired to prod (GOL-379 audit). Neither one
+  # sees CPU/RAM/disk on this box.
+  monitoring = true
 
   timeouts {
     create = "15m"

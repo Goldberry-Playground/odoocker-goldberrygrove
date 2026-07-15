@@ -104,8 +104,18 @@ resource "digitalocean_droplet" "odoo" {
   })
 
   # Backups/PITR live on Managed PG; the filestore has its own durable volume
-  # + GOL-99 backup. DO agent metrics not needed (obs plane covers probes).
-  monitoring = false
+  # + GOL-99 backup.
+  #
+  # DO metrics agent — REQUIRED by observability.tf's platform-plane alerts
+  # (GOL-381). The old "obs plane covers probes" rationale did not survive the
+  # GOL-379 audit: the obs plane (grove-obs) has never had a path to this box —
+  # no otel-collector in the prod compose and `ingest_source_cidrs = []`. Even
+  # once that lands, obs-plane alerting shares a failure domain with a single
+  # droplet; this agent is what still pages when grove-obs is the casualty.
+  #
+  # This droplet is born tagged `env-production`, so the tag-scoped alerts in
+  # observability.tf cover it the moment it boots — no follow-up apply.
+  monitoring = true
 
   # Same delete-timeout bump as every other Grove droplet: DO's API droplet
   # delete can hang past the provider's default 60s context deadline.

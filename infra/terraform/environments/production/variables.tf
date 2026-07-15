@@ -215,3 +215,45 @@ variable "ghost_smtp" {
     error_message = "ghost_smtp must contain keys: hub, goldberry, ggg, nursery."
   }
 }
+
+# === Observability — platform plane (GOL-381) ===============================
+
+variable "discord_webhook_url" {
+  description = "Discord webhook for #grove-ops paging. observability.tf appends Discord's Slack-compat suffix (`/slack`) so DigitalOcean's Slack-shaped alert payload is accepted — DO has no native Discord target. Secret: never inline it; injected as TF_VAR_discord_webhook_url via `op run` (1P field: discord_webhook_url). Empty string is NOT valid: it would silently produce alerts that page nowhere."
+  type        = string
+  sensitive   = true
+
+  validation {
+    # A malformed/blank webhook does not fail the apply — DO accepts the alert
+    # and simply never delivers. That is a silent monitoring outage, so it is
+    # caught here at plan time instead.
+    condition     = can(regex("^https://(discord\\.com|discordapp\\.com)/api/webhooks/[0-9]+/[A-Za-z0-9_.-]+$", var.discord_webhook_url))
+    error_message = "discord_webhook_url must be a bare Discord webhook URL (https://discord.com/api/webhooks/<id>/<token>) with NO trailing /slack — observability.tf appends that itself."
+  }
+}
+
+variable "alert_emails" {
+  description = "Email recipients for production platform-plane alerts. Kept as a second delivery path alongside Discord on every alert: email does not depend on the webhook being valid or on anyone having Discord open."
+  type        = list(string)
+  default     = ["joshua_dunbar@me.com"]
+
+  validation {
+    condition     = length(var.alert_emails) > 0
+    error_message = "alert_emails must not be empty — Discord alone is a single delivery path."
+  }
+}
+
+variable "alert_discord_channel" {
+  description = "Human-readable channel label carried in DO's Slack payload. Inert for delivery (Discord routes by webhook, not by this field) but the provider requires it; it shows up in the alert body, so it should name where the page is expected to land."
+  type        = string
+  default     = "#grove-ops"
+}
+
+variable "uptime_check_targets" {
+  description = "Public URLs probed by DO's global uptime network, keyed by a short name used in the check/alert names. Defaults cover ONLY the hosts verified serving HTTP 200 on 2026-07-15; blog.gatheringatthegrove.com + blog.goldberrygrove.farm are deliberately excluded while they return 404, because a permanently-red alert trains responders to ignore the channel. Add them here once they serve."
+  type        = map(string)
+  default = {
+    blog-ggg     = "https://blog.woodworkingeorge.com/"
+    blog-nursery = "https://blog.atthegrovenursery.com/"
+  }
+}
