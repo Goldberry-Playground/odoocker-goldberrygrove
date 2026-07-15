@@ -49,6 +49,14 @@ resource "digitalocean_spaces_bucket" "blogs_backups" {
     }
   }
   # monthly/ prefix has no rule - kept indefinitely.
+
+  # #237 guarded blogs_data (the volume); this is the other half of the same
+  # argument. The volume guard assumes "the nightly Spaces backup covers
+  # data-level loss" - that assumption only holds if the bucket holding those
+  # backups cannot itself be destroyed. (GOL-382)
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 # Scoped Spaces key for the droplet's rclone backups. The all-buckets

@@ -56,8 +56,27 @@ chosen window: [`docs/RUNBOOK-blogs-reserved-ip-cutover.md`](../../../../docs/RU
   PITR, private VPC) + Odoo DB/user - see postgres.tf
 - Odoo droplet (s-2vcpu-4gb) + Caddy (Origin CA cert files) + durable filestore
   block volume (GOL-93) + Managed PG trusted-sources firewall - see odoo.tf
+- **Reserved IP** for the Odoo droplet (GOL-382) - the A record points HERE, not
+  at the droplet's ephemeral address, so an immutable droplet replace needs no
+  DNS change. This is the prerequisite #242's day-2 model assumed.
 - odoo.gatheringatthegrove.com Cloudflare-proxied A record (the record GOL-93's
   /web/image edge-cache rule was waiting on)
+- **Nightly filestore backup** (GOL-99): `grove-odoo-backups` Spaces bucket +
+  bucket-scoped key; rclone mirror at 03:00 UTC with a Healthchecks dead-man's
+  switch. Restore procedure + rehearsal:
+  [`docs/RUNBOOK-odoo-filestore-restore.md`](../../../../docs/RUNBOOK-odoo-filestore-restore.md)
+
+### Before the prod apply (GOL-382)
+
+- Set `odoo_backup_healthchecks_ping_url` in `terraform.tfvars` (create the
+  check in Healthchecks first, period 1d / grace 6h). It defaults to `""`, which
+  keeps `plan` working but leaves the backup **unmonitored** - and an
+  unmonitored backup is not a backup.
+- `prevent_destroy` is set on the stateful resources (both volumes, the Managed
+  PG cluster, both backups buckets, the reserved IP). A `terraform destroy` will
+  fail loudly on them **by design**. To genuinely remove one, delete its
+  `lifecycle` block in a reviewed commit first - that deliberate speed bump is
+  the feature.
 - Reuses Track 1's SSH keys + the hub-zone Origin CA cert (its
   `*.gatheringatthegrove.com` SAN covers `odoo.`)
 
