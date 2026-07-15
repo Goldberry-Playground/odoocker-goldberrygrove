@@ -1,9 +1,43 @@
 # Runbook: blogs droplet reserved IP + the pending replace (GOL-387)
 
-**Status:** Phase 1 is ready to run and needs a CEO go. Phase 2 needs a chosen window.
+**Status:** **Phase 1 is DONE — applied to prod 2026-07-15, zero downtime.** Phase 2 is
+NOT scheduled and still needs an explicitly named window (see "Phase 2 is deliberately
+held" below).
 **Applies to:** `infra/terraform/environments/production`, `digitalocean_droplet.blogs`
-(`grove-prod-blogs`, id `582968733`, currently `164.90.129.34`) — **LIVE**, serves all
+(`grove-prod-blogs`, id `582968733`, ephemeral `164.90.129.34`) — **LIVE**, serves all
 four brand blogs.
+
+## Phase 1 outcome (2026-07-15)
+
+`digitalocean_reserved_ip.blogs` = **`159.89.243.121`**, assigned to the running droplet
+`582968733` (created `2026-07-07` — **not** replaced; verified via the DO API). All four
+`cloudflare_record.blog[*]` now point at the reserved IP.
+
+Verified after the cutover, cache-busted so Cloudflare had to fetch the origin
+(`cf-cache-status: MISS` — a plain request returns a cached `HIT` and proves nothing):
+
+| host                          | before | after            |
+| ----------------------------- | ------ | ---------------- |
+| `blog.woodworkingeorge.com`   | 200    | **200** (`MISS`) |
+| `blog.atthegrovenursery.com`  | 200    | **200** (`MISS`) |
+| `blog.gatheringatthegrove.com`| 404    | **404** (`MISS`) |
+| `blog.goldberrygrove.farm`    | 404    | **404** (`MISS`) |
+
+(The two 404s are the expected pre-cutover state, unchanged by this work.)
+
+**The acceptance criterion, proven:** a full plan against real prod state now shows the
+droplet replace still pending but **zero `cloudflare_record.blog` entries in the change
+set**. The replace no longer moves DNS. `digitalocean_reserved_ip_assignment.blogs` does
+show `must be replaced` — that is correct and intended: it re-points **the same**
+`159.89.243.121` at the new droplet (`ip_address` unchanged).
+
+**Origin reachability could not be pre-tested from the agent sandbox** — direct curl to
+the origin returns 000 on the reserved *and* the ephemeral IP alike (no direct egress;
+the firewall allows 443 from `0.0.0.0/0`, so it is not the cause). It was instead proven
+with a **canary**: `blog.gatheringatthegrove.com` (pre-cutover, no uptime check, nothing
+depends on it) was repointed first and still returned a cache-busted `404 MISS` — origin
+reached through the reserved IP, no 521/522. Only then were the two live blogs moved.
+Use that canary order again for any similar cutover.
 
 Run everything from `infra/terraform/environments/production`, wrapped in
 `op run --env-file=.env.op --`. Terraform **>= 1.10** (`versions.tf`); the `terraform`
@@ -132,6 +166,28 @@ with the value reverted), then `doctl compute reserved-ip-action unassign $RIP`.
 ephemeral address is untouched throughout Phase 1, so rollback is always available.
 
 ---
+
+## Phase 2 is deliberately held — do not run it off the Phase 1 approval
+
+Phase 1's approval card (`8fd405a4`) was worded "Accept = Phase 1 now + Phase 2 in a
+window you name." It was accepted, but **no window was named**, so Phase 2 has no
+approval to stand on. Three further reasons it was not executed:
+
+1. **The acceptance shows signs of a queue-clear, not a considered go.** A stray probe
+   card reading literally `"probe"` was accepted one second after this one.
+2. **The card's Phase 2 rationale contains a claim that was publicly retracted** — it
+   says a blogs outage "pages nobody today". Only the `do-agent`-dependent alerts are
+   inert; DO's external uptime probes work, so a hard outage *does* page. The real gap
+   is slow-burn (disk/memory/load).
+3. **Phase 1 removed the urgency.** DNS is now decoupled, so the pending replace is safe
+   to defer indefinitely — which is exactly what Phase 1 was for. The replace's remaining
+   risk is *boot/reproducibility* (GOL-385: the live box was applied from never-committed
+   code, so nobody knows what comes back up), and that is not de-risked by a window; it
+   is de-risked by GOL-388's rehearsal on qa-l3, a box nobody depends on.
+
+Phase 2 therefore belongs to **GOL-385**, sequenced after **GOL-388**'s rehearsal, and
+needs a fresh, explicit approval that names a window. The procedure below stays here
+because it is the procedure — not because it is scheduled.
 
 ## Phase 2 — the deliberate replace (chosen window)
 

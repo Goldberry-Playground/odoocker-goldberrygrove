@@ -94,9 +94,12 @@ it (`replace_paths: [["monitoring"], ["user_data"]]`):
   alerts are external probes and are unaffected, so a hard outage still pages; what is
   invisible is the slow burn (disk/memory/load). The replace is what makes that half real.
 
-A bare apply here rebuilds the live blogs and rewrites their DNS as a side effect of
-whatever else you were applying. Do the reserved IP first, then take the replace in a
-chosen window: [`docs/RUNBOOK-blogs-reserved-ip-cutover.md`](../../../../docs/RUNBOOK-blogs-reserved-ip-cutover.md).
+A bare apply here still rebuilds the live blogs as a side effect of whatever else you
+were applying. It no longer **rewrites their DNS**: the reserved IP (`159.89.243.121`)
+was applied 2026-07-15 and the `blog.*` records point at it, so a replace re-assigns the
+same address instead of moving DNS. The replace itself is still an unscheduled outage on
+a box whose boot is unproven (GOL-385) — take it in a chosen window:
+[`docs/RUNBOOK-blogs-reserved-ip-cutover.md`](../../../../docs/RUNBOOK-blogs-reserved-ip-cutover.md).
 
 ## What lives here (Track 2 - GOL-105, apply gated)
 
