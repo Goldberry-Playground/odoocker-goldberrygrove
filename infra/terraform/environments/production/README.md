@@ -16,9 +16,9 @@ The last verified plan (clean `main`, prod state serial 6) was
   carries `prevent_destroy`), but a replace is a public outage, and until GOL-382
   lands a reserved IP the droplet comes back on a **new IP** that DNS must chase.
 - **All of Track 2** — Managed PG, the Odoo droplet, and the four App Platform
-  apps — which are supposed to be gated on the GOL-105 soak sign-off. That gate is
-  **prose in this README, not a constraint in code**: nothing stops an apply from
-  standing the whole tier up.
+  apps (~$78/mo). Nothing in the configuration stops an apply from standing the
+  whole tier up: the "gate" is **prose in this README, not a constraint in code**.
+  Worse, the gate it cites is **stale** — see below.
 
 Until GOL-385 closes, changes here are applied `-target`'d to the specific
 resources being changed, and any plan that proposes replacing
@@ -100,7 +100,17 @@ hashed `user_data`.
   `*.ondigitalocean.app` ingress and the apexes keep serving Ghost. See the
   "Apex cutover" block at the bottom of apps.tf.
 
-**Soak sign-off (GOL-105) must be green before `terraform apply`:** Managed PG
+> ⚠️ **The GOL-105 gate below is STALE. GOL-105 was cancelled 2026-07-08.**
+>
+> Track 2 is authored but **unowned**: no prod Odoo droplet and no prod Managed
+> PG exist, and the issue that was going to apply them is closed. So the text
+> below describes a sign-off that nobody is scheduled to perform, guarding an
+> apply nobody is scheduled to run — while the resources sit unconditioned in
+> the root module, in every plan. Do not cite this paragraph as an active gate
+> (GOL-391 tracks making the gate real, or deleting the scaffold).
+
+**Soak sign-off (GOL-105 — cancelled; retained for historical context) was to be
+green before `terraform apply`:** Managed PG
 perf + Odoo pool acceptable; App Platform TLS auto-renew clean; GHCR autodeploys
 reliable; durable filestore + droplet-replace test validated (GOL-93); three
 alert paths green; no unresolved incidents across the window. Then @-mention the
