@@ -37,14 +37,31 @@ Two things follow, and they matter more than the ticket that opened this:
    working tree that was never committed as-is. Do not trust a reconstruction; treat the
    replace as the way we find out, and keep the rollback below within reach.
 
-2. **The `monitoring` trigger means prod alerting is currently fiction.** GOL-381 (#256,
-   merged 2026-07-15) flipped `monitoring = false -> true` and added four droplet alerts
-   (CPU/memory/disk/load5). The **alerts were applied; the flag was not** (it needs this
-   replace). Verified against the live DO API: `monitoring` is off, so the `do-agent` is
-   not installed and `v1/insights/droplet/*` has no metric source. #256's own comment
-   says it: *"with the agent absent those alerts never fire and report green forever,
-   which is worse than having no alert at all."* That is the state prod is in right now.
-   **Phase 2 is what makes GOL-381's alerting real** — it is not just an SMTP delivery.
+2. **The `monitoring` trigger means half of GOL-381's alerting is currently inert.**
+   GOL-381 (#256, merged 2026-07-15) flipped `monitoring = false -> true` and added four
+   tag-scoped droplet alerts (CPU/memory/disk/load5). The **alerts were applied; the flag
+   was not** (it needs this replace). Verified against the live DO API: `monitoring` is
+   off, so the `do-agent` is not installed and `v1/insights/droplet/*` has no metric
+   source. #256's own comment says it: *"with the agent absent those alerts never fire and
+   report green forever, which is worse than having no alert at all."*
+
+   Be precise about what this does and does not mean:
+
+   | alert | mechanism | working today? |
+   | --- | --- | --- |
+   | `monitor_alert.droplet` cpu / memory / disk / load5 | `do-agent` metrics | **NO — inert** |
+   | `uptime_alert.down` (`down_global`) blog-ggg, blog-nursery | DO's external probe network | yes |
+   | `uptime_alert.ssl_expiry` blog-ggg, blog-nursery | external | yes |
+
+   So a **hard outage** still pages: the droplet serves all four blogs, and two of them
+   are externally probed. What is invisible is the **slow burn** — disk filling, memory
+   exhaustion, load — which is exactly what the resource alerts exist to catch, on a 60 GB
+   box running MySQL plus four Ghost instances. (`blog.gatheringatthegrove.com` and
+   `blog.goldberrygrove.farm` are deliberately excluded from uptime checks while they 404
+   pre-cutover, so they have no external coverage of their own.)
+
+   **Phase 2 is what makes the resource half of GOL-381's alerting real** — it is not just
+   an SMTP delivery.
 
 ## Sequencing is not optional
 
@@ -168,8 +185,9 @@ the existing data dir.
 - All four blogs 200 (command in 1e). Measure and record the actual window.
 - `terraform plan` is clean for `digitalocean_droplet.blogs` — no pending replace.
 - `doctl compute droplet get 582968733` → the new droplet reports `monitoring: true`.
-- **Confirm GOL-381's alerts now have a metric source** — the agent is installed, so the
-  four droplet alerts stop being green-by-default.
+- **Confirm GOL-381's four resource alerts now have a metric source** — the agent is
+  installed, so cpu/memory/disk/load5 stop being green-by-default. (The uptime/ssl alerts
+  were already working and are unaffected.)
 - `df -h /mnt/blogs-data` on the new box shows the data volume mounted with content.
 - Delete the pre-replace snapshot once the blogs are confirmed healthy.
 

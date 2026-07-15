@@ -40,9 +40,11 @@ it (`replace_paths: [["monitoring"], ["user_data"]]`):
   first landed in git 2026-07-12 (#207), so the live box was applied from a working tree
   that was never committed as-is. State stores `user_data` as a SHA1, so what is actually
   on the box **cannot be recovered from Terraform**.
-- `monitoring` `false -> true` from GOL-381 (#256). Its four droplet alerts were applied
-  but the flag was not, so the `do-agent` is absent and those alerts have no metric
-  source - they report green forever. The replace is what makes that alerting real.
+- `monitoring` `false -> true` from GOL-381 (#256). Its four droplet resource alerts
+  (cpu/memory/disk/load5) were applied but the flag was not, so the `do-agent` is absent
+  and those alerts have no metric source - they report green forever. The uptime/ssl
+  alerts are external probes and are unaffected, so a hard outage still pages; what is
+  invisible is the slow burn (disk/memory/load). The replace is what makes that half real.
 
 A bare apply here rebuilds the live blogs and rewrites their DNS as a side effect of
 whatever else you were applying. Do the reserved IP first, then take the replace in a
