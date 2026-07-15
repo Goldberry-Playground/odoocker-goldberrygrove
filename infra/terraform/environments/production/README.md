@@ -5,17 +5,65 @@ Track 2 (Managed PG + Odoo droplet, this scaffold) is authored but its **apply
 is gated** on the QA L3 soak sign-off (~2026-07-21+) and the @CEO final go
 (GOL-105). App Platform (the fourth piece) is a GOL-105 child issue.
 
-## Apply (manual by decision)
+## ⚠️ Do not run a bare `terraform apply` here (GOL-385)
+
+A full-environment `apply` against current `main` is **not** a routine operation.
+The last verified plan (clean `main`, prod state serial 6) was
+`15 to add, 5 to change, 2 to destroy`, and it included:
+
+- `digitalocean_droplet.blogs must be replaced` — this droplet is **live**, serving
+  all four brand blogs. Blog *content* survives (`digitalocean_volume.blogs_data`
+  carries `prevent_destroy`), but a replace is a public outage, and until GOL-382
+  lands a reserved IP the droplet comes back on a **new IP** that DNS must chase.
+- **All of Track 2** — Managed PG, the Odoo droplet, and the four App Platform
+  apps — which are supposed to be gated on the GOL-105 soak sign-off. That gate is
+  **prose in this README, not a constraint in code**: nothing stops an apply from
+  standing the whole tier up.
+
+Until GOL-385 closes, changes here are applied `-target`'d to the specific
+resources being changed, and any plan that proposes replacing
+`digitalocean_droplet.blogs` is a **stop-and-escalate**, not a thing to approve.
+
+## Apply (manual by decision, `-target`'d — see the warning above)
 
 1. `cp backend.hcl.example backend.hcl`
 2. `.env.op` (committed in this dir) maps op:// refs -> TF_VAR_* + AWS_*. Required:
    - TF_VAR_do_token, TF_VAR_cloudflare_api_token (ACCOUNT-scoped token incl. "SSL and Certificates: Edit" - authorizes Origin CA cert issuance; the legacy Origin CA Key is deprecated)
    - TF_VAR_spaces_access_id, TF_VAR_spaces_secret_key
-   - admin_ip_cidr + healthchecks_ping_url live in terraform.tfvars (gitignored)
    - AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY (state backend)
+   - **TF_VAR_grove_revalidate_secret** — required, no default, `>=32` chars.
+     `plan` hard-fails without it, so it is not optional even for a read-only
+     plan. The no-default is deliberate (a bare apply must not be able to ship a
+     placeholder secret to prod); it is currently **commented out** in `.env.op`
+     pending the 1P field, which is why the documented steps below do not yet run
+     end-to-end from a clean checkout.
+   - `healthchecks_ping_url` — feeds the blogs droplet **user_data**; see
+     "Reproducibility" below before setting it.
+   - `admin_ip_cidr`, `region`, `blogs_droplet_size` now have codified defaults
+     matching live prod. Do **not** re-supply them from a local tfvars.
 3. `terraform init -backend-config=backend.hcl`
 4. `op run --env-file=.env.op -- terraform plan`
-5. `op run --env-file=.env.op -- terraform apply`
+5. `op run --env-file=.env.op -- terraform apply -target=...`
+
+## Reproducibility (GOL-385, open)
+
+`grove-prod-blogs` (id `582968733`) was created **2026-07-07T19:49:15Z**. This
+repo's git history **begins at the root commit `73603ed`, 2026-07-12** — an import
+snapshot. The exact template bytes that built the live droplet therefore exist at
+**no commit in this repository**, and no `terraform.tfvars` can change that.
+
+The provider stores `user_data` as a SHA1. State holds
+`f6071c899edb6edfac10116029348f0715887c56`; today's templates render
+`0baae2b4…` with `healthchecks_ping_url = ""` and `33bdef3c…` with the old
+`REPLACE-UUID` placeholder. Neither reproduces state, which is why every plan
+proposes a replace.
+
+**Consequence:** prod is not currently reproducible from code, and the only
+inputs that can still be recovered have been — `admin_ip_cidr`
+(`74.47.41.38/32`, read back out of the live firewall's port-22 rule), `region`,
+and `blogs_droplet_size` are now codified defaults. The single genuinely
+unrecoverable input is `healthchecks_ping_url`, which exists only inside the
+hashed `user_data`.
 
 ## What lives here (Track 1)
 
