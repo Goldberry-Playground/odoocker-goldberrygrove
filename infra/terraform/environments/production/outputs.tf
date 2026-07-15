@@ -1,6 +1,11 @@
 output "blogs_droplet_ip" {
-  description = "Public IPv4 of the blogs droplet (apex + blog.* records point here)."
+  description = "Ephemeral public IPv4 of the blogs droplet. Changes on every replace - do NOT point DNS at it (that was the GOL-387 bug); use blogs_reserved_ip. Kept for SSH/debugging."
   value       = digitalocean_droplet.blogs.ipv4_address
+}
+
+output "blogs_reserved_ip" {
+  description = "Stable reserved IP for the blogs droplet. The blog.* A records (and the apex records, when they land) point HERE, so an immutable droplet replace needs no DNS change (GOL-387)."
+  value       = digitalocean_reserved_ip.blogs.ip_address
 }
 
 output "blog_urls" {
