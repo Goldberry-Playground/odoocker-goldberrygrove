@@ -466,7 +466,7 @@ docker compose cp ghost-nursery:/var/lib/ghost/content ./ghost-nursery-backup
 | `APP_ENV` | `local` or `debug` | `production` |
 | `WORKERS` | `0` (single-threaded) | `2+` (multi-process) |
 | `LIST_DB` | `True` | `False` |
-| `ADMIN_PASSWD` | `odoo` | Strong password (via Infisical) |
+| `ADMIN_PASSWD` | `odoo` | Strong password (via 1Password) |
 | `DEV_MODE` | `reload,qweb` | (empty) |
 | TLS | None | App Platform (frontends) + Caddy (droplet hosts) |
 | Custom modules | Bind-mounted from `../grove-odoo-modules` | git-sync sidecar (prod pins `GITSYNC_REF` SHA) |

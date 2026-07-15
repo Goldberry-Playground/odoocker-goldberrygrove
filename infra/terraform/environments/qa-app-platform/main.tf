@@ -87,7 +87,7 @@ resource "digitalocean_domain" "qa" {
 # `422 SSH Key is already in use on your account`.
 #
 # Options considered:
-#   (a) Generate a new keypair for Level 3 -- adds a secret to 1P + Infisical
+#   (a) Generate a new keypair for Level 3 -- adds a secret to 1Password
 #       for zero benefit (both envs share the same operator workflow).
 #   (b) Reference the monolith's key via data source -- SAME key, SAME
 #       fingerprint, SAME private key on the runner. No new secret needed.

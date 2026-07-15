@@ -41,7 +41,7 @@ now handles the whole seed automatically after `docker compose up`:
 
 **Keys never leave the droplet.** They're only valid for the Ghosts on
 that droplet, and both die together on recreate — so nothing gets pushed
-to Infisical. The per-droplet Ghost admin password is generated once and
+to a shared vault. The per-droplet Ghost admin password is generated once and
 stored at `/etc/grove/.ghost-admin-pass` (0600); read it over SSH if you
 need to log into a Ghost admin UI.
 
@@ -60,7 +60,7 @@ ssh -i ~/.ssh/grove-qa-admin root@<droplet_ip> \
   'bash /opt/grove/qa-ghost-autoseed.sh'
 ```
 
-(The older `scripts/setup-all-ghosts.sh` + push-to-Infisical flow is
+(The older `scripts/setup-all-ghosts.sh` + push-to-vault flow is
 retired for QA — it also assumed a `/workspace/current` git-sync mount
 that the QA droplet never had. Kept in-tree only as a reference for
 local-compose seeding.)
