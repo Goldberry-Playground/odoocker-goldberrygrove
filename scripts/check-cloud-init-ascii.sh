@@ -39,6 +39,19 @@ DEFAULT_FILES=(
   "infra/terraform/environments/qa-app-platform/compose/docker-compose.obs.yml"
   "infra/terraform/environments/qa-app-platform/compose/Caddyfile.tpl"
   "infra/terraform/environments/qa-app-platform/compose/Caddyfile-obs.tpl"
+
+  # PRODUCTION -- added 2026-07-15 (GOL-382). This guard existed for QA only,
+  # while cloud-init-odoo.yaml.tpl was carrying a U+2026 ellipsis the whole
+  # time. Prod is the environment where this failure mode is most expensive:
+  # a droplet that boots but silently skips write_files/runcmd is exactly the
+  # "replace" half of #242's day-2 model failing with no obvious cause.
+  #
+  # Only the RAW templates are listed. compose/*.yml and compose/Caddyfile*
+  # are embedded via base64encode(file(...)) in blogs.tf/odoo.tf, so their
+  # bytes reach the droplet as ASCII base64 and cannot break the YAML parse --
+  # unlike QA, which lists its compose/Caddyfile defensively.
+  "infra/terraform/environments/production/cloud-init-odoo.yaml.tpl"
+  "infra/terraform/environments/production/cloud-init-blogs.yaml.tpl"
 )
 
 if [ -n "${FILES:-}" ]; then

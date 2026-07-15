@@ -32,8 +32,18 @@ output "pg_database_name" {
 }
 
 output "odoo_droplet_ip" {
-  description = "Public IPv4 of the Odoo droplet (odoo.gatheringatthegrove.com A record points here; Cloudflare-proxied)."
+  description = "Ephemeral public IPv4 of the Odoo droplet itself. CHANGES ON EVERY DROPLET REPLACE - do not pin anything to it (that was the GOL-382 bug). DNS points at odoo_reserved_ip; use this only for direct droplet SSH/debug."
   value       = digitalocean_droplet.odoo.ipv4_address
+}
+
+output "odoo_reserved_ip" {
+  description = "Stable reserved IPv4 the odoo.gatheringatthegrove.com A record points at (GOL-382). Survives a droplet replace, which is what makes the #242 day-2 immutable-replace model a bounded ~10-min window with NO DNS change. This is the origin address Cloudflare dials; the record is proxied, so it is not user-visible."
+  value       = digitalocean_reserved_ip.odoo.ip_address
+}
+
+output "odoo_backups_bucket" {
+  description = "Spaces bucket holding the nightly Odoo filestore mirror (GOL-99): filestore/current/ (live mirror), filestore/archive/ (deletions, 35d), filestore/manifest/ (per-run counts). Restore procedure: docs/RUNBOOK-odoo-filestore-restore.md."
+  value       = digitalocean_spaces_bucket.odoo_backups.name
 }
 
 output "odoo_hostname" {
