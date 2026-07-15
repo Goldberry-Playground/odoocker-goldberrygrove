@@ -3,7 +3,7 @@ name: Provision Logistics Otto (Odoo)
 ###############################################################################
 # GOL-89 — self-serve provisioning of the least-privilege `logistics-otto`
 # Odoo user + its API key, run where access already exists (the droplet), so
-# no admin credential ever leaves Infisical/the droplet and no operator is in
+# no admin credential ever leaves the vault/the droplet and no operator is in
 # the loop. CEO (Rick) approved option (b) on GOL-62.
 #
 # WHAT IT DOES (idempotent, re-runnable)
@@ -15,31 +15,49 @@ name: Provision Logistics Otto (Odoo)
 #           with ONLY Inventory + Purchase + Sales + UoM groups.
 #        b. mint_logistics_key.py — mint the user's `rpc`-scoped API key
 #           (revokes any prior same-name key first → clean rotation).
-#   3. Mask the minted key, write it to Infisical as ODOO_API_KEY (live only).
+#   3. Mask the minted key, write it to 1Password as ODOO_API_KEY (live only).
 #
 #   Otto's runtime env (ODOO_URL / ODOO_DB / ODOO_LOGIN / ODOO_API_KEY) is
 #   injected SEPARATELY, Paperclip-side, by DevOps-Terra — the GH runner has no
-#   route to the Paperclip control plane. Key stays an Infisical reference in
+#   route to the Paperclip control plane. Key stays a 1Password reference in
 #   Otto's env; the plaintext never touches AGENTS.md/adapter config/logs/
 #   artifacts/any comment. See GOL-89 for the injection step + odoo_client.py
 #   check verification.
 #
+# ── Why 1Password, and why its OWN vault (GOL-237 / ADR-0001 Phase 3.4) ─────
+#   This step used to write to Infisical via a write-scoped OIDC identity. It
+#   was the last live Infisical reference in CI and gated the whole Infisical
+#   teardown (GOL-231) — so it moved to 1Password with the rest.
+#
+#   `1password/load-secrets-action` is READ-only, so this is not an action
+#   swap: it needs the `op` CLI and a WRITE-capable service-account token.
+#   That token is deliberately NOT `OP_CI_SA_TOKEN` (read-only, Grove Prod) and
+#   deliberately NOT a write grant on Grove Prod — a write SA on Grove Prod
+#   would let any CI run overwrite ANY prod secret, which is strictly worse
+#   than the Infisical per-path write scope it replaced. Instead the token is
+#   scoped to a dedicated vault (`Grove CI Writeback`) whose ONLY contents are
+#   the Otto keys this workflow itself mints. Blast radius of a leaked token =
+#   the key CI just minted, and a mis-write is repaired by re-running this
+#   workflow. See docs/RUNBOOK-otto-key-writeback.md for the vault + token
+#   setup (a 1Password-admin console action; not self-servable from CI).
+#
 # DISPATCHABILITY
 #   `workflow_dispatch` only activates once this file is on the DEFAULT branch
-#   (main). Landing it there is gated by the protected-main merge policy
-#   (GOL-69) — coordinated with the CEO per GOL-89. Until then the file is
-#   inert on the feature branch (expected).
+#   (main). It is on main as of PR #180 — but the workflow has NEVER been run
+#   (0 runs as of 2026-07-15) because none of the secrets below are seeded.
+#   Every secret-dependent step fails FAST and LOUD rather than half-running.
 #
-# ── Secrets / identity this workflow needs (per environment) ────────────────
+# ── Secrets this workflow needs (per environment) — NONE are seeded yet ─────
 #   GH Actions secrets (mirror release.yml's SSH deploy pattern):
 #     qa   : QA_SSH_PRIVATE_KEY   (grove-qa-deploy private key), QA_HOST
 #     prod : PROD_SSH_PRIVATE_KEY, PROD_HOST
-#   Infisical (write ODOO_API_KEY): a machine identity with create/edit on the
-#     ODOO_API_KEY path in project grove-odoocker (slug grove-odoocker-qu8p),
-#     env slug per `environment`. The shared read-only OIDC identity
-#     (gh-oidc-odoocker-shared) is NOT sufficient to write — a write-scoped
-#     identity id must be seeded as INFISICAL_WRITE_IDENTITY_ID (repo/env var).
-#   Confirm/seed status is tracked on GOL-89.
+#     NOTE: the repo currently has GROVE_QA_CI_SSH_PRIVATE_KEY, not
+#     QA_SSH_PRIVATE_KEY/QA_HOST. Reconcile the names at Otto go-live (GOL-89).
+#   1Password (write ODOO_API_KEY):
+#     OP_CI_WRITEBACK_SA_TOKEN — service-account token with write_items on the
+#     `Grove CI Writeback` vault ONLY. See docs/RUNBOOK-otto-key-writeback.md.
+#   Seed status is tracked on GOL-89 (go-live), NOT on GOL-237 — GOL-237 only
+#   owns "this file no longer references Infisical", which is satisfied.
 ###############################################################################
 
 on:
@@ -64,9 +82,9 @@ concurrency:
   group: provision-logistics-otto-${{ inputs.environment }}
   cancel-in-progress: false
 
+# No id-token: 1Password authenticates with a service-account token, not OIDC.
 permissions:
   contents: read
-  id-token: write   # OIDC → Infisical (write ODOO_API_KEY on live runs)
 
 jobs:
   provision:
@@ -75,9 +93,12 @@ jobs:
     timeout-minutes: 15
 
     env:
-      # Infisical project is constant; env slug follows the target.
-      INFISICAL_PROJECT_SLUG: grove-odoocker-qu8p
-      INFISICAL_ENV_SLUG: ${{ inputs.environment == 'prod' && 'prod' || 'qa' }}
+      # Write-back target. The vault is constant; the ITEM is per-environment so
+      # a qa run and a prod run can never land on each other's key (1Password SA
+      # tokens scope per-vault, not per-item — the item split is what keeps the
+      # two environments' keys distinct inside the shared writeback vault).
+      OP_WRITEBACK_VAULT: Grove CI Writeback
+      OP_WRITEBACK_ITEM: otto-${{ inputs.environment == 'prod' && 'prod' || 'qa' }}
 
     steps:
       - name: Checkout repository
@@ -174,29 +195,47 @@ jobs:
           rm -f mint.out
           echo "key minted + masked (value withheld from logs)"
 
-      # Write the key to Infisical (live runs only). Requires a write-scoped
-      # machine identity — see header. This is the ONLY place the plaintext
-      # touches a durable store, and it goes straight into the secrets manager.
-      - name: Store ODOO_API_KEY in Infisical
+      # `op` CLI — needed because load-secrets-action is read-only and this is
+      # the one CI step in the repo that WRITES a secret.
+      - name: Install 1Password CLI
+        if: ${{ inputs.dry_run == false }}
+        uses: 1password/install-cli-action@v4
+        timeout-minutes: 2
+
+      # Write the key to 1Password (live runs only). Requires a write-scoped SA
+      # token on the dedicated `Grove CI Writeback` vault — see header. This is
+      # the ONLY place the plaintext touches a durable store, and it goes
+      # straight into the secrets manager.
+      #
+      # Idempotent: edit the item if it exists, create it if it doesn't. Both
+      # converge on "the item holds the key this run just minted", so a re-run
+      # after a partial failure is safe.
+      - name: Store ODOO_API_KEY in 1Password
         if: ${{ inputs.dry_run == false }}
         timeout-minutes: 3
         env:
-          WRITE_IDENTITY_ID: ${{ vars.INFISICAL_WRITE_IDENTITY_ID }}
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_CI_WRITEBACK_SA_TOKEN }}
         run: |
           set -euo pipefail
-          if [ -z "${WRITE_IDENTITY_ID:-}" ]; then
-            echo "::error::INFISICAL_WRITE_IDENTITY_ID not set — cannot write ODOO_API_KEY. Seed a write-scoped identity (see workflow header / GOL-89) and re-run."
+          if [ -z "${OP_SERVICE_ACCOUNT_TOKEN:-}" ]; then
+            echo "::error::OP_CI_WRITEBACK_SA_TOKEN not set — cannot write ODOO_API_KEY. A key was minted this run and will be DISCARDED; re-run after seeding the token (docs/RUNBOOK-otto-key-writeback.md / GOL-89)."
             exit 1
           fi
-          curl -fsSL -o infisical.deb https://github.com/Infisical/cli/releases/latest/download/infisical_linux_amd64.deb
-          sudo dpkg -i infisical.deb
-          # OIDC login for the write identity → short-lived token.
-          INFISICAL_TOKEN="$(infisical login --method=oidc --machine-identity-id="$WRITE_IDENTITY_ID" --silent --plain)"
-          export INFISICAL_TOKEN
-          infisical secrets set ODOO_API_KEY="$ODOO_OTTO_KEY" \
-            --projectId "$INFISICAL_PROJECT_SLUG" \
-            --env "$INFISICAL_ENV_SLUG" --path "/" >/dev/null
-          echo "ODOO_API_KEY written to Infisical (${INFISICAL_ENV_SLUG})"
+          # Fail before minting-side work is wasted if the vault isn't reachable.
+          if ! op vault get "$OP_WRITEBACK_VAULT" >/dev/null 2>&1; then
+            echo "::error::vault '${OP_WRITEBACK_VAULT}' not reachable with OP_CI_WRITEBACK_SA_TOKEN. Create it + grant the SA write_items (docs/RUNBOOK-otto-key-writeback.md)."
+            exit 1
+          fi
+          if op item get "$OP_WRITEBACK_ITEM" --vault "$OP_WRITEBACK_VAULT" >/dev/null 2>&1; then
+            op item edit "$OP_WRITEBACK_ITEM" --vault "$OP_WRITEBACK_VAULT" \
+              "ODOO_API_KEY[password]=${ODOO_OTTO_KEY}" >/dev/null
+            echo "ODOO_API_KEY updated: op://${OP_WRITEBACK_VAULT}/${OP_WRITEBACK_ITEM}/ODOO_API_KEY"
+          else
+            op item create --category="API Credential" \
+              --title "$OP_WRITEBACK_ITEM" --vault "$OP_WRITEBACK_VAULT" \
+              "ODOO_API_KEY[password]=${ODOO_OTTO_KEY}" >/dev/null
+            echo "ODOO_API_KEY created: op://${OP_WRITEBACK_VAULT}/${OP_WRITEBACK_ITEM}/ODOO_API_KEY"
+          fi
 
       - name: Summary
         if: ${{ always() }}
@@ -211,8 +250,11 @@ jobs:
             echo "- mode: $([ "$DRY" = "true" ] && echo 'DRY-RUN (scope preview only)' || echo 'LIVE')"
             echo "- ODOO_URL: ${ODOO_URL}"
             echo "- login: logistics-otto  (Inventory + Purchase + Sales + UoM only)"
+            if [ "$DRY" != "true" ]; then
+              echo "- key written to: \`op://${OP_WRITEBACK_VAULT}/${OP_WRITEBACK_ITEM}/ODOO_API_KEY\`"
+            fi
             echo ""
             echo "Next (live): DevOps-Terra injects ODOO_URL/ODOO_DB/ODOO_LOGIN/ODOO_API_KEY"
-            echo "into Otto's Paperclip env (Infisical ref, not plaintext), then runs"
+            echo "into Otto's Paperclip env (1Password ref, not plaintext), then runs"
             echo "\`odoo_client.py check\`. Tracked on GOL-89."
           } >> "$GITHUB_STEP_SUMMARY"

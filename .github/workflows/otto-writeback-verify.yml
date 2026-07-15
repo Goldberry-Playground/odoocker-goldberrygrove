@@ -1,0 +1,118 @@
+name: Verify Otto key write-back (1Password)
+
+###############################################################################
+# TEMPORARY — GOL-237. Delete once Otto goes live (GOL-89).
+#
+# Proves the ODOO_API_KEY write path that replaced Infisical in
+# provision-logistics-otto.yml, WITHOUT minting a real key, touching Odoo, or
+# deploying anything. It round-trips a canary through the writeback vault.
+#
+# It asserts BOTH halves of the design:
+#   1. the SA token CAN write + read `Grove CI Writeback`   (it works)
+#   2. the SA token CANNOT read `Grove Prod`                (the scope is tight)
+#
+# (2) is the one that matters. A token that merely works could still be
+# over-granted; the whole point of GOL-237 was to avoid a broad write SA, so
+# the verification has to prove the boundary, not just the capability.
+#
+# Prereq: OP_CI_WRITEBACK_SA_TOKEN seeded — docs/RUNBOOK-otto-key-writeback.md
+###############################################################################
+
+on:
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  # The canary item is a single shared name — two concurrent runs would race on
+  # create/delete and produce a false failure.
+  group: otto-writeback-verify
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Canary round-trip through Grove CI Writeback
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      OP_WRITEBACK_VAULT: Grove CI Writeback
+      CANARY_ITEM: _ci-writeback-canary
+
+    steps:
+      - name: Install 1Password CLI
+        uses: 1password/install-cli-action@v4
+        timeout-minutes: 2
+
+      - name: Preflight — token present
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_CI_WRITEBACK_SA_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${OP_SERVICE_ACCOUNT_TOKEN:-}" ]; then
+            echo "::error::OP_CI_WRITEBACK_SA_TOKEN not set. Create the vault + service account first (docs/RUNBOOK-otto-key-writeback.md), then re-dispatch."
+            exit 1
+          fi
+          echo "token present"
+
+      # Write → read → compare. The canary value is generated on the runner and
+      # masked, so a leak here discloses nothing, but masking keeps the habit
+      # honest and mirrors how the real key is handled.
+      - name: Canary round-trip (write → read back → assert)
+        id: canary
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_CI_WRITEBACK_SA_TOKEN }}
+        run: |
+          set -euo pipefail
+          CANARY="canary-${GITHUB_RUN_ID}-$(openssl rand -hex 8)"
+          echo "::add-mask::$CANARY"
+
+          if ! op vault get "$OP_WRITEBACK_VAULT" >/dev/null 2>&1; then
+            echo "::error::vault '${OP_WRITEBACK_VAULT}' not reachable — create it and grant the SA read_items+write_items (docs/RUNBOOK-otto-key-writeback.md)."
+            exit 1
+          fi
+
+          # Mirrors the real step's create-vs-edit branch exactly.
+          if op item get "$CANARY_ITEM" --vault "$OP_WRITEBACK_VAULT" >/dev/null 2>&1; then
+            op item edit "$CANARY_ITEM" --vault "$OP_WRITEBACK_VAULT" \
+              "value[password]=${CANARY}" >/dev/null
+            echo "canary written (edit path)"
+          else
+            op item create --category="API Credential" \
+              --title "$CANARY_ITEM" --vault "$OP_WRITEBACK_VAULT" \
+              "value[password]=${CANARY}" >/dev/null
+            echo "canary written (create path)"
+          fi
+          # Mark for cleanup even if the read below fails.
+          echo "written=true" >> "$GITHUB_OUTPUT"
+
+          READBACK="$(op read "op://${OP_WRITEBACK_VAULT}/${CANARY_ITEM}/value")"
+          echo "::add-mask::$READBACK"
+          if [ "$READBACK" != "$CANARY" ]; then
+            echo "::error::canary did not round-trip — write path is NOT working (values withheld)."
+            exit 1
+          fi
+          echo "✅ canary round-tripped — write path works"
+
+      # The security half: prove the token is scoped to the writeback vault and
+      # can't reach prod credentials. An UNEXPECTED SUCCESS here is a failure.
+      - name: Assert token is denied on Grove Prod
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_CI_WRITEBACK_SA_TOKEN }}
+        run: |
+          set -euo pipefail
+          if op vault get "Grove Prod" >/dev/null 2>&1; then
+            echo "::error::OP_CI_WRITEBACK_SA_TOKEN can reach the 'Grove Prod' vault. The SA is OVER-GRANTED — that is the exact failure GOL-237 exists to prevent. Re-scope it to 'Grove CI Writeback' only before using this token."
+            exit 1
+          fi
+          echo "✅ token correctly denied on Grove Prod — scope is tight"
+
+      - name: Clean up canary
+        if: ${{ always() && steps.canary.outputs.written == 'true' }}
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_CI_WRITEBACK_SA_TOKEN }}
+        run: |
+          set -euo pipefail
+          op item delete "$CANARY_ITEM" --vault "$OP_WRITEBACK_VAULT" >/dev/null 2>&1 \
+            && echo "canary deleted" \
+            || echo "::warning::canary item '${CANARY_ITEM}' could not be deleted — remove it manually from '${OP_WRITEBACK_VAULT}'."
