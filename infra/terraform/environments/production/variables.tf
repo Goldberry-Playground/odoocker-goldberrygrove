@@ -23,14 +23,26 @@ variable "spaces_secret_key" {
 }
 
 variable "admin_ip_cidr" {
-  description = "Operator CIDR allowed SSH (e.g. 203.0.113.7/32)."
+  description = "Operator IPv4 CIDR for the blogs/Odoo SSH allowlist. Use `curl -4 ifconfig.me`/32. Default matches the value live in prod state (blogs firewall port-22 rule) and the qa-app-platform default -- keeping it here rather than in a gitignored tfvars is what makes the SSH rule reproducible from code (GOL-385)."
   type        = string
+  default     = "74.47.41.38/32"
+  validation {
+    condition     = can(regex("^[0-9.]+/[0-9]+$", var.admin_ip_cidr))
+    error_message = "admin_ip_cidr must be a valid IPv4 CIDR like 74.47.41.38/32"
+  }
 }
 
 variable "healthchecks_ping_url" {
-  description = "Healthchecks.io ping URL for the nightly blogs backup dead-man's switch. Empty string disables pings."
+  description = "Healthchecks.io ping URL for the nightly blogs backup dead-man's switch. Empty string disables pings. Feeds the blogs droplet's user_data, so a placeholder here does not merely misconfigure the backup ping -- it changes the user_data hash and forces a droplet REPLACE (GOL-385)."
   type        = string
   default     = ""
+  # A placeholder in user_data is invisible until it detonates: the plan just
+  # says "must be replaced" with a (sensitive value) diff and no hint why.
+  # Fail loudly at plan time instead.
+  validation {
+    condition     = !can(regex("REPLACE-UUID", var.healthchecks_ping_url))
+    error_message = "healthchecks_ping_url still holds the REPLACE-UUID placeholder. Set the real ping URL (1P: Goldberry Grove - Admin/Grove Infra/healthchecks_ping_url) or \"\" to disable pings -- a placeholder forces a blogs droplet replace."
+  }
 }
 
 variable "odoo_backup_healthchecks_ping_url" {

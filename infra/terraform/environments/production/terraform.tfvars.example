@@ -1,5 +1,31 @@
 # All sensitive values arrive via op run TF_VAR_ injection - never fill them here.
-admin_ip_cidr         = "203.0.113.7/32"
-region                = "nyc3"
-blogs_droplet_size    = "s-2vcpu-2gb"
-healthchecks_ping_url = "https://hc-ping.com/REPLACE-UUID"
+#
+# GOL-385: this file used to ship placeholder values that silently produced a
+# DIFFERENT droplet than the one live in prod. `healthchecks_ping_url` feeds the
+# blogs droplet's user_data, and the DO provider stores user_data as a SHA1 --
+# so a wrong value here does not surface as "backup ping misconfigured", it
+# surfaces as `digitalocean_droplet.blogs must be replaced` with an opaque
+# (sensitive value) diff and no hint as to which input moved.
+#
+# Everything that CAN be defaulted now is, in variables.tf (admin_ip_cidr,
+# region, blogs_droplet_size, droplet_image, image tags). Prod's SSH rule and
+# sizing are therefore reproducible from code alone. Do not re-add them here:
+# a stale copy in a gitignored tfvars silently overrides the codified value,
+# which is the exact class of failure GOL-385 is about. (The old example's
+# admin_ip_cidr was 203.0.113.7/32 -- a TEST-NET-3 documentation address --
+# so copying it verbatim also locked SSH to an IP nobody owns.)
+#
+# That leaves TWO inputs a plan/apply needs, and NEITHER belongs in this file:
+#
+#   healthchecks_ping_url   -> op://Goldberry Grove - Admin/Grove Infra/healthchecks_ping_url
+#                              "" disables backup pings. Wire via .env.op.
+#   grove_revalidate_secret -> op://Goldberry Grove - Admin/Grove Infra/grove_revalidate_secret
+#                              >=32 chars. Deliberately has NO default so a bare
+#                              apply cannot ship a placeholder secret to prod;
+#                              the cost is that `plan` FAILS until it is set.
+#                              That is intentional - supply it via .env.op.
+#
+# So in the healthy state this file is EMPTY of real values. If you find
+# yourself filling it in, the value is missing from 1Password -- fix it there,
+# or prod stops being reproducible the moment your laptop is not the machine
+# running the apply.
