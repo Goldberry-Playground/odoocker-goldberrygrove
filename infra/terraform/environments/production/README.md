@@ -21,10 +21,32 @@ is gated** on the QA L3 soak sign-off (~2026-07-21+) and the @CEO final go
 
 - Blogs droplet (4x Ghost 6 + MySQL 8 + Caddy) - see blogs.tf
 - blog.{zone} DNS records in all four Cloudflare brand zones
+- **Reserved IP** for the blogs droplet (GOL-387) - the blog.* records point HERE,
+  not at the droplet's ephemeral address, so a replace needs no DNS change. Same
+  prerequisite #242's day-2 model assumed, on the one droplet that is already live.
 - Cloudflare Origin CA certs (15y, per zone) for proxied TLS
 - grove-blogs-backups Spaces bucket + lifecycle
 - Apex A records for gatheringatthegrove.com + goldberrygrove.farm
   (imported from Cloudflare during migration; see apex-records.tf) (file arrives with the Task 6 migration)
+  **When they land, point them at `digitalocean_reserved_ip.blogs`, not at the droplet.**
+
+### ⚠ The blogs droplet has a PENDING REPLACE - do not run a bare `terraform apply`
+
+A plan against real prod state shows `digitalocean_droplet.blogs must be replaced`, on a
+droplet that is **live and serving all four brand blogs**. Two ForceNew attributes drive
+it (`replace_paths: [["monitoring"], ["user_data"]]`):
+
+- `user_data` drifted from what was applied. The droplet was created 2026-07-07; this env
+  first landed in git 2026-07-12 (#207), so the live box was applied from a working tree
+  that was never committed as-is. State stores `user_data` as a SHA1, so what is actually
+  on the box **cannot be recovered from Terraform**.
+- `monitoring` `false -> true` from GOL-381 (#256). Its four droplet alerts were applied
+  but the flag was not, so the `do-agent` is absent and those alerts have no metric
+  source - they report green forever. The replace is what makes that alerting real.
+
+A bare apply here rebuilds the live blogs and rewrites their DNS as a side effect of
+whatever else you were applying. Do the reserved IP first, then take the replace in a
+chosen window: [`docs/RUNBOOK-blogs-reserved-ip-cutover.md`](../../../../docs/RUNBOOK-blogs-reserved-ip-cutover.md).
 
 ## What lives here (Track 2 - GOL-105, apply gated)
 
