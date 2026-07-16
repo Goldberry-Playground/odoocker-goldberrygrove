@@ -161,6 +161,10 @@ The workflow sends `CF-Access-Client-Id` + `CF-Access-Client-Secret` headers alo
 
 ## Secrets inventory (Infisical `grove-odoocker/prod`)
 
+> **Historical.** Infisical is retired ([ADR 003](./003-infisical-secrets-broker.md)
+> is superseded by ADR-0001). These secrets now live in the per-stage 1Password
+> vaults; the inventory below is kept for the shapes/names, not the location.
+
 | Secret | Purpose | Source |
 |---|---|---|
 | `PAPERCLIP_QA_TRIAGE_WEBHOOK_URL` | Routine's public webhook URL | Paperclip API response when routine trigger created |

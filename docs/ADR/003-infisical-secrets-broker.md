@@ -1,6 +1,21 @@
 # ADR 003: Infisical Cloud as OIDC secrets broker
 
-**Status:** Accepted (2026-06-18)
+**Status:** **Superseded by ADR-0001 (AgenticOS)** — 2026-07-15 (GOL-230 / GOL-231)
+
+> **This ADR is a historical record. Do not follow it.**
+>
+> Infisical is retired. Secrets are now read directly from 1Password by
+> `1password/load-secrets-action` in CI (per-stage vaults + read-only service
+> accounts) and by `op run --env-file=.env.op` for local Terraform envs. The
+> `infisical-identities` Terraform env, its OIDC machine identities, and the
+> `scripts/infisical-*.sh` helpers described below have all been destroyed and
+> deleted. (Account cancellation is tracked on GOL-231 — it needs the human
+> account holder.)
+>
+> Everything below is preserved only to explain why the OIDC-broker approach was
+> taken in June 2026 and what it cost. See ADR-0001 for the current model.
+
+**Original status:** Accepted (2026-06-18)
 **Context:** OIDC retrofit (Asana `1215643675066258`, due 2026-06-27). Decision record in `vault/wiki/Software/Grove Deployment Decisions.md` and `memory/project_infisical_decision_cloud.md`.
 
 ## Decision

@@ -43,9 +43,9 @@ These aren't code — they're calls to make + live infra to apply:
 2. **Apply the terraform.** `infra/terraform/environments/observability/` is a
    reviewed scaffold, **not yet applied**. Validate it with a live apply on a
    throwaway droplet first, then provision the real obs droplet.
-3. **Secrets pipeline.** Wire Infisical → terraform/cloud-init → compose env
-   (same OIDC pattern as `qa-app-platform`), so the values below never live in a
-   committed file. Until that exists, provision `.env.monitoring` / `.env.plausible`
+3. **Secrets pipeline.** Wire 1Password → terraform/cloud-init → compose env
+   (same service-account pattern as `qa-app-platform`), so the values below never
+   live in a committed file. Until that exists, provision `.env.monitoring` / `.env.plausible`
    on the droplet by hand from the checklist below.
 4. **Storage volumes.** Attach DO block volumes for Keep's SQLite and Plausible's
    databases; point OpenObserve at DO Spaces. See "Storage".
@@ -144,7 +144,7 @@ change, don't casually recreate.
 6. [ ] Bring the stacks up on the droplet:
        `docker compose -f docker-compose.monitoring.yml --env-file .env.monitoring up -d`
        and the Plausible stack likewise.
-7. [ ] Point `OPENOBSERVE_BASE_URL` / `KEEP_BASE_URL` at the droplet in Infisical,
+7. [ ] Point `OPENOBSERVE_BASE_URL` / `KEEP_BASE_URL` at the droplet in 1Password,
        then run `scripts/setup-monitoring.py` (or let the gated `qa-deploy`/prod
        step run it) to POST monitors + the 37 alerts + dashboards.
 8. [ ] In Plausible: register a site per tenant domain, wire the Caddy route

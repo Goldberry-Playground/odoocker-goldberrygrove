@@ -130,6 +130,8 @@ One PR per frontend (hub, goldberry, ggg, nursery). Each adds:
 - `infra/terraform/environments/qa-app-platform/apps/<name>.app.yaml` spec
 - Service definition pointing at `ghcr.io/goldberry-playground/grove-<name>:latest`
 - Env vars sourced from Infisical (same identity pattern as current QA)
+  <!-- Historical: Infisical is retired (GOL-231); env vars now come from the
+       per-stage 1Password vaults. See ADR-0001. -->
 - Health check + autodeploy config
 - DNS record `<name>.qa.gatheringatthegrove.com` → App Platform's default URL
 

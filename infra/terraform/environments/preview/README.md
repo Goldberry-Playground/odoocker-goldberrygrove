@@ -41,7 +41,7 @@ If a future review changes that assessment, document the rationale in a new ADR.
 ## When preview gets deployed
 
 When the `preview-up.yml` workflow is eventually built, it should mirror `qa-deploy.yml`'s structure:
-- Same Infisical OIDC pattern
+- Same 1Password service-account secret-fetch pattern (`1password/load-secrets-action`)
 - Same `cleanup-acme-txts.sh` preflight (preview hits the same caddy-dns/digitalocean delete bug)
 - Same image-shape preflight (catches PR #90-class "image built but missing files" failures)
 - Variable: `pr_number` (workflow_dispatch input or PR-event-driven)

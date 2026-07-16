@@ -138,7 +138,7 @@ a box whose boot is unproven (GOL-385) — take it in a chosen window:
 - Env wiring: GROVE_ODOO_URL/ODOO_URL → https://odoo.gatheringatthegrove.com;
   Ghost URLs → the live blog.* hosts; real per-tenant ODOO_API_KEY + shared
   GROVE_REVALIDATE_SECRET + Ghost content keys (all GENERAL scope, injected via
-  TF_VAR from 1P/Infisical - stubs keep `plan` working pre-launch)
+  TF_VAR from 1Password - stubs keep `plan` working pre-launch)
 - DO-native DEPLOYMENT_FAILED / DOMAIN_FAILED alerts (alert path #2)
 - **No `domain{}` blocks yet.** The four brand apexes are a one-way-door launch
   cutover (GOL-116 decisions #1 CF-proxied-apex TLS pattern + #2 CEO-coordinated

@@ -153,7 +153,7 @@ variable "tenant_image_tag" {
 }
 
 variable "grove_revalidate_secret" {
-  description = "Signed-webhook secret for grove-sites' /api/revalidate endpoint (all four apps share it). Rotates whenever this TF applies with a new value; consumers (Odoo webhooks, Ghost webhooks) need re-seeding when it changes. GENERAL (not SECRET) scope on the app, same provider-drift reason as odoo_api_keys. >=32 chars; generate with `openssl rand -hex 32`. Read from 1P/Infisical via TF_VAR_grove_revalidate_secret -- no default so a bare apply cannot ship a placeholder secret to prod."
+  description = "Signed-webhook secret for grove-sites' /api/revalidate endpoint (all four apps share it). Rotates whenever this TF applies with a new value; consumers (Odoo webhooks, Ghost webhooks) need re-seeding when it changes. GENERAL (not SECRET) scope on the app, same provider-drift reason as odoo_api_keys. >=32 chars; generate with `openssl rand -hex 32`. Read from 1Password via TF_VAR_grove_revalidate_secret -- no default so a bare apply cannot ship a placeholder secret to prod."
   type        = string
   sensitive   = true
   validation {

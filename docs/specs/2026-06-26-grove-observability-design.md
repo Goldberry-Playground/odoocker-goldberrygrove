@@ -154,7 +154,7 @@ No single failure that blinds you:
 
 Cost optimization needs two streams joined: **what each thing costs** and **how hard it's working.** The USE/utilization metrics (§3C) already supply the second; the **DO billing bridge** supplies the first — so "what we're spending and what to trim" is a dashboard in the existing pane, not a new platform. (OpenCost is K8s-native and a poor fit for a Compose + PaaS stack; rejected.)
 
-**Implementation — extend the §5 DO-metrics bridge** to also poll the DigitalOcean billing + inventory APIs (read-only DO token, brokered via Infisical per ADR-003):
+**Implementation — extend the §5 DO-metrics bridge** to also poll the DigitalOcean billing + inventory APIs (read-only DO token, read from 1Password per ADR-0001):
 
 | Source | Emits | Cadence |
 |---|---|---|
