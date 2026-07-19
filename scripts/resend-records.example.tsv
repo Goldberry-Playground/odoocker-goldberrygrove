@@ -1,0 +1,35 @@
+# Resend `send.<domain>` email-auth DNS records for Cloudflare (GOL-580).
+# TAB-separated: zone <TAB> type <TAB> name <TAB> content <TAB> priority
+# Copy to scripts/resend-records.tsv, fill the TODO_FROM_RESEND values from the
+# Resend dashboard (Domains -> <domain> -> DNS records), then run:
+#   CLOUDFLARE_API_TOKEN=... scripts/publish-resend-dns.sh scripts/resend-records.tsv
+#
+# Deterministic rows (SPF/DMARC) are pre-filled and identical across domains.
+# DKIM CNAME target and the feedback-smtp AWS region are Resend-generated per
+# domain — Resend is the source of truth; transcribe EXACTLY what it shows.
+# (Resend usually shows region us-east-1 => feedback-smtp.us-east-1.amazonses.com,
+#  and one DKIM CNAME `resend._domainkey` -> <hash>.dkim.amazonses.com. If Resend
+#  shows more/different rows for a domain, add/adjust rows to match it exactly.)
+#
+# NOTE: the storefront From must live on a Resend-verified domain. This scope
+# verifies the send.<domain> SUBDOMAIN, so the From should be
+# notifications@send.<domain> (or verify the apex instead). See the runbook +
+# the handback note to Ada re: grove-odoo-modules#25 res.company.email.
+
+# --- send.goldberrygrove.farm ---------------------------------------------------
+goldberrygrove.farm	TXT	send.goldberrygrove.farm	v=spf1 include:amazonses.com ~all	-
+goldberrygrove.farm	MX	send.goldberrygrove.farm	feedback-smtp.TODO_FROM_RESEND.amazonses.com	10
+goldberrygrove.farm	CNAME	resend._domainkey.send.goldberrygrove.farm	TODO_FROM_RESEND.dkim.amazonses.com	-
+goldberrygrove.farm	TXT	_dmarc.send.goldberrygrove.farm	v=DMARC1; p=none;	-
+
+# --- send.atthegrovenursery.com -------------------------------------------------
+atthegrovenursery.com	TXT	send.atthegrovenursery.com	v=spf1 include:amazonses.com ~all	-
+atthegrovenursery.com	MX	send.atthegrovenursery.com	feedback-smtp.TODO_FROM_RESEND.amazonses.com	10
+atthegrovenursery.com	CNAME	resend._domainkey.send.atthegrovenursery.com	TODO_FROM_RESEND.dkim.amazonses.com	-
+atthegrovenursery.com	TXT	_dmarc.send.atthegrovenursery.com	v=DMARC1; p=none;	-
+
+# --- send.woodworkingeorge.com  (single-g: the live/registered zone) ------------
+woodworkingeorge.com	TXT	send.woodworkingeorge.com	v=spf1 include:amazonses.com ~all	-
+woodworkingeorge.com	MX	send.woodworkingeorge.com	feedback-smtp.TODO_FROM_RESEND.amazonses.com	10
+woodworkingeorge.com	CNAME	resend._domainkey.send.woodworkingeorge.com	TODO_FROM_RESEND.dkim.amazonses.com	-
+woodworkingeorge.com	TXT	_dmarc.send.woodworkingeorge.com	v=DMARC1; p=none;	-
