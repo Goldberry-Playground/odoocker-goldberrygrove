@@ -175,37 +175,50 @@ variable "discord_bridge_port" {
   default     = 8787
 }
 
+# The six values below default to "" so that `discord_bridge_enabled = false`
+# genuinely skips the overlay (as documented above) instead of failing plan on
+# six missing required variables -- which would defeat the point during an
+# emergency rebuild, since three of them are 1Password-backed secrets. When the
+# overlay IS enabled, a precondition on data.archive_file.discord_bridge_src in
+# main.tf rejects empty values at plan time, so the toggle can't silently ship a
+# bridge that crash-loops on MissingEnvError.
 variable "discord_buffer_api_token" {
   description = "Buffer read-only insights token (1P Grove Infra/buffer_api_token). Read by the digest path; the interactions endpoint itself needs it loaded at config time."
   type        = string
   sensitive   = true
+  default     = ""
 }
 
 variable "discord_bot_token" {
   description = "Discord bot token (1P Grove Infra/discord_bot_token)."
   type        = string
   sensitive   = true
+  default     = ""
 }
 
 variable "discord_app_id" {
   description = "Discord application id (1P Grove Infra/discord_app_id)."
   type        = string
+  default     = ""
 }
 
 variable "discord_public_key" {
   description = "Discord application Ed25519 public key for request verification (1P Grove Infra/discord_public_key)."
   type        = string
+  default     = ""
 }
 
 variable "discord_insights_channel_id" {
   description = "Discord #weekly-insights channel id the digest posts to (1P Grove Infra/discord_insights_channel_id). Rendered as DISCORD_WEEKLY_INSIGHTS_CHANNEL_ID."
   type        = string
+  default     = ""
 }
 
 variable "discord_tunnel_token" {
   description = "Cloudflare Tunnel connector token for the discord tunnel (1P Grove Infra/discord_tunnel_token). Rendered as TUNNEL_TOKEN into cloudflared.env (0600)."
   type        = string
   sensitive   = true
+  default     = ""
 }
 
 variable "cloudflare_ingress_cidrs" {

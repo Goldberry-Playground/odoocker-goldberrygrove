@@ -16,11 +16,25 @@ DEST="${HERE}/compose/discord-bridge-src"
 
 [ -d "$SRC" ] || { echo "not found: $SRC" >&2; exit 1; }
 
-# Mirror the tree exactly (delete removed files). Keep it lean — the bridge is
-# zero-dependency, so there is no node_modules/build output to exclude.
+# Mirror the tree exactly (delete removed files).
 rm -rf "$DEST"
 mkdir -p "$DEST"
 cp -a "$SRC/." "$DEST/"
+
+# Scrub anything that must never be vendored. The bridge has no RUNTIME deps,
+# but it does declare devDependencies (typescript/@types/node for `npm run
+# type-check`), so an upstream checkout can absolutely have a node_modules --
+# which would otherwise land in the cloud-init b64 blob. A real .env would be
+# worse: .gitignore hides it, so it would ride into user_data unnoticed.
+# .env.example is intentionally KEPT (it is part of the vendored snapshot).
+rm -rf "$DEST/node_modules"
+rm -f "$DEST/.env" "$DEST/.env.local" "$DEST/.env.production"
+
+# Tests are not runtime and must not ride into user_data (upstream currently
+# carries 8 lib/*.test.ts, ~19 KB). Dropping them here is also what keeps a
+# re-sync reproducing the existing lean snapshot instead of showing phantom
+# additions in `git status`.
+find "$DEST" -name '*.test.ts' -delete
 
 echo "Synced $SRC -> $DEST"
 echo "Review: git status $DEST ; then commit the snapshot."

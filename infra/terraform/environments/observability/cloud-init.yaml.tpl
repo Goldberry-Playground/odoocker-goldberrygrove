@@ -100,9 +100,11 @@ runcmd:
   - systemctl enable --now docker
   - cd /etc/grove-obs && docker compose --env-file .env -f docker-compose.obs.yml up -d
 %{ if discord_bridge_enabled ~}
-  # Bring the discord overlay up AFTER the base stack so the external
-  # grove-obs_obs network already exists. Idempotent: unzip -o overwrites, and
-  # `compose up -d` converges. The overlay's env_file directives inject secrets.
+  # Overlay comes up after the base stack. It no longer DEPENDS on that ordering
+  # (it owns its own `discord` network rather than joining the external
+  # grove-obs_obs -- see docker-compose.discord.yml), but base-first keeps boot
+  # order predictable. Idempotent: unzip -o overwrites, `compose up -d`
+  # converges. The overlay's env_file directives inject secrets.
   - rm -rf /etc/grove-obs/discord-bridge-src && mkdir -p /etc/grove-obs/discord-bridge-src
   - unzip -o /etc/grove-obs/discord-bridge-src.zip -d /etc/grove-obs/discord-bridge-src
   - cd /etc/grove-obs && docker compose -f docker-compose.discord.yml up -d
