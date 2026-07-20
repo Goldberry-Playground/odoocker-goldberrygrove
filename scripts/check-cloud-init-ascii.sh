@@ -52,6 +52,15 @@ DEFAULT_FILES=(
   # unlike QA, which lists its compose/Caddyfile defensively.
   "infra/terraform/environments/production/cloud-init-odoo.yaml.tpl"
   "infra/terraform/environments/production/cloud-init-blogs.yaml.tpl"
+
+  # OBSERVABILITY (grove-obs) -- added 2026-07-20 (GOL-598). The guard did NOT
+  # cover this env, so a U+2500 box-drawing dash in the discord-bridge overlay
+  # comment slipped through CI green -- the exact GOL-270 failure mode (droplet
+  # boots, cloud-init skips write_files/runcmd, no OpenObserve/Keep/discord). As
+  # with production, only the RAW template is listed: compose/*.yml + Caddyfile
+  # reach the droplet via base64encode(file(...)) in main.tf, so their bytes are
+  # ASCII base64 by the time cloud-init parses the YAML.
+  "infra/terraform/environments/observability/cloud-init.yaml.tpl"
 )
 
 if [ -n "${FILES:-}" ]; then

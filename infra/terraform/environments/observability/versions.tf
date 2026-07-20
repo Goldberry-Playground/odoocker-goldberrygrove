@@ -6,6 +6,12 @@ terraform {
       source  = "digitalocean/digitalocean"
       version = "~> 2.40"
     }
+    # Zips the vendored discord-bridge source into a single cloud-init blob
+    # (GOL-598). Run `terraform init -upgrade` once to pull it into the lock.
+    archive = {
+      source  = "hashicorp/archive"
+      version = "~> 2.4"
+    }
   }
 
   # S3-compatible (DO Spaces) backend — same bucket as every other Grove env;

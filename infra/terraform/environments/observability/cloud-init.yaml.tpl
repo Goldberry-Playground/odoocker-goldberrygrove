@@ -8,6 +8,12 @@
 # a bare droplet with nothing installed). GOL-270.
 package_update: true
 
+# unzip is needed to unpack the digest-pinned discord-bridge source archive
+# (below). Installed at boot before runcmd. Harmless when the discord overlay is
+# disabled.
+packages:
+  - unzip
+
 write_files:
   - path: /etc/grove-obs/.env
     permissions: "0600"
@@ -48,8 +54,59 @@ write_files:
     permissions: "0600"
     content: ${cf_origin_key_b64}
 
+%{ if discord_bridge_enabled ~}
+  # -- Discord bridge interactions endpoint overlay (GOL-593 / GOL-598) --------
+  # This template must stay ASCII-only (see header): a non-ASCII byte here breaks
+  # cloud-init's YAML parser -> empty cloud config -> bare droplet (GOL-270).
+  # Codifies the hot-applied go-live: the zero-dep Ed25519-verified interactions
+  # server + a Cloudflare Tunnel connector that exposes it at
+  # https://discord.gatheringatthegrove.com/interactions with NO inbound port and
+  # NO origin cert (Discord -> CF edge -> tunnel -> discord-bridge:8787). The
+  # overlay attaches to the existing grove-obs_obs network, so it is brought up
+  # AFTER the base obs stack in runcmd. Secrets flow from 1P via the tfvars into
+  # 0600 env files; the source is delivered as a digest-neutral zip and unpacked
+  # to the RO bind-mount path.
+  - path: /etc/grove-obs/docker-compose.discord.yml
+    encoding: b64
+    permissions: "0644"
+    content: ${compose_discord_b64}
+
+  - path: /etc/grove-obs/discord-bridge.env
+    permissions: "0600"
+    content: |
+      BUFFER_API_TOKEN=${discord_buffer_api_token}
+      DISCORD_BOT_TOKEN=${discord_bot_token}
+      DISCORD_APP_ID=${discord_app_id}
+      DISCORD_PUBLIC_KEY=${discord_public_key}
+      DISCORD_WEEKLY_INSIGHTS_CHANNEL_ID=${discord_insights_channel_id}
+      PORT=${discord_bridge_port}
+
+  - path: /etc/grove-obs/cloudflared.env
+    permissions: "0600"
+    content: |
+      TUNNEL_TOKEN=${discord_tunnel_token}
+
+  # apps/discord-bridge source, vendored under compose/discord-bridge-src/ and
+  # zipped by data.archive_file. Unpacked to /etc/grove-obs/discord-bridge-src in
+  # runcmd, then bind-mounted RO into the node container.
+  - path: /etc/grove-obs/discord-bridge-src.zip
+    encoding: b64
+    permissions: "0644"
+    content: ${discord_bridge_src_zip_b64}
+%{ endif ~}
+
 runcmd:
   - curl -fsSL https://get.docker.com | sh
   - systemctl enable --now docker
   - cd /etc/grove-obs && docker compose --env-file .env -f docker-compose.obs.yml up -d
+%{ if discord_bridge_enabled ~}
+  # Overlay comes up after the base stack. It no longer DEPENDS on that ordering
+  # (it owns its own `discord` network rather than joining the external
+  # grove-obs_obs -- see docker-compose.discord.yml), but base-first keeps boot
+  # order predictable. Idempotent: unzip -o overwrites, `compose up -d`
+  # converges. The overlay's env_file directives inject secrets.
+  - rm -rf /etc/grove-obs/discord-bridge-src && mkdir -p /etc/grove-obs/discord-bridge-src
+  - unzip -o /etc/grove-obs/discord-bridge-src.zip -d /etc/grove-obs/discord-bridge-src
+  - cd /etc/grove-obs && docker compose -f docker-compose.discord.yml up -d
+%{ endif ~}
   - touch /var/lib/cloud/instance/grove-obs-ready

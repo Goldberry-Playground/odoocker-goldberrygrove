@@ -1,0 +1,77 @@
+###############################################################################
+# Discord bridge interactions endpoint (GOL-593 / GOL-473 Phase 1).
+#
+# Standalone overlay on the grove-obs droplet: the zero-dep Ed25519-verified
+# interactions server (apps/discord-bridge/server.ts, run via node
+# --experimental-strip-types) plus a Cloudflare Tunnel connector that exposes it
+# publicly at https://discord.gatheringatthegrove.com WITHOUT opening any inbound
+# port or minting an origin cert. Discord POSTs interactions -> CF edge -> tunnel
+# -> discord-bridge:8787. Both sit on a DEDICATED overlay network (below), NOT
+# the shared obs plane -- see the network comment for why.
+#
+# Secrets live in env files (0600, rendered from 1P Grove Infra), never in this
+# file. Images pinned by digest (immutable infra). Source is bind-mounted RO from
+# /etc/grove-obs/discord-bridge-src (deployed from grove-sites main; codified as a
+# vendored snapshot under compose/discord-bridge-src/, delivered by cloud-init).
+###############################################################################
+name: grove-obs
+
+networks:
+  # Dedicated to this overlay (compose creates it as grove-obs_discord); both
+  # services resolve each other by service DNS on it.
+  #
+  # Deliberately NOT the shared grove-obs_obs plane. The bridge needs nothing
+  # from it -- it only egresses to api.buffer.com + discord.com (verified: no
+  # OpenObserve/OTLP/Keep reference anywhere in discord-bridge-src). Putting
+  # cloudflared on grove-obs_obs would give the tunnel connector an L3 path to
+  # OpenObserve (5080) and Keep (3034/8080), which main.tf firewalls to
+  # admin_ip_cidr at the DO edge. A single ingress edit in the Cloudflare
+  # dashboard (config lives there, not in this repo, because the tunnel is
+  # token-managed) could then publish the admin-only observability stack to the
+  # internet -- with zero Terraform drift to catch it. Keeping the connector off
+  # that network makes the boundary structural instead of dashboard-dependent.
+  discord:
+    driver: bridge
+
+services:
+  discord-bridge:
+    image: node@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3
+    restart: unless-stopped
+    working_dir: /app
+    command: ["node", "--experimental-strip-types", "server.ts"]
+    env_file:
+      - /etc/grove-obs/discord-bridge.env
+    volumes:
+      - /etc/grove-obs/discord-bridge-src:/app:ro
+    networks:
+      - discord
+    expose:
+      - "8787"
+    # Without this, `restart: unless-stopped` turns a bad/missing env value into
+    # a silent crash-loop: cloud-init's `compose up -d` returns on container
+    # CREATION, so the grove-obs-ready sentinel fires either way and a rebuild
+    # looks clean while interactions 503. Uses the server's own /health
+    # (server.ts) via node's global fetch -- the image has no curl/wget, and this
+    # keeps the overlay zero-dependency. Single quotes + string concat avoid
+    # compose's ${...} interpolation.
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:'+(process.env.PORT||8787)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  cloudflared:
+    image: cloudflare/cloudflared@sha256:4f6655284ab3d252b7f28fedb19fe6c8fc82ee5b1295c20ac74d475e5398a52d
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run"]
+    env_file:
+      - /etc/grove-obs/cloudflared.env
+    depends_on:
+      - discord-bridge
+    networks:
+      - discord

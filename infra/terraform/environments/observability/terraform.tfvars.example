@@ -52,3 +52,17 @@ cf_origin_key_pem = <<-EOT
   ...op://Grove Prod/grove-obs-rum/origin_key...
   -----END PRIVATE KEY-----
 EOT
+
+# ── Discord bridge interactions endpoint overlay (GOL-593 / GOL-598) ─────────
+# Exposes apps/discord-bridge at https://discord.gatheringatthegrove.com via a
+# Cloudflare Tunnel (no inbound port, no origin cert). All secrets below flow
+# from 1Password Grove Infra — inject via op://, never paste literals. Set
+# discord_bridge_enabled=false to skip the overlay entirely on a fresh rebuild.
+discord_bridge_enabled = true
+# discord_bridge_port  = 8787   # default; matches server.ts
+discord_buffer_api_token    = "op://Goldberry Grove - Admin/Grove Infra/buffer_api_token"
+discord_bot_token           = "op://Goldberry Grove - Admin/Grove Infra/discord_bot_token"
+discord_app_id              = "op://Goldberry Grove - Admin/Grove Infra/discord_app_id"
+discord_public_key          = "op://Goldberry Grove - Admin/Grove Infra/discord_public_key"
+discord_insights_channel_id = "op://Goldberry Grove - Admin/Grove Infra/discord_insights_channel_id"
+discord_tunnel_token        = "op://Goldberry Grove - Admin/Grove Infra/discord_tunnel_token"

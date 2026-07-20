@@ -43,6 +43,57 @@ locals {
   ]
 }
 
+# Discord bridge source (GOL-593 / GOL-598): apps/discord-bridge vendored under
+# compose/discord-bridge-src/ (snapshot synced from grove-sites main, as deployed
+# at go-live). Zipped so cloud-init can ship the whole tree as one b64 blob and
+# unpack it to the RO bind-mount path. output_path lives under .terraform so it is
+# never committed. Only built when the overlay is enabled.
+#
+# `excludes` is a safety net, NOT decoration: sync-discord-bridge-src.sh mirrors
+# the upstream app dir wholesale (`cp -a "$SRC/."`), and the repo .gitignore
+# hides `.env*` -- so an operator syncing from a grove-sites checkout that has a
+# working .env would copy real Buffer/Discord tokens in, see nothing in
+# `git status`, and have them baked into the b64 user_data blob (and the 0644
+# zip on the droplet). Excluding them here means that can't happen even if the
+# file is present on disk.
+data "archive_file" "discord_bridge_src" {
+  count       = var.discord_bridge_enabled ? 1 : 0
+  type        = "zip"
+  source_dir  = "${path.module}/compose/discord-bridge-src"
+  output_path = "${path.module}/.terraform/discord-bridge-src.zip"
+
+  excludes = [
+    ".env",
+    ".env.local",
+    ".env.production",
+    "node_modules",
+    ".DS_Store",
+  ]
+
+  # The discord_* vars default to "" so `discord_bridge_enabled = false` can skip
+  # the overlay without supplying six values. That makes the enabled path the one
+  # needing a guard: without this, an enabled overlay missing (say)
+  # discord_public_key renders a blank env file, cloud-init reports success, the
+  # grove-obs-ready sentinel fires, and the bridge silently crash-loops on
+  # MissingEnvError behind `restart: unless-stopped`. count = 1 only when the
+  # overlay is enabled, so this check is scoped exactly right.
+  lifecycle {
+    precondition {
+      condition = alltrue([
+        for v in [
+          var.discord_buffer_api_token,
+          var.discord_bot_token,
+          var.discord_app_id,
+          var.discord_public_key,
+          var.discord_insights_channel_id,
+          var.discord_tunnel_token,
+        ] : trimspace(v) != ""
+      ])
+      error_message = "discord_bridge_enabled = true requires all six discord_* values (see terraform.tfvars.example; they live in 1P Grove Infra). Set discord_bridge_enabled = false to omit the overlay entirely."
+    }
+  }
+}
+
 # CI key TF-manages (long-lived, per the qa env's PR #63 rationale).
 resource "digitalocean_ssh_key" "obs_deploy" {
   name       = "grove-obs-deploy"
@@ -98,6 +149,23 @@ module "obs_droplet" {
     }))
     cf_origin_cert_b64 = base64encode(var.cf_origin_cert_pem)
     cf_origin_key_b64  = base64encode(var.cf_origin_key_pem)
+
+    # ── Discord bridge overlay (GOL-593 / GOL-598) ──────────────────────────
+    # When enabled, ship the digest-pinned overlay compose, the two 0600 env
+    # files rendered from 1P-backed tfvars, and the zipped source. When disabled,
+    # these still render (as empty/placeholder) but the template's `%{ if }`
+    # guard drops every discord write_files entry + runcmd, so nothing lands.
+    discord_bridge_enabled     = var.discord_bridge_enabled
+    discord_bridge_port        = var.discord_bridge_port
+    compose_discord_b64        = base64encode(file("${path.module}/compose/docker-compose.discord.yml"))
+    discord_bridge_src_zip_b64 = var.discord_bridge_enabled ? filebase64(data.archive_file.discord_bridge_src[0].output_path) : ""
+
+    discord_buffer_api_token    = var.discord_buffer_api_token
+    discord_bot_token           = var.discord_bot_token
+    discord_app_id              = var.discord_app_id
+    discord_public_key          = var.discord_public_key
+    discord_insights_channel_id = var.discord_insights_channel_id
+    discord_tunnel_token        = var.discord_tunnel_token
   })
 }
 
