@@ -32,6 +32,47 @@ Remaining before the rich alert layer produces signal: run `setup-monitoring.py`
 4. Firewall — SSH + Keep (3034) admin-only; OpenObserve (5080) admin **plus**
    `ingest_source_cidrs` (agenticos droplet `/32`) for cross-plane OTLP ingest
 5. cloud-init — Docker + the standalone `compose/docker-compose.obs.yml`
+6. **Discord bridge overlay + Cloudflare Tunnel** (`compose/docker-compose.discord.yml`,
+   toggled by `discord_bridge_enabled`) — see below
+
+## Discord bridge interactions endpoint + Cloudflare Tunnel (GOL-593 / GOL-598)
+
+Codifies the hot-applied go-live so a **grove-obs rebuild brings the interactions
+endpoint + tunnel up from code alone**. The overlay runs the zero-dependency,
+Ed25519-verified `apps/discord-bridge/server.ts` (via `node
+--experimental-strip-types`) plus a **Cloudflare Tunnel** connector that exposes
+it at `https://discord.gatheringatthegrove.com/interactions` with **no inbound
+port and no origin cert** (Discord → CF edge → tunnel → `discord-bridge:8787`).
+The firewall is untouched — the tunnel dials **out**.
+
+What cloud-init lands when `discord_bridge_enabled = true` (default):
+- `/etc/grove-obs/docker-compose.discord.yml` — digest-pinned `node` + `cloudflared`,
+  both on the existing external `grove-obs_obs` network. Brought up **after** the
+  base obs stack so that network exists.
+- `/etc/grove-obs/discord-bridge.env` (0600) — `BUFFER_API_TOKEN`,
+  `DISCORD_BOT_TOKEN`, `DISCORD_APP_ID`, `DISCORD_PUBLIC_KEY`,
+  `DISCORD_WEEKLY_INSIGHTS_CHANNEL_ID`, `PORT`, rendered from 1P Grove Infra.
+- `/etc/grove-obs/cloudflared.env` (0600) — `TUNNEL_TOKEN` from
+  1P `Grove Infra/discord_tunnel_token`.
+- `/etc/grove-obs/discord-bridge-src/` — the app source, delivered as a
+  `data.archive_file` zip and unpacked, then bind-mounted **read-only**.
+
+### Vendored source & keeping it in sync
+`compose/discord-bridge-src/` is a **snapshot** of grove-sites `apps/discord-bridge`
+(as deployed at go-live). It is vendored here only so the obs env can rebuild
+without a cross-repo checkout or a secret-bearing clone at provision time. Refresh
+it whenever the bridge changes upstream:
+```bash
+./scripts/sync-discord-bridge-src.sh /path/to/grove-sites   # copies apps/discord-bridge → compose/discord-bridge-src
+```
+The image digests in `compose/docker-compose.discord.yml` are pinned; bump them
+deliberately (immutable infra). A future hardening is to build a digest-pinned
+GHCR image for the bridge instead of a bind-mounted source tree (grove-sites CI,
+Ada's domain) — tracked as a follow-up; not required for reproducible rebuild.
+
+> **Adding the `archive` provider:** this env now also requires
+> `hashicorp/archive`. Run `terraform init -upgrade -backend-config=backend.hcl`
+> once to pull it into `.terraform.lock.hcl` before the first `plan`/`apply`.
 
 ## Apply (once validated live)
 ```bash

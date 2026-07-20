@@ -1,0 +1,18 @@
+{
+  "name": "@grove/discord-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Discord bridge — weekly Buffer digest + /insights (CMO Phase 1, GOL-262)",
+  "scripts": {
+    "type-check": "tsc --noEmit",
+    "lint": "echo 'lint placeholder'",
+    "start": "node --experimental-strip-types server.ts",
+    "digest": "node --experimental-strip-types digest-cli.ts",
+    "register-commands": "node --experimental-strip-types register-commands.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}

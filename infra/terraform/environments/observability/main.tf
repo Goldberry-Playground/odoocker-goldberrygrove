@@ -43,6 +43,18 @@ locals {
   ]
 }
 
+# Discord bridge source (GOL-593 / GOL-598): apps/discord-bridge vendored under
+# compose/discord-bridge-src/ (snapshot synced from grove-sites main, as deployed
+# at go-live). Zipped so cloud-init can ship the whole tree as one b64 blob and
+# unpack it to the RO bind-mount path. output_path lives under .terraform so it is
+# never committed. Only built when the overlay is enabled.
+data "archive_file" "discord_bridge_src" {
+  count       = var.discord_bridge_enabled ? 1 : 0
+  type        = "zip"
+  source_dir  = "${path.module}/compose/discord-bridge-src"
+  output_path = "${path.module}/.terraform/discord-bridge-src.zip"
+}
+
 # CI key TF-manages (long-lived, per the qa env's PR #63 rationale).
 resource "digitalocean_ssh_key" "obs_deploy" {
   name       = "grove-obs-deploy"
@@ -98,6 +110,23 @@ module "obs_droplet" {
     }))
     cf_origin_cert_b64 = base64encode(var.cf_origin_cert_pem)
     cf_origin_key_b64  = base64encode(var.cf_origin_key_pem)
+
+    # ── Discord bridge overlay (GOL-593 / GOL-598) ──────────────────────────
+    # When enabled, ship the digest-pinned overlay compose, the two 0600 env
+    # files rendered from 1P-backed tfvars, and the zipped source. When disabled,
+    # these still render (as empty/placeholder) but the template's `%{ if }`
+    # guard drops every discord write_files entry + runcmd, so nothing lands.
+    discord_bridge_enabled     = var.discord_bridge_enabled
+    discord_bridge_port        = var.discord_bridge_port
+    compose_discord_b64        = base64encode(file("${path.module}/compose/docker-compose.discord.yml"))
+    discord_bridge_src_zip_b64 = var.discord_bridge_enabled ? filebase64(data.archive_file.discord_bridge_src[0].output_path) : ""
+
+    discord_buffer_api_token    = var.discord_buffer_api_token
+    discord_bot_token           = var.discord_bot_token
+    discord_app_id              = var.discord_app_id
+    discord_public_key          = var.discord_public_key
+    discord_insights_channel_id = var.discord_insights_channel_id
+    discord_tunnel_token        = var.discord_tunnel_token
   })
 }
 

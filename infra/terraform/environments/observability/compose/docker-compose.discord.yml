@@ -1,0 +1,48 @@
+###############################################################################
+# Discord bridge interactions endpoint (GOL-593 / GOL-473 Phase 1).
+#
+# Standalone overlay on the grove-obs droplet: the zero-dep Ed25519-verified
+# interactions server (apps/discord-bridge/server.ts, run via node
+# --experimental-strip-types) plus a Cloudflare Tunnel connector that exposes it
+# publicly at https://discord.gatheringatthegrove.com WITHOUT opening any inbound
+# port or minting an origin cert. Discord POSTs interactions -> CF edge -> tunnel
+# -> discord-bridge:8787. Both attach to the existing grove-obs_obs network so
+# the tunnel resolves the bridge by service DNS name.
+#
+# Secrets live in env files (0600, rendered from 1P Grove Infra), never in this
+# file. Images pinned by digest (immutable infra). Source is bind-mounted RO from
+# /etc/grove-obs/discord-bridge-src (deployed from grove-sites main; codified as a
+# vendored snapshot under compose/discord-bridge-src/, delivered by cloud-init).
+###############################################################################
+name: grove-obs
+
+networks:
+  obs:
+    external: true
+    name: grove-obs_obs
+
+services:
+  discord-bridge:
+    image: node@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3
+    restart: unless-stopped
+    working_dir: /app
+    command: ["node", "--experimental-strip-types", "server.ts"]
+    env_file:
+      - /etc/grove-obs/discord-bridge.env
+    volumes:
+      - /etc/grove-obs/discord-bridge-src:/app:ro
+    networks:
+      - obs
+    expose:
+      - "8787"
+
+  cloudflared:
+    image: cloudflare/cloudflared@sha256:4f6655284ab3d252b7f28fedb19fe6c8fc82ee5b1295c20ac74d475e5398a52d
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run"]
+    env_file:
+      - /etc/grove-obs/cloudflared.env
+    depends_on:
+      - discord-bridge
+    networks:
+      - obs
