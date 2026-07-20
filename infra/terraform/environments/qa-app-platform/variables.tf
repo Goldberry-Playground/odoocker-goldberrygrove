@@ -216,3 +216,97 @@ variable "grove_brand_pr_token" {
   sensitive   = true
   default     = ""
 }
+
+# === Stripe sandbox keys (EOM-July QA, per-tenant) ==========================
+# Restricted (rk_test_) sandbox keys, one per storefront tenant, minted
+# 2026-07-20 and stored in 1Password vault `Grove QA` as items
+# stripe-{nursery,ggg,goldberry}-qa (field `secret_key`). Injected as
+# STRIPE_SECRET_KEY on the tenant apps. qa-stub defaults keep `terraform
+# plan` working without secrets (same philosophy as odoo_api_keys); the
+# real values flow via TF_VAR_* from .env.op at plan/apply time.
+
+variable "stripe_secret_key_goldberry" {
+  description = "Stripe restricted sandbox secret key (rk_test_) for the goldberry storefront. From 1Password `Grove QA`/stripe-goldberry-qa/secret_key via TF_VAR_stripe_secret_key_goldberry."
+  type        = string
+  sensitive   = true
+  default     = "qa-stub-no-stripe-key-yet"
+}
+
+variable "stripe_secret_key_ggg" {
+  description = "Stripe restricted sandbox secret key (rk_test_) for the ggg storefront. From 1Password `Grove QA`/stripe-ggg-qa/secret_key via TF_VAR_stripe_secret_key_ggg."
+  type        = string
+  sensitive   = true
+  default     = "qa-stub-no-stripe-key-yet"
+}
+
+variable "stripe_secret_key_nursery" {
+  description = "Stripe restricted sandbox secret key (rk_test_) for the nursery storefront. From 1Password `Grove QA`/stripe-nursery-qa/secret_key via TF_VAR_stripe_secret_key_nursery."
+  type        = string
+  sensitive   = true
+  default     = "qa-stub-no-stripe-key-yet"
+}
+
+# Webhook signing secrets do not exist yet (Stripe webhook endpoints land
+# later this week). Empty default = wired but inert, same fail-safe pattern
+# as grove_brand_pr_token: the env var is present with an empty value and
+# webhook signature verification simply fails until the real whsec_ value
+# is added to the 1Password items (field `webhook_secret`) and the
+# corresponding .env.op lines are uncommented.
+
+variable "stripe_webhook_secret_goldberry" {
+  description = "Stripe webhook signing secret (whsec_) for the goldberry storefront. Not minted yet -- will live at 1Password `Grove QA`/stripe-goldberry-qa/webhook_secret; uncomment the .env.op line once the field exists (an op:// ref to a missing field is a hard `op run` failure)."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "stripe_webhook_secret_ggg" {
+  description = "Stripe webhook signing secret (whsec_) for the ggg storefront. Not minted yet -- will live at 1Password `Grove QA`/stripe-ggg-qa/webhook_secret; uncomment the .env.op line once the field exists."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "stripe_webhook_secret_nursery" {
+  description = "Stripe webhook signing secret (whsec_) for the nursery storefront. Not minted yet -- will live at 1Password `Grove QA`/stripe-nursery-qa/webhook_secret; uncomment the .env.op line once the field exists."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+# === Ghost Content API keys (prod blogs droplet, read-only) =================
+# The QA frontends read the PROD Ghost blogs (blog.<brand-zone>, the 4x
+# Ghost 6 droplet in environments/production -- see docs/GHOST.md and
+# blogs.tf). Content API keys are READ-ONLY by design (Ghost Content API
+# is public-content-only), so pointing QA at prod Ghost cannot mutate
+# content. Keys come from each Ghost admin -> Settings -> Integrations
+# and live in 1Password `Grove Infra`. qa-stub defaults keep plan working
+# until the .env.op refs are filled in.
+
+variable "ghost_content_key_hub" {
+  description = "Ghost Content API key for the hub journal (blog.gatheringatthegrove.com) -- injected as HUB_GHOST_CONTENT_API_KEY. From 1Password `Grove Infra` via TF_VAR_ghost_content_key_hub."
+  type        = string
+  sensitive   = true
+  default     = "qa-stub-no-ghost-key-yet"
+}
+
+variable "ghost_content_key_goldberry" {
+  description = "Ghost Content API key for blog.goldberrygrove.farm -- injected as GHOST_CONTENT_KEY on the goldberry app. From 1Password `Grove Infra` via TF_VAR_ghost_content_key_goldberry."
+  type        = string
+  sensitive   = true
+  default     = "qa-stub-no-ghost-key-yet"
+}
+
+variable "ghost_content_key_ggg" {
+  description = "Ghost Content API key for blog.woodworkingeorge.com -- injected as GHOST_CONTENT_KEY on the ggg app. From 1Password `Grove Infra` via TF_VAR_ghost_content_key_ggg."
+  type        = string
+  sensitive   = true
+  default     = "qa-stub-no-ghost-key-yet"
+}
+
+variable "ghost_content_key_nursery" {
+  description = "Ghost Content API key for blog.atthegrovenursery.com -- injected as GHOST_CONTENT_KEY on the nursery app. From 1Password `Grove Infra` via TF_VAR_ghost_content_key_nursery."
+  type        = string
+  sensitive   = true
+  default     = "qa-stub-no-ghost-key-yet"
+}

@@ -81,18 +81,24 @@ resource "digitalocean_app" "hub" {
       }
 
       # Hub's journal (apps/hub/app/journal/*.tsx) uses HUB_GHOST_URL +
-      # HUB_GHOST_CONTENT_API_KEY. No Ghost in L3 yet -- stub URL + stub
-      # key satisfy grove-sites' requireEnv() but the /journal fetch will
-      # 404, and the page renders empty-state.
+      # HUB_GHOST_CONTENT_API_KEY. QA reads the PROD Ghost hub instance at
+      # blog.gatheringatthegrove.com (EOM-July decision 2026-07-20: QA reads
+      # prod Ghost -- apexes 302 to blog.* now, 301 at cutover). The blog.*
+      # vhost is live on the blogs droplet (Caddyfile-blogs.tpl) but serves
+      # 404 until production's ghost_urls flip lands (same PR, separate
+      # commit) -- journal renders empty-state until that apply, exactly as
+      # it did with the stub. Content API keys are read-only by design.
       env {
         key   = "HUB_GHOST_URL"
-        value = "https://qa-stub.example.com"
+        value = "https://blog.gatheringatthegrove.com"
         scope = "RUN_AND_BUILD_TIME"
       }
 
+      # GENERAL, not SECRET, for the same provider-drift reason as
+      # GROVE_REVALIDATE_SECRET below (#869/#514). Read-only content key.
       env {
         key   = "HUB_GHOST_CONTENT_API_KEY"
-        value = "qa-stub-no-ghost-key-yet"
+        value = var.ghost_content_key_hub
         scope = "RUN_AND_BUILD_TIME"
       }
 
@@ -198,18 +204,41 @@ resource "digitalocean_app" "hub" {
 # Env-var shape mirrors the monolith QA compose (environments/qa/compose/
 # docker-compose.qa.yml): tenants read ODOO_URL (not the hub's
 # GROVE_ODOO_URL) and their tenant.secrets.ts requireEnv() throws on
-# empty values in production, so Ghost/Odoo-key placeholders use the same
-# qa-stub-* sentinels. Ghost stays stubbed until the L3 Ghost story lands
-# (per-tenant droplet Ghost is monolith-QA-only for now -- see docs/GHOST.md).
+# empty values in production, so Odoo-key placeholders use the same
+# qa-stub-* sentinels. Ghost is no longer stubbed: QA reads the PROD
+# blogs droplet at blog.<brand-zone> (EOM-July decision 2026-07-20 --
+# there is no QA Ghost; Content API is read-only so prod content is safe).
 #
 # All three tenant images listen on container port 3001 (ENV PORT=3001 in
 # each Dockerfile); only the hub differs (3000).
 
 locals {
+  # ghost_url: per-tenant PROD Ghost blog (blog.<brand-zone>, the 4x Ghost
+  # droplet in environments/production -- hostnames match its
+  # Caddyfile-blogs.tpl vhosts exactly). QA reads prod Ghost per the
+  # EOM-July decision; Content API keys are read-only by design.
   tenant_apps = {
-    goldberry = { image = "grove-goldberry" }
-    ggg       = { image = "grove-ggg" }
-    nursery   = { image = "grove-nursery" }
+    goldberry = {
+      image                 = "grove-goldberry"
+      ghost_url             = "https://blog.goldberrygrove.farm"
+      ghost_content_key     = var.ghost_content_key_goldberry
+      stripe_secret_key     = var.stripe_secret_key_goldberry
+      stripe_webhook_secret = var.stripe_webhook_secret_goldberry
+    }
+    ggg = {
+      image                 = "grove-ggg"
+      ghost_url             = "https://blog.woodworkingeorge.com"
+      ghost_content_key     = var.ghost_content_key_ggg
+      stripe_secret_key     = var.stripe_secret_key_ggg
+      stripe_webhook_secret = var.stripe_webhook_secret_ggg
+    }
+    nursery = {
+      image                 = "grove-nursery"
+      ghost_url             = "https://blog.atthegrovenursery.com"
+      ghost_content_key     = var.ghost_content_key_nursery
+      stripe_secret_key     = var.stripe_secret_key_nursery
+      stripe_webhook_secret = var.stripe_webhook_secret_nursery
+    }
   }
 }
 
@@ -265,15 +294,41 @@ resource "digitalocean_app" "tenant" {
         scope = "RUN_AND_BUILD_TIME"
       }
 
+      # Prod Ghost per tenant (see locals.tenant_apps). goldberry's blog.*
+      # vhost 404s until production's ghost_urls flip is applied (same PR,
+      # separate commit); ggg/nursery blog.* are already live. /blog pages
+      # render empty-state against a 404ing Ghost, same as the old stub.
       env {
         key   = "GHOST_URL"
-        value = "https://qa-stub.example.com"
+        value = each.value.ghost_url
         scope = "RUN_AND_BUILD_TIME"
       }
 
+      # GENERAL, not SECRET, for the same provider-drift reason as
+      # ODOO_API_KEY above (#869/#514). Read-only content key.
       env {
         key   = "GHOST_CONTENT_KEY"
-        value = "qa-stub-no-ghost-key-yet"
+        value = each.value.ghost_content_key
+        scope = "RUN_AND_BUILD_TIME"
+      }
+
+      # Stripe restricted sandbox key (rk_test_, EOM-July QA checkout).
+      # GENERAL, not SECRET, same provider-drift rationale as ODOO_API_KEY
+      # (#869/#514) -- the value lives in TF state either way; state stays
+      # in the Spaces backend, never the repo. Keys are RESTRICTED and
+      # revocable in the Stripe sandbox dashboard.
+      env {
+        key   = "STRIPE_SECRET_KEY"
+        value = each.value.stripe_secret_key
+        scope = "RUN_AND_BUILD_TIME"
+      }
+
+      # Webhook signing secret -- wired now, empty until the Stripe webhook
+      # endpoints are created later this week (see variables.tf; empty value
+      # means signature verification fails safe, endpoints stay inert).
+      env {
+        key   = "STRIPE_WEBHOOK_SECRET"
+        value = each.value.stripe_webhook_secret
         scope = "RUN_AND_BUILD_TIME"
       }
 
