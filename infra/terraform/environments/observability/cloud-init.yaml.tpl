@@ -55,7 +55,9 @@ write_files:
     content: ${cf_origin_key_b64}
 
 %{ if discord_bridge_enabled ~}
-  # ── Discord bridge interactions endpoint overlay (GOL-593 / GOL-598) ─────────
+  # -- Discord bridge interactions endpoint overlay (GOL-593 / GOL-598) --------
+  # This template must stay ASCII-only (see header): a non-ASCII byte here breaks
+  # cloud-init's YAML parser -> empty cloud config -> bare droplet (GOL-270).
   # Codifies the hot-applied go-live: the zero-dep Ed25519-verified interactions
   # server + a Cloudflare Tunnel connector that exposes it at
   # https://discord.gatheringatthegrove.com/interactions with NO inbound port and
