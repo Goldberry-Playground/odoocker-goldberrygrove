@@ -275,3 +275,9 @@ variable "uptime_check_targets" {
     blog-nursery = "https://blog.atthegrovenursery.com/"
   }
 }
+
+variable "blog_apex_redirects_enabled" {
+  description = "Enable the apex→blog.* 302 redirect rules (redirects.tf). Default false: blog.* vhosts 404 until the blogs-droplet url-flip apply completes. Flip with -var=blog_apex_redirects_enabled=true in a second apply AFTER blog.* verifies healthy. Removed entirely at the prod headless cutover (replaced by 301 map — see cutover runbook)."
+  type        = bool
+  default     = false
+}
