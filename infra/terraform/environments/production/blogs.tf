@@ -126,20 +126,31 @@ resource "digitalocean_droplet" "blogs" {
     mysql_tag = var.mysql_tag
     caddy_tag = var.caddy_tag
 
-    # Pre-launch URL policy: the two live blogs keep their apex as Ghost's
-    # canonical url (readers see no change when the apex repoints here).
-    # GGG + nursery are born headless at blog.*. The launch-day flip
-    # (Plan 5) moves hub+goldberry urls to blog.* too.
+    # URL policy (EOM-July QA cutover, 2026-07-20): ALL four blogs are
+    # canonical at blog.* -- hub + goldberry flipped from their apexes so
+    # the apexes can 302 to blog.* via Cloudflare Redirect Rules (302 now,
+    # 301 at the prod launch cutover). Reader-visible sequencing lives in
+    # qa-tools/ghost-blog-migration-commands.md (gather-at-the-grove repo):
+    # blog.* DNS already points here (GOL-387 Phase 1), THEN this applies,
+    # THEN the CF redirect rules are enabled.
+    #
+    # WARNING: this edits user_data => digitalocean_droplet.blogs is
+    # REPLACED on apply (ForceNew). That replace was already pending
+    # (user_data drift + monitoring flip) and is deliberately held --
+    # see docs/RUNBOOK-blogs-reserved-ip-cutover.md "Phase 2". Applying
+    # this change IS running Phase 2: snapshot + backup check first,
+    # named window, 10-20 min blogs outage, volume + reserved IP survive.
     ghost_urls = {
-      hub       = "https://gatheringatthegrove.com"
-      goldberry = "https://goldberrygrove.farm"
+      hub       = "https://blog.gatheringatthegrove.com"
+      goldberry = "https://blog.goldberrygrove.farm"
       ggg       = "https://blog.woodworkingeorge.com"
       nursery   = "https://blog.atthegrovenursery.com"
     }
 
-    # Admin lives on blog.* from day one, even while the public url stays
-    # the apex - Ghost otherwise redirects /ghost/ to the canonical url,
-    # which pre-cutover is the OLD snowflake droplet.
+    # Admin lives on blog.* from day one. Now redundant with ghost_urls
+    # (canonical url is blog.* for all four since the EOM-July flip) but
+    # kept: an explicit admin__url is harmless and removing it would be a
+    # second gratuitous user_data change.
     ghost_admin_urls = {
       hub       = "https://blog.gatheringatthegrove.com"
       goldberry = "https://blog.goldberrygrove.farm"
