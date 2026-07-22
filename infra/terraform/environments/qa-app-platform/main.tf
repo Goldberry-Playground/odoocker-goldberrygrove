@@ -281,6 +281,11 @@ resource "digitalocean_droplet" "odoo" {
     do_token_for_caddy = var.do_token
     acme_endpoint      = var.acme_endpoint
 
+    # Stripe TEST sandbox (GOL-696). Empty-string defaults keep the .env
+    # lines inert until 1Password carries the values at apply time.
+    stripe_test_secret_key     = var.stripe_test_secret_key
+    stripe_test_webhook_secret = var.stripe_test_webhook_secret
+
     # base64-encode embedded files (ADR-005 PR-B pattern — bypasses cloud-init
     # YAML parser entirely for content with awkward characters).
     compose_yml_b64   = base64encode(file("${path.module}/compose/docker-compose.qa.yml"))

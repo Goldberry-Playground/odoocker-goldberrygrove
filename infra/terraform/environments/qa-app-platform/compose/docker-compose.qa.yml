@@ -70,6 +70,13 @@ services:
       # when behind a reverse proxy.
       PROXY_MODE: "true"
       LIST_DB: "false"   # hide the DB selector since we have one fixed DB
+      # Stripe TEST sandbox (GOL-696). The image entrypoint sources /.env
+      # but assigns keys WITHOUT export, so .env alone never reaches odoo's
+      # process env; this environment: entry is what puts them in
+      # os.environ for grove_headless. ${VAR:-} resolves from the compose
+      # --env-file /etc/grove/.env; empty default keeps checkout inert.
+      stripe_test_secret_key: ${stripe_test_secret_key:-}
+      stripe_test_webhook_secret: ${stripe_test_webhook_secret:-}
     volumes:
       # Durable DO block volume (GOL-93). /mnt/odoo-filestore is a dedicated
       # LABEL=filestore volume mounted by cloud-init; it survives a droplet

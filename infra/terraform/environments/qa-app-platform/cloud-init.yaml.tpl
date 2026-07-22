@@ -82,6 +82,14 @@ write_files:
       DO_API_TOKEN=${do_token_for_caddy}
       ACME_CA=${acme_endpoint}
 
+      # Stripe TEST-mode sandbox keys (GOL-696). ASCII-only comment: this
+      # .env block is NOT base64-encoded, so any non-ASCII byte (e.g. an
+      # em-dash) breaks cloud-init's YAML parse and the whole grove stack
+      # never provisions. Empty template defaults keep these inert until
+      # 1Password (Grove QA vault) carries the values at apply time.
+      stripe_test_secret_key=${stripe_test_secret_key}
+      stripe_test_webhook_secret=${stripe_test_webhook_secret}
+
   # Compose YAML - base64-encoded so cloud-init's YAML parser never sees
   # its content (avoids the embedded-block-scalar parse failures we hit
   # repeatedly on the monolith).

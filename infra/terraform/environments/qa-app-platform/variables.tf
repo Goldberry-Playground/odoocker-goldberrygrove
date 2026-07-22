@@ -216,3 +216,26 @@ variable "grove_brand_pr_token" {
   sensitive   = true
   default     = ""
 }
+
+# === Stripe TEST-mode sandbox (GOL-696) ====================================
+# Injected into /etc/grove/.env AND the odoo compose environment: block so
+# grove_headless reads them via os.environ (the .env-source path in the
+# image entrypoint assigns without export, so the compose environment: entry
+# is the load-bearing one). Empty defaults keep checkout inert (503/no-op),
+# never open. Values come from 1Password Grove QA vault (item
+# stripe-nursery-qa) via TF_VAR_* at apply time, resolvable by the
+# grove-devops-ro service account which can read Grove QA.
+
+variable "stripe_test_secret_key" {
+  description = "Stripe TEST secret/restricted key (rk_test_/sk_test_) for QA nursery checkout. Read from 1Password Grove QA/stripe-nursery-qa/secret_key via TF_VAR_stripe_test_secret_key."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "stripe_test_webhook_secret" {
+  description = "Stripe TEST webhook signing secret (whsec_) for the /grove/api/v1/stripe/webhook endpoint. Read from 1Password Grove QA/stripe-nursery-qa/webhook_secret via TF_VAR_stripe_test_webhook_secret."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
