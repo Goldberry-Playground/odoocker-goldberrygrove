@@ -24,7 +24,7 @@ RUN apk update && apk upgrade --no-cache && \
 # the patched range with --target into the venv site-packages. Trivy reads
 # .dist-info METADATA files, so leftover old metadata = continued findings.
 #
-# Five packages currently need this. As upstream pgadmin updates these,
+# Seven packages currently need this. As upstream pgadmin updates these,
 # the corresponding block here can shrink (or whole RUN can be deleted).
 #
 #   - urllib3 2.6.3 → 2.7.0+
@@ -52,6 +52,20 @@ RUN apk update && apk upgrade --no-cache && \
 #     so it must be pinned alongside. Package dir on disk is `engineio/`,
 #     dist-info is `python_engineio-4.13.1.dist-info`.
 #
+#   - pillow 12.2.0 → 12.3.0+  (added 2026-07-22)
+#     10 HIGH DoS / heap-corruption CVEs in image/font parsing
+#     (CVE-2026-54058/54059/54060, 55379/55380, 59197/59199/59200/59204/
+#     59205) — all fixed in 12.3.0. Package dir on disk is `PIL/` (plus the
+#     bundled shared libs in `pillow.libs/`), dist-info is
+#     `pillow-12.2.0.dist-info`.
+#
+#   - pyasn1 0.6.3 → 0.6.4+  (added 2026-07-22)
+#     CVE-2026-59885 + CVE-2026-59886 (both HIGH, DoS via crafted ASN.1
+#     OBJECT IDENTIFIER / REAL values), fixed in 0.6.4. Package dir on disk
+#     is `pyasn1/`, dist-info is `pyasn1-0.6.3.dist-info`. The sibling
+#     `pyasn1_modules` (0.4.2) is unaffected and depends on pyasn1>=0.4.6,
+#     so the 0.6.4 upgrade satisfies it.
+#
 # The venv was created with --without-pip and --system-site-packages, so
 # we install via the system pip targeting the venv's site-packages
 # directory directly.
@@ -65,7 +79,12 @@ RUN rm -rf "${PGADMIN_VENV_SITE_PACKAGES}/urllib3" \
            "${PGADMIN_VENV_SITE_PACKAGES}/socketio" \
            "${PGADMIN_VENV_SITE_PACKAGES}/python_socketio-5.16.1.dist-info" \
            "${PGADMIN_VENV_SITE_PACKAGES}/engineio" \
-           "${PGADMIN_VENV_SITE_PACKAGES}/python_engineio-4.13.1.dist-info" && \
+           "${PGADMIN_VENV_SITE_PACKAGES}/python_engineio-4.13.1.dist-info" \
+           "${PGADMIN_VENV_SITE_PACKAGES}/PIL" \
+           "${PGADMIN_VENV_SITE_PACKAGES}/pillow.libs" \
+           "${PGADMIN_VENV_SITE_PACKAGES}/pillow-12.2.0.dist-info" \
+           "${PGADMIN_VENV_SITE_PACKAGES}/pyasn1" \
+           "${PGADMIN_VENV_SITE_PACKAGES}/pyasn1-0.6.3.dist-info" && \
     /usr/local/bin/pip3 install \
         --no-cache-dir \
         --target="${PGADMIN_VENV_SITE_PACKAGES}" \
@@ -74,7 +93,9 @@ RUN rm -rf "${PGADMIN_VENV_SITE_PACKAGES}/urllib3" \
         'cryptography>=48.0.1,<50.0' \
         'PyJWT>=2.13.0,<3.0' \
         'python-socketio>=5.16.2,<6.0' \
-        'python-engineio>=4.13.2,<5.0'
+        'python-engineio>=4.13.2,<5.0' \
+        'pillow>=12.3.0,<13.0' \
+        'pyasn1>=0.6.4,<0.7'
 
 # Check if the private key exists, copy it and set permissions if it does
 RUN if [ -f ./pgadmin/private_key ]; then \
