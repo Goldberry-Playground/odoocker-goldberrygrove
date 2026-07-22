@@ -216,3 +216,32 @@ variable "grove_brand_pr_token" {
   sensitive   = true
   default     = ""
 }
+
+# === Stripe TEST-mode keys (sandbox checkout — GOL-688/696) =================
+# grove_headless reads these from the odoo process environment via
+# os.environ.get("stripe_test_secret_key") / os.environ.get("stripe_test_webhook_secret")
+# (LOWERCASE names, controllers/main.py). The odoo entrypoint/odoorc.sh
+# export every KEY=VALUE line in /etc/grove/.env into that environment, so
+# these two vars flow straight through the cloud-init .env write_files block.
+#
+# BLOCKED provisioning (GOL-696): the key VALUES are separate ITEMS in the
+# `grove-qa` 1Password vault (publishable/secret/webhook_secret), NOT fields
+# on the Admin `Grove Infra` item. Resolving TF_VAR_stripe_test_* at apply
+# time requires the deploy-time `op` account to READ `grove-qa` — the current
+# `op` service account (KMKXQVYQSRDVNCPIWQPVH7MXHY) is Admin-vault-only. Until
+# the `grove-devops-ro` token (3-vault read incl. grove-qa) is wired into the
+# CI/TF apply op context, these default to "" and the sandbox checkout stays
+# inert (grove_headless returns "" and the gate is a no-op — zero regression).
+variable "stripe_test_secret_key" {
+  description = "Stripe TEST-mode secret key (sk_test_...) for grove_headless sandbox checkout. Injected into /etc/grove/.env as lowercase `stripe_test_secret_key`; grove_headless reads it via os.environ. VALUE is an item in the `grove-qa` 1Password vault (GOL-696); read via TF_VAR_stripe_test_secret_key once the CI/TF apply op account can read grove-qa. Empty default keeps apply/plan working and the checkout inert until provisioned."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "stripe_test_webhook_secret" {
+  description = "Stripe TEST-mode webhook signing secret (whsec_...) for grove_headless webhook verification. Injected into /etc/grove/.env as lowercase `stripe_test_webhook_secret`; grove_headless reads it via os.environ. VALUE is an item in the `grove-qa` 1Password vault (GOL-696); read via TF_VAR_stripe_test_webhook_secret once the CI/TF apply op account can read grove-qa. Empty default keeps apply/plan working and webhook verification inert until provisioned."
+  type        = string
+  sensitive   = true
+  default     = ""
+}

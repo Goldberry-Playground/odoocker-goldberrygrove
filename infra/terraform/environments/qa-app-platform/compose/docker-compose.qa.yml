@@ -70,6 +70,15 @@ services:
       # when behind a reverse proxy.
       PROXY_MODE: "true"
       LIST_DB: "false"   # hide the DB selector since we have one fixed DB
+      # Stripe TEST-mode sandbox checkout (GOL-688). grove_headless reads these
+      # from os.environ (LOWERCASE names, controllers/main.py). The odoo process
+      # env comes ONLY from this compose environment block -- the /.env mount
+      # below feeds odoorc.sh's odoo.conf substitution, NOT os.environ. Values
+      # come from `docker compose --env-file /etc/grove/.env` (cloud-init writes
+      # stripe_test_* there from TF_VAR_stripe_test_*). Default-empty so the
+      # controller no-ops (checkout 503 / webhook inert) until provisioned.
+      stripe_test_secret_key: ${stripe_test_secret_key:-}
+      stripe_test_webhook_secret: ${stripe_test_webhook_secret:-}
     volumes:
       # Durable DO block volume (GOL-93). /mnt/odoo-filestore is a dedicated
       # LABEL=filestore volume mounted by cloud-init; it survives a droplet
