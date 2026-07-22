@@ -82,7 +82,7 @@ write_files:
       DO_API_TOKEN=${do_token_for_caddy}
       ACME_CA=${acme_endpoint}
 
-      # Stripe TEST-mode keys (sandbox checkout — GOL-688/696). LOWERCASE
+      # Stripe TEST-mode keys (sandbox checkout - GOL-688/696). LOWERCASE
       # names on purpose: grove_headless controllers/main.py reads them via
       # os.environ.get("stripe_test_secret_key") / ...("stripe_test_webhook_secret").
       # entrypoint.sh + odoorc.sh export every KEY=VALUE line here into the
