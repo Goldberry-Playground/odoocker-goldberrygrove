@@ -82,6 +82,16 @@ write_files:
       DO_API_TOKEN=${do_token_for_caddy}
       ACME_CA=${acme_endpoint}
 
+      # Stripe TEST-mode keys (sandbox checkout — GOL-688/696). LOWERCASE
+      # names on purpose: grove_headless controllers/main.py reads them via
+      # os.environ.get("stripe_test_secret_key") / ...("stripe_test_webhook_secret").
+      # entrypoint.sh + odoorc.sh export every KEY=VALUE line here into the
+      # odoo process env, so these flow straight through. Empty until the
+      # CI/TF apply op account can read the grove-qa 1P vault (GOL-696) --
+      # grove_headless defaults to "" so an empty value is a safe no-op.
+      stripe_test_secret_key=${stripe_test_secret_key}
+      stripe_test_webhook_secret=${stripe_test_webhook_secret}
+
   # Compose YAML - base64-encoded so cloud-init's YAML parser never sees
   # its content (avoids the embedded-block-scalar parse failures we hit
   # repeatedly on the monolith).

@@ -281,6 +281,12 @@ resource "digitalocean_droplet" "odoo" {
     do_token_for_caddy = var.do_token
     acme_endpoint      = var.acme_endpoint
 
+    # Stripe TEST-mode keys (GOL-688/696). grove_headless reads these from the
+    # odoo process env (lowercase names) via os.environ. Empty until the CI/TF
+    # apply op account can read the grove-qa 1P vault (see variables.tf).
+    stripe_test_secret_key     = var.stripe_test_secret_key
+    stripe_test_webhook_secret = var.stripe_test_webhook_secret
+
     # base64-encode embedded files (ADR-005 PR-B pattern — bypasses cloud-init
     # YAML parser entirely for content with awkward characters).
     compose_yml_b64   = base64encode(file("${path.module}/compose/docker-compose.qa.yml"))
