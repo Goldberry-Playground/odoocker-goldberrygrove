@@ -79,6 +79,46 @@ services:
       # controller no-ops (checkout 503 / webhook inert) until provisioned.
       stripe_test_secret_key: ${stripe_test_secret_key:-}
       stripe_test_webhook_secret: ${stripe_test_webhook_secret:-}
+    # GOL-746: gate the Odoo start on git-sync's FIRST clone. depends_on
+    # (service_started, below) only guarantees the sidecar CONTAINER started,
+    # not that /workspace/current is populated. The old assumption that Odoo
+    # "exits and restart:unless-stopped retries until the first sync lands"
+    # was WRONG: with an empty/absent /workspace/current Odoo boots FINE on
+    # just base addons, compiles STORED asset bundles module-less, and bakes
+    # "Could not get content for web_dark_mode/..." into them (observed on the
+    # 2026-07-22 prod replace; QA has the copied shape so it is exposed too).
+    # This entrypoint override blocks until a stable sentinel manifest
+    # (grove_headless, load-bearing headless-API module always at the repo
+    # root) exists, so Odoo never compiles bundles against an empty
+    # addons_path.
+    #
+    # Overriding entrypoint CLEARS the image CMD, so `command: [odoo]` restores
+    # the upstream default the image's /entrypoint.sh dispatches on (case
+    # "$1" in -- | odoo). The wait is BOUNDED (300s/attempt, override via
+    # GITSYNC_GATE_TIMEOUT) and fails LOUD (exit 1) rather than proceeding
+    # module-less; restart:unless-stopped re-runs the gate and re-logs each
+    # cycle, so a stuck sync is visible in `docker logs`.
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        set -eu
+        sentinel="/workspace/current/grove_headless/__manifest__.py"
+        timeout="${GITSYNC_GATE_TIMEOUT:-300}"
+        waited=0
+        while [ ! -f "$sentinel" ]; do
+          if [ "$waited" -ge "$timeout" ]; then
+            echo "FATAL(GOL-746): git-sync sentinel $sentinel absent after ${timeout}s; refusing to start Odoo with an empty addons_path (would bake poisoned asset bundles). Exiting for restart." >&2
+            exit 1
+          fi
+          echo "GOL-746 gate: waiting for git-sync first clone (${waited}/${timeout}s): $sentinel not present yet" >&2
+          sleep 5
+          waited=$((waited + 5))
+        done
+        echo "GOL-746 gate: sentinel present ($sentinel); starting Odoo."
+        exec /entrypoint.sh "$@"
+      - --
+    command: ["odoo"]
     volumes:
       # Durable DO block volume (GOL-93). /mnt/odoo-filestore is a dedicated
       # LABEL=filestore volume mounted by cloud-init; it survives a droplet
@@ -104,9 +144,10 @@ services:
       - grove
     depends_on:
       # service_started only -- git-sync has no shell for a healthcheck.
-      # If odoo wins the race before /workspace/current exists, it exits
-      # and `restart: unless-stopped` retries until the first sync lands
-      # (seconds; the repo is small and cloned --depth 1).
+      # This gets Odoo scheduled after the sidecar's container exists; the
+      # REAL first-clone readiness gate is the GOL-746 entrypoint above
+      # (blocks on the grove_headless sentinel manifest). Do NOT rely on
+      # this depends_on for module readiness -- it does not provide it.
       custom-modules-sync:
         condition: service_started
 
