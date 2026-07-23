@@ -57,6 +57,47 @@ services:
       # Trust Caddy's X-Forwarded-* headers (CSRF + URL generation).
       PROXY_MODE: "true"
       LIST_DB: "false" # one fixed DB; hide the selector
+    # GOL-746: gate the Odoo start on git-sync's FIRST clone. depends_on
+    # (service_started) only guarantees the sidecar CONTAINER started, not
+    # that /workspace/current is populated. On the 2026-07-22 droplet replace
+    # Odoo booted ~3 min before the first clone finished and compiled STORED
+    # asset bundles with the synced addons absent, baking "Could not get
+    # content for web_dark_mode/..." into the bundles (dark-mode CSS became a
+    # 642-byte error stub). The poison persisted after the module arrived;
+    # only a container restart + bundle invalidation cleared it -- and it
+    # recurs on every replace. This entrypoint override blocks until a stable
+    # sentinel module manifest (grove_headless, the load-bearing headless-API
+    # module always present at the repo root) exists, so Odoo never compiles
+    # bundles against an empty addons_path.
+    #
+    # Overriding entrypoint CLEARS the image CMD, so `command: [odoo]` restores
+    # the upstream default the image's /entrypoint.sh dispatches on (case
+    # "$1" in -- | odoo). The wait is BOUNDED (300s/attempt, override via
+    # GITSYNC_GATE_TIMEOUT) and fails LOUD (exit 1) rather than proceeding
+    # module-less; restart:unless-stopped re-runs the gate and re-logs each
+    # cycle, so a stuck sync is visible in `docker logs` and Odoo never
+    # silently re-poisons bundles.
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        set -eu
+        sentinel="/workspace/current/grove_headless/__manifest__.py"
+        timeout="${GITSYNC_GATE_TIMEOUT:-300}"
+        waited=0
+        while [ ! -f "$sentinel" ]; do
+          if [ "$waited" -ge "$timeout" ]; then
+            echo "FATAL(GOL-746): git-sync sentinel $sentinel absent after ${timeout}s; refusing to start Odoo with an empty addons_path (would bake poisoned asset bundles). Exiting for restart." >&2
+            exit 1
+          fi
+          echo "GOL-746 gate: waiting for git-sync first clone (${waited}/${timeout}s): $sentinel not present yet" >&2
+          sleep 5
+          waited=$((waited + 5))
+        done
+        echo "GOL-746 gate: sentinel present ($sentinel); starting Odoo."
+        exec /entrypoint.sh "$@"
+      - --
+    command: ["odoo"]
     volumes:
       # Durable DO block volume (GOL-93). Survives a droplet replace so product
       # photos + ir.attachment binaries are not lost on recreate. cloud-init
