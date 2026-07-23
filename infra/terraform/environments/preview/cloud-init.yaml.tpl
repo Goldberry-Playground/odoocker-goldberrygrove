@@ -100,6 +100,30 @@ write_files:
       zstd -d -c /tmp/filestore.tar.zst | \
         tar -xf - -C /var/lib/docker/volumes/grove_odoo_filestore/_data/grove_preview --strip-components=1
 
+      echo "[restore] attachment invariant (warn mode)"
+      # GOL-744: the 2026-07-23 QA outage was a DB promoted WITHOUT its
+      # filestore (676 file-backed attachment rows, 47 files on disk -> every
+      # asset bundle/image 500'd). Assert the filestore actually landed here.
+      # DISTINCT store_fname = the unique files the DB expects (content-addressed
+      # dedup), compared to files on disk. WARN, not abort: an ephemeral per-PR
+      # preview self-heals on the next push and a benign sanitizer delta must not
+      # brick provisioning -- but an incident-scale gap SCREAMS in this log.
+      # Canonical check + fail-mode cutover use: scripts/check-attachment-invariant.sh
+      # + docs/RUNBOOK-db-promotion-cutover.md.
+      FS_DIR=/var/lib/docker/volumes/grove_odoo_filestore/_data/grove_preview
+      INV_EXP=$(docker compose exec -T postgres psql -U odoo -d grove_preview -tAX \
+        -c "SELECT count(DISTINCT store_fname) FROM ir_attachment WHERE store_fname IS NOT NULL;" \
+        2>/dev/null | tr -d '[:space:]') || true
+      INV_DISK=$(find "$FS_DIR" -type f 2>/dev/null | wc -l | tr -d '[:space:]') || true
+      INV_EXP=$${INV_EXP:-0}; INV_DISK=$${INV_DISK:-0}
+      INV_MISSING=$(( INV_EXP - INV_DISK ))
+      echo "[restore] invariant: expected(distinct store_fname)=$INV_EXP files_on_disk=$INV_DISK missing=$INV_MISSING"
+      if [ "$INV_MISSING" -gt 25 ]; then
+        echo "[restore] WARN: ATTACHMENT INVARIANT BREACHED - DB expects $INV_EXP files, $INV_DISK on disk ($INV_MISSING missing). Filestore did not land; assets will 500. See docs/RUNBOOK-db-promotion-cutover.md (warn: preview continues)." >&2
+      else
+        echo "[restore] attachment invariant OK (within tolerance)"
+      fi
+
       rm -f /tmp/snap.sql.zst /tmp/filestore.tar.zst
 
       echo "[restore] starting odoo (needed to mint the storefront API key)"
