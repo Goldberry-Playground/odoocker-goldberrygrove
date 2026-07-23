@@ -51,6 +51,29 @@ resource "digitalocean_database_db" "odoo" {
   name       = "odoo"
 }
 
+# Maintenance/bootstrap database named `postgres`.
+#
+# The grove-odoo image's readiness probe (base odoo:19 `/usr/local/bin/
+# wait-for-psql.py`, invoked from odoo/entrypoint.sh) connects with a
+# HARDCODED `dbname='postgres'` before Odoo starts -- it just needs *any*
+# reachable DB to confirm the server is up; it never writes here (Odoo inits
+# the real `odoo` DB above). DO Managed Postgres, however, ships `defaultdb`
+# and has NO `postgres` database, so on a fresh managed cluster the probe
+# fails forever ("FATAL: database \"postgres\" does not exist") and Odoo
+# crash-loops (observed on the prod keystone bring-up: 21 restarts, 502 at the
+# edge). QA L3 only worked because a `postgres` db was hand-created there
+# (click-op drift never captured in qa-app-platform/main.tf), so the prod
+# scaffold -- copied from that TF -- inherited the omission.
+#
+# Codifying it here makes prod come up from code alone (GOL-737). Follow-up:
+# backfill the same resource into the QA env to kill the drift, and consider a
+# root-cause image fix (probe `defaultdb` instead of `postgres`) so no stray
+# maintenance DB is needed.
+resource "digitalocean_database_db" "postgres" {
+  cluster_id = digitalocean_database_cluster.pg.id
+  name       = "postgres"
+}
+
 resource "digitalocean_database_user" "odoo" {
   cluster_id = digitalocean_database_cluster.pg.id
   name       = "odoo"
