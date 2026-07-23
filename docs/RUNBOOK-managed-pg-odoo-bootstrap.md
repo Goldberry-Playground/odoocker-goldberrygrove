@@ -71,9 +71,13 @@ The provisioner runs only on create/replace and never on a plan/refresh, so CI
 plans stay green. The SQL is idempotent, so re-running (e.g. after a `terraform
 taint`) is safe.
 
-Verify after apply:
+Verify after apply (self-contained — `$ODOO_URI` is derived here, not inherited
+from the manual block this PR removed):
 
 ```sh
+CID=$(doctl databases list --format ID,Name --no-header | awk '$2=="grove-prod-l3-pg"{print $1}')  # or grove-qa-l3-pg
+# doadmin connection URI, retargeted from defaultdb to the odoo DB (public host, sslmode=require):
+ODOO_URI=$(doctl databases connection "$CID" --format URI --no-header | sed 's#/defaultdb#/odoo#')
 psql "$ODOO_URI" -tAc "SELECT has_schema_privilege('odoo','public','CREATE');"  # → t
 ```
 
