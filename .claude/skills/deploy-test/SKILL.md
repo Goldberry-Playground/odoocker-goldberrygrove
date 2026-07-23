@@ -485,6 +485,25 @@ docker compose up -d --build
    `/etc/grove` edits made by hand) is destroyed on the next apply. Durable state
    must live on an attached block volume (`LABEL=`-mounted), and existing
    root-disk data must be copied off before the replacing apply.
+4. **A DB promotion moves the filestore WITH the DB, and the attachment
+   invariant gates the cutover.** The 2026-07-23 QA outage was a DB promoted
+   without its filestore — 676 file-backed `ir_attachment` rows, 47 files on
+   disk → every asset bundle/image/icon 500'd (fully unstyled site). Never dump a
+   DB for promotion without packaging `filestore/<db>/` in the same bundle, and
+   never cut over until the invariant passes:
+   ```sh
+   # bundle (source) → restore+verify (target); freeze source first
+   scripts/promote-db.sh bundle  --db <src> --filestore <src-fs> --out ./bundle \
+     --freeze-cmd 'docker compose stop odoo' --unfreeze-cmd 'docker compose start odoo'
+   scripts/promote-db.sh restore --db <dst> --filestore <dst-fs> --in ./bundle
+   # or the standalone fail-loud gate, run last in any manual cutover:
+   PSQL="docker compose exec -T postgres psql -U odoo" \
+     scripts/check-attachment-invariant.sh --db <db> --filestore <fs> --mode fail
+   ```
+   Full ordering (freeze → promote → verify) + the mimetype/checksum/ETag
+   footguns: `docs/RUNBOOK-db-promotion-cutover.md`. The preview restore path
+   (`environments/preview/cloud-init.yaml.tpl`) runs the same check in **warn**
+   mode so every preview promotion is checked without bricking an ephemeral box.
 
 ### Environment Isolation
 
