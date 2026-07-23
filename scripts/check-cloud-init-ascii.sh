@@ -61,6 +61,14 @@ DEFAULT_FILES=(
   # reach the droplet via base64encode(file(...)) in main.tf, so their bytes are
   # ASCII base64 by the time cloud-init parses the YAML.
   "infra/terraform/environments/observability/cloud-init.yaml.tpl"
+
+  # PREVIEW -- added 2026-07-23 (GOL-744). The per-PR preview droplet's
+  # restore.sh lives inline in this cloud-init template (dump load, filestore
+  # extract, attachment invariant). It was NOT covered here, so a stray
+  # non-ASCII byte in that inline shell would silently skip the whole restore
+  # -- same failure mode as the envs above. Listed now that it carries logic
+  # worth protecting.
+  "infra/terraform/environments/preview/cloud-init.yaml.tpl"
 )
 
 if [ -n "${FILES:-}" ]; then
