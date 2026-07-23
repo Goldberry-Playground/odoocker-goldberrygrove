@@ -152,11 +152,46 @@ resource "digitalocean_database_db" "odoo" {
   name       = "odoo"
 }
 
+# Maintenance/bootstrap database named `postgres` (GOL-750, mirrors prod
+# production/postgres.tf). The grove-odoo image's readiness probe (base
+# odoo:19 `/usr/local/bin/wait-for-psql.py`, invoked from odoo/entrypoint.sh)
+# connects with a HARDCODED `dbname='postgres'` before Odoo starts -- it just
+# needs *any* reachable DB to confirm the server is up; it never writes here
+# (Odoo inits the real `odoo` DB above). DO Managed Postgres ships `defaultdb`
+# and has NO `postgres` database, so on a fresh managed cluster the probe fails
+# forever ("FATAL: database \"postgres\" does not exist") and Odoo crash-loops
+# (observed on the prod keystone bring-up: GOL-737).
+#
+# This env's live `postgres` DB was hand-created (click-op drift never captured
+# in TF), so this resource CLOSES that drift. Because the DB already exists on
+# the live cluster, IMPORT it before the next apply so plan is clean (a plain
+# apply would 409 "database already exists"):
+#
+#   CID=$(doctl databases list --format ID,Name --no-header \
+#           | awk '$2=="grove-qa-l3-pg"{print $1}')
+#   terraform import digitalocean_database_db.postgres "$CID/postgres"
+#
+# On a from-scratch apply (fresh cluster) no import is needed; the resource
+# creates it. Root-cause follow-up (GOL-750 Part 3): a grove-odoo image that
+# probes `defaultdb` removes the need for this stray DB entirely.
+resource "digitalocean_database_db" "postgres" {
+  cluster_id = digitalocean_database_cluster.pg.id
+  name       = "postgres"
+}
+
 resource "digitalocean_database_user" "odoo" {
   cluster_id = digitalocean_database_cluster.pg.id
   name       = "odoo"
   # MySQL-style password authentication is the default for PG too;
   # SCRAM-SHA-256 is enforced server-side regardless.
+
+  # DO returns an empty `settings {}` block on a user created without one, and
+  # the provider then plans to remove it - a PUT the DO API rejects with 400
+  # "missing required fields: user_settings". Cosmetic on a PG user; ignore to
+  # keep plans clean. Same fix as prod (GOL-737). (GOL-750)
+  lifecycle {
+    ignore_changes = [settings]
+  }
 }
 
 # Trusted-sources allowlist: lock the Managed PG cluster to the Odoo
@@ -179,6 +214,63 @@ resource "digitalocean_database_firewall" "pg" {
   rule {
     type  = "ip_addr"
     value = split("/", var.admin_ip_cidr)[0]
+  }
+}
+
+# ── Schema-owner grant — Gotcha 2, now CODIFIED (GOL-750) ────────────────────
+# digitalocean_database_db.odoo is owned by the cluster's `doadmin`, not by the
+# scoped `odoo` user. On PostgreSQL 15+ only the database owner has CREATE on
+# schema `public`, so Odoo's first `--init=base` dies with
+# `InsufficientPrivilege: permission denied for schema public` on the very
+# first CREATE TABLE. The fix is one privileged (doadmin) SQL step, run once
+# after the `odoo` db + user exist. It used to be a documented MANUAL step
+# (RUNBOOK Gotcha 2); this resource makes the env come up from code alone.
+#
+# WHY NOT the cyrilgdn/postgresql provider (the obvious codification): a
+# provider resource REFRESHES at plan time, so every `terraform plan` -- incl.
+# the CI drift-detection plan in .github/workflows/terraform-drift.yml, which
+# runs on a GitHub-hosted runner whose IP is NOT in the trusted-sources
+# allowlist below -- would try to open a DB connection and fail. That is the
+# "firewall carve-out / runner-in-VPC" blocker the RUNBOOK flagged, and it is
+# unacceptable (a prod carve-out for dynamic CI runner IPs = 0.0.0.0/0).
+#
+# terraform_data.local-exec sidesteps it entirely: a provisioner runs ONLY on
+# create/replace during `apply` and NEVER connects on a plan/refresh, so CI
+# plans stay green. Grove applies are MANUAL from the operator machine, whose
+# /32 is already in `var.admin_ip_cidr` (allowlisted in the firewall above) --
+# so no new firewall rule is needed. depends_on the firewall guarantees the
+# allowlist exists before we connect. Prereqs on the apply host: `psql`
+# (postgresql-client) + outbound 25060 to the cluster's public host. Re-runs
+# safely: the SQL is idempotent and triggers_replace only fires if the db/user
+# is recreated. See docs/RUNBOOK-managed-pg-odoo-bootstrap.md.
+resource "terraform_data" "pg_schema_owner_grant" {
+  triggers_replace = [
+    digitalocean_database_db.odoo.id,
+    digitalocean_database_user.odoo.id,
+  ]
+
+  depends_on = [digitalocean_database_firewall.pg]
+
+  provisioner "local-exec" {
+    interpreter = ["/bin/bash", "-c"]
+    # doadmin password via env (PGPASSWORD), never on the command line / in
+    # process args. It lives only in TF state (already sensitive) + this
+    # ephemeral apply-host env; it never lands on a droplet.
+    environment = {
+      PGPASSWORD = digitalocean_database_cluster.pg.password
+    }
+    command = <<-EOT
+      set -euo pipefail
+      command -v psql >/dev/null 2>&1 || {
+        echo "FATAL: psql (postgresql-client) not found on the apply host -- required to run the schema-owner grant (GOL-750). Install it and re-apply." >&2
+        exit 1
+      }
+      psql "host=${digitalocean_database_cluster.pg.host} port=${digitalocean_database_cluster.pg.port} user=${digitalocean_database_cluster.pg.user} dbname=${digitalocean_database_db.odoo.name} sslmode=require" \
+        -v ON_ERROR_STOP=1 \
+        -c "ALTER DATABASE ${digitalocean_database_db.odoo.name} OWNER TO ${digitalocean_database_user.odoo.name};" \
+        -c "GRANT ALL ON SCHEMA public TO ${digitalocean_database_user.odoo.name};"
+      echo "GOL-750: schema-owner grant applied to db=${digitalocean_database_db.odoo.name} for user=${digitalocean_database_user.odoo.name}"
+    EOT
   }
 }
 
