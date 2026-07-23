@@ -167,6 +167,9 @@ So restore in this order:
 
 ## 6. Related
 
+- `docs/RUNBOOK-db-promotion-cutover.md` — the **planned promotion** companion
+  (freeze → promote → verify between environments) + the fail-loud attachment
+  invariant. This runbook is DR restore; that one is env-to-env cutover.
 - `infra/terraform/environments/production/odoo.tf` — volume, backups bucket, scoped key, reserved IP
 - `infra/terraform/environments/production/cloud-init-odoo.yaml.tpl` — backup + restore scripts
 - odoocker **#242** — day-2 model this underpins
