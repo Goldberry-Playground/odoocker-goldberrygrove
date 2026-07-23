@@ -104,6 +104,12 @@ fail-loud invariant. **A breach exits non-zero and you MUST NOT cut over** — t
 filestore did not land and every asset will 500. Fix the filestore, re-run,
 *then* bring the stack up / flip DNS.
 
+> **`--db` must be a freshly created (or dropped-and-recreated) database.** The
+> dump is a plain `pg_dump` loaded without `--clean`/`--create`; loading it into
+> a **populated** DB errors mid-load. That fails loud under `set -e` (safe, no
+> silent corruption), but leaves a confusing half-load — so drop/recreate the
+> target first: `dropdb --if-exists grove && createdb -O odoo grove`.
+
 Run the invariant standalone at any time (e.g. as the last gate in a manual
 cutover):
 
