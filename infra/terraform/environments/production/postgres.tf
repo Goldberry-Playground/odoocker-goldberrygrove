@@ -55,4 +55,13 @@ resource "digitalocean_database_user" "odoo" {
   cluster_id = digitalocean_database_cluster.pg.id
   name       = "odoo"
   # SCRAM-SHA-256 is enforced server-side regardless of auth plugin.
+
+  # DO returns an empty `settings {}` block on a user created without one, and
+  # the provider then plans to remove it - a PUT the DO API rejects with
+  # "missing required fields: user_settings" (400). The block is cosmetic (no
+  # opensearch ACLs / mongo roles on a PG user), so ignore it to keep plans
+  # clean. Applied during the keystone bring-up (GOL-737).
+  lifecycle {
+    ignore_changes = [settings]
+  }
 }
