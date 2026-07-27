@@ -361,7 +361,12 @@ jobs:
 
       # Same overlay rule as validate-compose: local needs grove for ghost
       # services to have an image. We skip --profile ghost to keep the test
-      # fast — only Odoo+Postgres need to come up for the smoke check.
+      # fast — only Odoo+Postgres need to come up for the smoke check. The
+      # ghost-* services are `profiles: [ghost]`-gated (GOL-846), so omitting
+      # the flag means compose neither starts NOR PULLS the three ghost
+      # images — shrinking this step's Docker Hub failure surface from ~5
+      # images to Odoo+Postgres. (A ghost pull timing out here is what turned
+      # a transient registry blip into a red main: run 30260633388.)
       - name: Start Postgres + Odoo
         run: |
           docker compose \
