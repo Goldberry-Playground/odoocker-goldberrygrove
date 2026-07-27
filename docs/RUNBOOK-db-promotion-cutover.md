@@ -90,14 +90,27 @@ the baseline the target is checked against.
 ### 3c. VERIFY — restore and let the invariant gate the cutover
 
 ```bash
-# On / against the TARGET (example: prod or QA)
+# On / against the TARGET (example: prod or QA L3 droplet)
 PSQL="docker compose exec -T postgres psql -U odoo" \
 scripts/promote-db.sh restore \
   --db grove \
-  --filestore /var/lib/odoo/filestore/grove \
+  --filestore /mnt/odoo-filestore/filestore/grove \
   --in ./promote-bundle \
   --owner 100:101        # see §5 — resolve from the image, don't blind-hardcode
 ```
+
+> **`--filestore` is a HOST path — target the durable block volume, not the
+> ephemeral disk (GOL-99).** `restore` extracts the tar on the host
+> (`tar -x … -C "$FILESTORE"`), not inside the container. On an L3 droplet
+> (`qa-app-platform`, `production`) the durable DO block volume is bind-mounted
+> `/mnt/odoo-filestore:/var/lib/odoo` — so the host path that Odoo sees as
+> `/var/lib/odoo` is **`/mnt/odoo-filestore`**. `/var/lib/odoo` exists ONLY
+> inside the container; passing it here would `mkdir` a fresh dir on the
+> **ephemeral root disk** — invisible to Odoo (every asset 500s) and wiped on the
+> next droplet-replace, defeating the durable volume this promotion exists to
+> populate. Use `/var/lib/odoo/...` only when the filestore is a docker-managed
+> volume with no block-volume bind (e.g. a local OrbStack stack, as in §3b's
+> source example, or the ephemeral preview droplet).
 
 The `restore` verb loads the dump, extracts the filestore, and runs the
 fail-loud invariant. **A breach exits non-zero and you MUST NOT cut over** — the
@@ -114,9 +127,12 @@ Run the invariant standalone at any time (e.g. as the last gate in a manual
 cutover):
 
 ```bash
+# --filestore is the same HOST path as §3c above: on an L3 droplet that is
+# /mnt/odoo-filestore/filestore/grove (the block-volume mount), NOT the
+# container-only /var/lib/odoo path.
 PSQL="docker compose exec -T postgres psql -U odoo" \
 scripts/check-attachment-invariant.sh --db grove \
-  --filestore /var/lib/odoo/filestore/grove --mode fail
+  --filestore /mnt/odoo-filestore/filestore/grove --mode fail
 ```
 
 ---
