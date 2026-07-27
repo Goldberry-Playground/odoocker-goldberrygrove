@@ -11,8 +11,19 @@
 # `image:` lines together. See .env.example "Containers' Tags" for the
 # supply-chain-hardening rationale.
 services:
+  # The three ghost-* services are gated behind the `ghost` profile so that
+  # a `docker compose up` which does NOT request ghost (e.g. the CI backend
+  # smoke test, which runs only `--profile odoo --profile postgres`) neither
+  # starts NOR pulls their images. Without this key the services sit in the
+  # default profile and get pulled by every `up` — three unnecessary Docker
+  # Hub pulls that turned a transient registry timeout into a red main
+  # (GOL-846, run 30260633388). Hardcoded literal (not `$GHOST_PROFILES`) on
+  # purpose: every real call site already passes `--profile ghost`
+  # (sandbox cloud-init, validate-compose, README/DEPLOY, grove-local), so a
+  # var would only add an unset-in-deployed-.env.grove footgun.
   ghost-goldberry:
     image: ghost:5-alpine@sha256:a0506f3f05f5bdc6c950c5113cdcdb1e1f96fbf15f6dc0a39fc093c25348bdb5
+    profiles: [ghost]
     restart: unless-stopped
     environment:
       url: ${GHOST_GOLDBERRY_URL}
@@ -28,6 +39,7 @@ services:
 
   ghost-ggg:
     image: ghost:5-alpine@sha256:a0506f3f05f5bdc6c950c5113cdcdb1e1f96fbf15f6dc0a39fc093c25348bdb5
+    profiles: [ghost]
     restart: unless-stopped
     environment:
       url: ${GHOST_GGG_URL}
@@ -44,6 +56,7 @@ services:
 
   ghost-nursery:
     image: ghost:5-alpine@sha256:a0506f3f05f5bdc6c950c5113cdcdb1e1f96fbf15f6dc0a39fc093c25348bdb5
+    profiles: [ghost]
     restart: unless-stopped
     environment:
       url: ${GHOST_NURSERY_URL}
