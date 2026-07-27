@@ -12,7 +12,8 @@
 #
 # Nightly backup (03:30 UTC): mysqldump per DB + tar of each Ghost content
 # dir -> rclone to Spaces daily/ prefix; 1st of month also copies to
-# monthly/. Pings Healthchecks on success (dead-man's switch).
+# monthly/. Heartbeats the obs-stack OpenObserve `backup_heartbeat` stream on
+# success (dead-man's switch, GOL-855 / board 3a05a48b — not Healthchecks.io).
 
 ssh_pwauth: false
 
@@ -135,8 +136,14 @@ write_files:
         rclone copy "$WORK" "spaces:${backups_bucket}/monthly/$STAMP/" --s3-no-check-bucket
       fi
 
+      # Heartbeat on success -> obs-stack OpenObserve `backup_heartbeat` stream
+      # (GOL-855, board 3a05a48b; supersedes Healthchecks.io). POST a JSON record
+      # (not a bare GET) so a row lands for the absence alert to count; "" disables.
       if [ -n "${healthchecks_ping_url}" ]; then
-        curl -fsS -m 10 --retry 3 "${healthchecks_ping_url}" > /dev/null
+        curl -fsS -m 10 --retry 3 \
+          -H 'Content-Type: application/json' \
+          --data "[{\"job\":\"blogs\",\"stamp\":\"$STAMP\",\"host\":\"$(hostname)\"}]" \
+          "${healthchecks_ping_url}" > /dev/null
       fi
       echo "[ok] blogs backup $STAMP uploaded"
 
