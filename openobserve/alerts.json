@@ -2249,6 +2249,113 @@
       "description": "RUM — real users reaching checkout but 0 completed purchases in 1h (≥5 begin_checkout, 0 purchase). The money path may be broken for real traffic — cross-check synthetic-checkout-critical. Runbook: docs/RUNBOOKS.md#checkout-broken  [intent: count(begin_checkout) >= 5 AND count(purchase) == 0 over 1h (any tenant)]  [note: Funnel drop from real-user events (begin_checkout → purchase, order_id_hash only — no PII). The real-traffic complement to the synthetic checkout-canary. The ≥5 floor avoids low-traffic false positives; tune once baseline volume is known.]",
       "enabled": true,
       "tz_offset": 0
+    },
+    {
+      "_comment": "── Backup dead-man's switches (GOL-855, board 3a05a48b) ── ABSENCE alerts, not threshold alerts: they fire when NO heartbeat lands in the window. The prod backup scripts (cloud-init-odoo/-blogs) POST a {job,stamp,...} record to the `backup_heartbeat` LOGS stream on success only; set -euo pipefail means any backup failure skips the heartbeat, so a silent failure trips the alert. Trigger uses operator '<' threshold 1 over period=1500m (~25h > the 24h cron interval + slack), checked hourly. PENDING LIVE VALIDATION (GOL-855 §3, gated on GOL-381 prod->obs ingress): confirm a real heartbeat lands, then simulate a miss and confirm Discord pages. If OpenObserve v0.91.1 does not evaluate a '<' trigger when the search returns zero rows, the fallback is a Keep interval workflow that queries last-heartbeat age — see docs/observability/backup-deadman.md."
+    },
+    {
+      "name": "odoo-filestore-backup-stale-critical",
+      "stream_type": "logs",
+      "stream_name": "backup_heartbeat",
+      "is_real_time": false,
+      "query_condition": {
+        "type": "custom",
+        "conditions": {
+          "and": [
+            {
+              "column": "job",
+              "operator": "=",
+              "value": "odoo-filestore",
+              "ignore_case": false
+            }
+          ]
+        },
+        "sql": null,
+        "promql": null,
+        "promql_condition": null,
+        "aggregation": {
+          "group_by": [],
+          "function": "count",
+          "having": null
+        },
+        "vrl_function": null,
+        "search_event_type": null
+      },
+      "trigger_condition": {
+        "period": 1680,
+        "operator": "<",
+        "threshold": 1,
+        "frequency": 60,
+        "cron": "",
+        "frequency_type": "minutes",
+        "silence": 1440,
+        "timezone": "UTC",
+        "tolerance_in_secs": null
+      },
+      "destinations": [
+        "keep-webhook"
+      ],
+      "context_attributes": {
+        "severity": "critical",
+        "runbook_key": "backup-stale",
+        "tenant": "shared"
+      },
+      "row_template": "",
+      "description": "BACKUP DEAD-MAN — no Odoo FILESTORE backup heartbeat (job=odoo-filestore) in ~28h. The nightly 03:00 UTC rclone sync to Spaces either failed or the droplet is down; product photos + ir.attachment binaries are running without a fresh off-box copy. Runbook: docs/RUNBOOKS.md#backup-stale  [intent: count(backup_heartbeat WHERE job='odoo-filestore') < 1 over 28h — an AGGREGATION alert so it evaluates count=0 on an empty result set (fires on absence) rather than green-on-dead]  [note: heartbeat is POSTed only on success by grove-odoo-backup.sh; silence=24h so it pages once per outage, not hourly. critical because this is the only durable off-box copy of customer media.]",
+      "enabled": true,
+      "tz_offset": 0
+    },
+    {
+      "name": "blogs-backup-stale-warning",
+      "stream_type": "logs",
+      "stream_name": "backup_heartbeat",
+      "is_real_time": false,
+      "query_condition": {
+        "type": "custom",
+        "conditions": {
+          "and": [
+            {
+              "column": "job",
+              "operator": "=",
+              "value": "blogs",
+              "ignore_case": false
+            }
+          ]
+        },
+        "sql": null,
+        "promql": null,
+        "promql_condition": null,
+        "aggregation": {
+          "group_by": [],
+          "function": "count",
+          "having": null
+        },
+        "vrl_function": null,
+        "search_event_type": null
+      },
+      "trigger_condition": {
+        "period": 1680,
+        "operator": "<",
+        "threshold": 1,
+        "frequency": 60,
+        "cron": "",
+        "frequency_type": "minutes",
+        "silence": 1440,
+        "timezone": "UTC",
+        "tolerance_in_secs": null
+      },
+      "destinations": [
+        "keep-webhook"
+      ],
+      "context_attributes": {
+        "severity": "warning",
+        "runbook_key": "backup-stale",
+        "tenant": "shared"
+      },
+      "row_template": "",
+      "description": "BACKUP DEAD-MAN — no blogs backup heartbeat (job=blogs) in ~28h. The nightly 03:30 UTC mysqldump + Ghost-content tarball upload to Spaces either failed or the blogs droplet is down. Runbook: docs/RUNBOOKS.md#backup-stale  [intent: count(backup_heartbeat WHERE job='blogs') < 1 over 28h — an AGGREGATION alert so it evaluates count=0 on an empty result set (fires on absence) rather than green-on-dead]  [note: warning not critical — blog content is lower-stakes than customer commerce media and MySQL also lives on the durable volume; still needs attention within a day. Separate job from the Odoo filestore heartbeat so a green Odoo beat can't mask a dead blogs backup.]",
+      "enabled": true,
+      "tz_offset": 0
     }
   ]
 }

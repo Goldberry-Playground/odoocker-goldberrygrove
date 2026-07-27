@@ -301,3 +301,29 @@ Recurrent critical on the same container = right-size the limit or the droplet (
 
 ### Escalation
 Critical (>90%) is act-now — free space or grow the volume before Docker/the runtime stalls.
+
+---
+
+## backup-stale
+
+**Severity:** critical (Odoo filestore) / warning (blogs) · **Likely impact:** the nightly off-box backup has not run in >28h. No data is lost *yet*, but the safety net has a hole — a droplet loss now would lose everything written since the last good backup.
+
+> Dead-man's switch (GOL-854, board `3a05a40b`). The prod backup scripts POST a `{job,stamp,...}` heartbeat to the obs-stack OpenObserve `backup_heartbeat` stream **only on success** (`set -euo pipefail` skips the heartbeat on any failure). An OpenObserve aggregation-`count` alert fires when no heartbeat for that job lands in ~28h. `job=odoo-filestore` (critical) covers customer product photos + `ir.attachment` binaries; `job=blogs` (warning) covers the Ghost MySQL dumps + content tarballs.
+
+### Symptoms
+- No `backup_heartbeat` row for the job in the last ~28h (the alert's own condition).
+
+### Check first
+1. Is the droplet up at all? Cross-check the platform-plane droplet alerts + the DO uptime checks — if the box is down, that is the real incident; the stale backup is a symptom.
+2. SSH to the droplet and inspect the last cron run:
+   - Odoo: `journalctl -u cron --since -26h | grep grove-odoo-backup`, or run `bash -x /usr/local/bin/grove-odoo-backup.sh` and read where it exits.
+   - Blogs: check `/etc/cron.d/grove-blogs-backup` + the backup script output.
+3. Confirm the backup itself: `rclone lsf spaces:grove-odoo-backups/filestore/manifest/ | sort | tail` — is there a manifest dated today? (A fresh manifest with a stale *heartbeat* means the backup works but the heartbeat POST to grove-obs is failing — see fix #3.)
+
+### Common fixes
+- **Mountpoint guard tripped** (`/mnt/odoo-filestore is not a mountpoint`): the durable volume detached — reattach it; the guard is doing its job by refusing to sync an empty dir over the mirror.
+- **`--max-delete` tripwire**: a mass deletion was detected and the sync aborted loudly. Investigate *why* before overriding — this is the intended behavior, not a bug.
+- **Backup ran but heartbeat missing**: the backup script succeeded but the heartbeat POST to grove-obs failed (obs droplet down, `ingest_source_cidrs` not allowing this droplet, or a rotated ingest credential). Verify prod→obs reachability (`curl` the ingest URL from the droplet) — this is the GOL-381 ingress path. The backup is safe; fix the monitoring link.
+
+### Escalation
+If the droplet is unrecoverable, restore from the Spaces mirror: `grove-odoo-restore.sh` (see `docs/RUNBOOK-odoo-filestore-restore.md`). The manifest is the acceptance test for a complete restore.
