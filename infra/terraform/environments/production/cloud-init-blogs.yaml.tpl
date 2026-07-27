@@ -13,7 +13,7 @@
 # Nightly backup (03:30 UTC): mysqldump per DB + tar of each Ghost content
 # dir -> rclone to Spaces daily/ prefix; 1st of month also copies to
 # monthly/. Heartbeats the obs-stack OpenObserve `backup_heartbeat` stream on
-# success (dead-man's switch, GOL-854 / board 3a05a40b — not Healthchecks.io).
+# success (dead-man's switch, GOL-854 / board 3a05a40b -- not Healthchecks.io).
 
 ssh_pwauth: false
 
