@@ -23,14 +23,14 @@ to `blog.*`:
 |------|----------|-----|------------------------------------------------|--------|
 | `gatheringatthegrove.com` | Gathering at the Grove (hub) | `grove-hub-prod` | `grove-hub-prod-bpyrs.ondigitalocean.app` | `d5fa7795-da75-40e7-93fb-983e71558279` |
 | `goldberrygrove.farm` | Goldberry Grove Farm | `grove-goldberry-prod` | `grove-goldberry-prod-efc9e.ondigitalocean.app` | `3da0b924-85f6-4531-859f-699e03c3cd74` |
-| `woodworkinggeorge.com` | Woodworking George / G3 | `grove-ggg-prod` | `grove-ggg-prod-r866z.ondigitalocean.app` | `30c2a739-97d2-43bf-a6f8-dfff4a318bd8` |
+| `woodworkingeorge.com` | Woodworking George / G3 | `grove-ggg-prod` | `grove-ggg-prod-r866z.ondigitalocean.app` | `30c2a739-97d2-43bf-a6f8-dfff4a318bd8` |
 | `atthegrovenursery.com` | At The Grove Nursery | `grove-nursery-prod` | `grove-nursery-prod-peoxi.ondigitalocean.app` | `b9e0d2a6-6495-4dc7-a069-015b653c87e9` |
 
 > ⚠️ **The ingress host contains a DO-assigned random suffix** (`-bpyrs`,
 > `-efc9e`, …). It is not guessable and **changes if the app is destroyed/
 > recreated.** Re-read each from `doctl apps get <app-id>` or the TF
 > `*_default_ingress` output **at the top of the window** and confirm it matches
-> the table before writing any Origin Rule. Values above verified 2026-07-27.
+> the table before writing any Origin Rule. Values above verified 2026-07-26.
 
 ---
 
