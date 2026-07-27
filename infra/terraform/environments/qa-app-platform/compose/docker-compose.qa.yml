@@ -98,25 +98,31 @@ services:
     # GITSYNC_GATE_TIMEOUT) and fails LOUD (exit 1) rather than proceeding
     # module-less; restart:unless-stopped re-runs the gate and re-logs each
     # cycle, so a stuck sync is visible in `docker logs`.
+    #
+    # Runtime shell vars are written `$$var` (NOT `$var`): docker compose
+    # interpolates `$var` in this file at `up` time, and with no such compose
+    # var it substitutes EMPTY -- turning the gate into `[ ! -f "" ]` (always
+    # true) so Odoo hangs forever and never starts. `$$` -> literal `$` reaches
+    # bash. Do NOT "simplify" these back to single `$`. (GOL-746 first-boot bug.)
     entrypoint:
       - /bin/bash
       - -c
       - |
         set -eu
         sentinel="/workspace/current/grove_headless/__manifest__.py"
-        timeout="${GITSYNC_GATE_TIMEOUT:-300}"
+        timeout="$${GITSYNC_GATE_TIMEOUT:-300}"
         waited=0
-        while [ ! -f "$sentinel" ]; do
-          if [ "$waited" -ge "$timeout" ]; then
-            echo "FATAL(GOL-746): git-sync sentinel $sentinel absent after ${timeout}s; refusing to start Odoo with an empty addons_path (would bake poisoned asset bundles). Exiting for restart." >&2
+        while [ ! -f "$$sentinel" ]; do
+          if [ "$$waited" -ge "$$timeout" ]; then
+            echo "FATAL(GOL-746): git-sync sentinel $$sentinel absent after $${timeout}s; refusing to start Odoo with an empty addons_path (would bake poisoned asset bundles). Exiting for restart." >&2
             exit 1
           fi
-          echo "GOL-746 gate: waiting for git-sync first clone (${waited}/${timeout}s): $sentinel not present yet" >&2
+          echo "GOL-746 gate: waiting for git-sync first clone ($${waited}/$${timeout}s): $$sentinel not present yet" >&2
           sleep 5
-          waited=$((waited + 5))
+          waited=$$((waited + 5))
         done
-        echo "GOL-746 gate: sentinel present ($sentinel); starting Odoo."
-        exec /entrypoint.sh "$@"
+        echo "GOL-746 gate: sentinel present ($$sentinel); starting Odoo."
+        exec /entrypoint.sh "$$@"
       - --
     command: ["odoo"]
     volumes:
