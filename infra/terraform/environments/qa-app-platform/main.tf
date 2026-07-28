@@ -355,9 +355,10 @@ resource "digitalocean_droplet" "odoo" {
   ]
 
   user_data = templatefile("${path.module}/cloud-init.yaml.tpl", {
-    qa_zone         = local.qa_zone
-    odoo_image_tag  = var.odoo_image_tag
-    caddy_image_tag = var.caddy_image_tag
+    qa_zone            = local.qa_zone
+    odoo_image_tag     = var.odoo_image_tag
+    caddy_image_tag    = var.caddy_image_tag
+    custom_modules_ref = var.custom_modules_ref
 
     # Managed PG connection params. Odoo reads these via DB_HOST/DB_PORT/
     # DB_USER/DB_PASSWORD env vars (entrypoint.sh + odoorc.sh substitute
