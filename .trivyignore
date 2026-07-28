@@ -9,3 +9,16 @@
 #   2. the expected fix path (upstream patch, base image rev, removal of dep)
 #
 # Reference: https://aquasecurity.github.io/trivy/latest/docs/configuration/filtering/
+
+# GHSA-r28c-9q8g-f849 — PostCSS path traversal in previous-source-map
+# auto-loading. postcss 8.5.14 (fixed 8.5.18) ships bundled inside the
+# upstream `odoo:19` base image at
+#   /usr/local/lib/node_modules/rtlcss/node_modules/postcss
+# rtlcss is Odoo's RTL-CSS transformer; it only ever processes Odoo's own
+# trusted bundled asset CSS at build/asset-generation time — never
+# attacker-controlled input — so the source-map path-traversal is not
+# reachable in our deployment. Not our dependency: we cannot bump it without
+# an upstream `odoo:19` rebuild that revs rtlcss's postcss. Re-review on
+# expiry; drop this entry once a newer odoo:19 base ships postcss ≥ 8.5.18.
+# Tracked: GOL-934.
+GHSA-r28c-9q8g-f849 exp:2026-09-15
