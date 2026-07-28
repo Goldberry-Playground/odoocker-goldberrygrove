@@ -131,15 +131,28 @@ write_files:
       #!/usr/bin/env bash
       # Nightly Odoo filestore backup (GOL-99, GOL-382).
       #
-      # Mirrors /mnt/odoo-filestore/filestore -> spaces:${backups_bucket}/filestore/current
+      # Mirrors the live Odoo filestore -> spaces:${backups_bucket}/filestore/current
       # Odoo's filestore is content-addressed (<db>/<2-char>/<sha1-of-content>)
       # and write-once, so an incremental sync moves only new attachments -
       # a nightly tar would re-upload the whole filestore every night.
       #
+      # SRC path (GOL-920): the durable volume is bind-mounted at the odoo user's
+      # HOME (/mnt/odoo-filestore -> container /var/lib/odoo). We intentionally do
+      # NOT set DATA_DIR in /etc/grove/.env, so odoorc.sh drops the unset
+      # `data_dir = $${DATA_DIR}` line and Odoo falls back to its built-in default
+      # of ~/.local/share/Odoo. The filestore therefore lives at
+      # /var/lib/odoo/.local/share/Odoo/filestore -> host
+      # /mnt/odoo-filestore/.local/share/Odoo/filestore. The earlier SRC of
+      # /mnt/odoo-filestore/filestore was an empty dir the backup's own `mkdir -p`
+      # created, so the nightly sync mirrored ZERO bytes while passing mountpoint
+      # -q and pinging Healthchecks green (verified on-box on droplet 586990986:
+      # real filestore had 10 files, the old SRC had 0). Must match the restore
+      # script's SRC below.
+      #
       # Restore: /usr/local/bin/grove-odoo-restore.sh (docs/RUNBOOK-odoo-filestore-restore.md)
       set -euo pipefail
 
-      SRC=/mnt/odoo-filestore/filestore
+      SRC=/mnt/odoo-filestore/.local/share/Odoo/filestore
       BUCKET="spaces:${backups_bucket}"
       STAMP=$(date -u +%Y-%m-%dT%H%M%SZ)
 
@@ -199,7 +212,10 @@ write_files:
       # from memory during an incident.
       set -euo pipefail
 
-      SRC=/mnt/odoo-filestore/filestore
+      # GOL-920: must match grove-odoo-backup.sh SRC. Odoo's built-in default
+      # data_dir (~/.local/share/Odoo) applies because DATA_DIR is intentionally
+      # unset, so the live filestore is nested here, not at /mnt/odoo-filestore/filestore.
+      SRC=/mnt/odoo-filestore/.local/share/Odoo/filestore
       BUCKET="spaces:${backups_bucket}"
       MODE="$${1:-restore}"
 
