@@ -65,10 +65,34 @@ resource "digitalocean_database_db" "odoo" {
 # (click-op drift never captured in qa-app-platform/main.tf), so the prod
 # scaffold -- copied from that TF -- inherited the omission.
 #
-# Codifying it here makes prod come up from code alone (GOL-737). Follow-up:
-# backfill the same resource into the QA env to kill the drift, and consider a
-# root-cause image fix (probe `defaultdb` instead of `postgres`) so no stray
-# maintenance DB is needed.
+# Codifying it here makes prod come up from code alone (GOL-737).
+#
+# EXISTING-CLUSTER CONVERGENCE (GOL-954/GOL-955): the DO API create is NOT
+# idempotent -- once this DB exists on the cluster, a plain `apply` with a
+# fresh/rebuilt state 422s "database name is not available" and blocks the whole
+# run (the same latent break QA hit; the next existing-cluster prod apply would
+# 422 identically). The `import` block below fixes it: if the resource is
+# missing from state but the DB exists remotely, Terraform imports it (clean
+# plan) instead of re-creating it; if it's already in state the block is a
+# silent no-op. The DO provider's import ID is COMMA-separated
+# `<cluster_id>,<db_name>` (the slash form is WRONG and the provider rejects
+# it).
+#
+# FROM-SCRATCH CAVEAT: on a genuine PG-from-scratch bring-up the cluster id is
+# unknown at plan and no `postgres` DB exists yet, so the import block errors.
+# For that one first apply, comment the import block out (the resource then
+# CREATES the DB) and re-enable it afterwards. `prevent_destroy` on the cluster
+# makes this a deliberate, rare operator event, not a routine path.
+#
+# ROOT-CAUSE follow-up (GOL-750 Part 3, owned by Engineering - Alice): a
+# grove-odoo image whose probe hits `defaultdb` removes the need for this stray
+# DB entirely -- when that lands, delete this resource + import block in both
+# envs (GOL-954).
+import {
+  to = digitalocean_database_db.postgres
+  id = "${digitalocean_database_cluster.pg.id},postgres"
+}
+
 resource "digitalocean_database_db" "postgres" {
   cluster_id = digitalocean_database_cluster.pg.id
   name       = "postgres"
