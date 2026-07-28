@@ -132,7 +132,11 @@ services:
       - custom-modules-data:/workspace
     environment:
       - GITSYNC_REPO=${CUSTOM_MODULES_REPO:-https://github.com/Goldberry-Playground/grove-odoo-modules.git}
-      - GITSYNC_REF=${CUSTOM_MODULES_REF:-main}
+      # No :-main fallback: prod MUST pin a reviewed SHA (GOL-892). If
+      # CUSTOM_MODULES_REF is unset/empty, compose fails LOUD at `up` rather
+      # than silently syncing the moving main branch. TF writes it into
+      # /etc/grove/.env from var.custom_modules_ref (validated 40-char SHA).
+      - GITSYNC_REF=${CUSTOM_MODULES_REF:?prod requires a pinned grove-odoo-modules SHA (GOL-892); set custom_modules_ref}
       - GITSYNC_ROOT=/workspace
       - GITSYNC_LINK=current
       - GITSYNC_DEPTH=1

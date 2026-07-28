@@ -12,6 +12,8 @@
 # Templated variables (resolved by TF templatefile()):
 #   odoo_zone           : gatheringatthegrove.com  (Odoo host is odoo.<odoo_zone>)
 #   odoo_image_tag      : grove-odoo image tag
+#   custom_modules_ref  : pinned grove-odoo-modules SHA for the git-sync sidecar
+#                         (GOL-892; prod never tracks a moving branch)
 #   caddy_tag           : official caddy image tag
 #   pg_host/port/...    : Managed PG connection (private VPC)
 #   origin_cert/key     : CF Origin CA cert + key for the hub zone (wildcard)
@@ -75,6 +77,13 @@ write_files:
       # sidecar (grove-odoo-modules; grove_headless lives there). Without this
       # var Odoo silently runs stock community addons only.
       ADDONS_PATH=/usr/lib/python3/dist-packages/odoo/addons,/workspace/current
+
+      # Pinned grove-odoo-modules ref for the custom-modules-sync git-sync
+      # sidecar (GOL-892). Consumed by compose as CUSTOM_MODULES_REF; the
+      # compose default was :-main, so WITHOUT this line prod silently tracked
+      # the moving main branch (a merge would auto-deploy in GITSYNC_PERIOD with
+      # no review gate). TF var custom_modules_ref enforces a 40-char SHA.
+      CUSTOM_MODULES_REF=${custom_modules_ref}
 
   # Compose YAML - base64 so cloud-init's YAML parser never sees its content.
   - path: /etc/grove/docker-compose.yml
