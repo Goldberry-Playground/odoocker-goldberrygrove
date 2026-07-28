@@ -109,6 +109,17 @@ variable "caddy_image_tag" {
   default     = "latest"
 }
 
+variable "custom_modules_ref" {
+  description = "grove-odoo-modules git ref the custom-modules-sync (git-sync) sidecar checks out into /workspace/current. Written to /etc/grove/.env as CUSTOM_MODULES_REF and consumed by the compose's GITSYNC_REF=$${CUSTOM_MODULES_REF:-main}. QA INTENTIONALLY floats `main` by default (fast iteration) — unlike prod, which MUST pin a 40-char SHA (GOL-892). Set this to a full commit SHA to pin QA to a reviewed commit without editing the compose file, e.g. to freeze the store for a tester window so a mid-session merge to main can't shift behavior under testers. Accepts `main` or a 40-char lowercase hex SHA."
+  type        = string
+  default     = "main"
+
+  validation {
+    condition     = var.custom_modules_ref == "main" || can(regex("^[0-9a-f]{40}$", var.custom_modules_ref))
+    error_message = "custom_modules_ref must be \"main\" (QA floating default) or a full 40-char lowercase hex commit SHA to pin."
+  }
+}
+
 # === Observability droplet (Phase 1.5) ===
 
 variable "obs_droplet_size" {

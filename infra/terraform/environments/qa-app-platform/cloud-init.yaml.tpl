@@ -55,6 +55,12 @@ write_files:
       ODOO_TAG=${odoo_image_tag}
       CADDY_TAG=${caddy_image_tag}
 
+      # Custom-modules git-sync ref (grove-odoo-modules). The sidecar reads
+      # GITSYNC_REF=$${CUSTOM_MODULES_REF:-main}. QA floats `main` by default;
+      # set var.custom_modules_ref to a 40-char SHA to pin a reviewed commit
+      # (e.g. to freeze the store for a tester window) with no compose edit.
+      CUSTOM_MODULES_REF=${custom_modules_ref}
+
       # Managed PG connection (private network from this droplet)
       DB_HOST=${pg_host}
       DB_PORT=${pg_port}
@@ -142,6 +148,17 @@ runcmd:
   #    probe pulls grove-odoo, which the compose-up below reuses; the fallback
   #    (100:101) is the correct value if the probe ever fails. The `mounts:`
   #    module has already mounted LABEL=filestore at /mnt/odoo-filestore.
+  # Pre-flight: the block volumes MUST be mounted before we touch them. The
+  # mounts: module uses `nofail` (so a slow/failed DO volume attach doesn't wedge
+  # boot), which means a failed attach would otherwise let `mkdir -p` recreate
+  # the path on the ephemeral ROOT disk and the compose bind would store the Odoo
+  # filestore (product photos) there -- silently, with a green boot -- until the
+  # next droplet replace wipes it. That is exactly the GOL-93 durable-volume loss.
+  # Assert the mountpoints and fail the boot loudly instead of writing to root.
+  - |
+    for m in /mnt/odoo-filestore /mnt/caddy-data; do
+      mountpoint -q "$m" || { echo "::error:: expected block volume NOT mounted at $m -- aborting boot (refusing to run on ephemeral disk; GOL-93)"; exit 1; }
+    done
   - |
     . /etc/grove/.env
     IMG="ghcr.io/goldberry-playground/grove-odoo:$${ODOO_TAG:-latest}"
