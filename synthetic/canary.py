@@ -95,7 +95,18 @@ def seed() -> bool:
     cli = _client()
     if not cli:
         return False
-    ids = cli.call("product.template", "search", [[["default_code", "=", CANARY_CODE]]], {"limit": 1})
+    # GOL-921: default_code is NOT unique in product.template/product.product —
+    # after the July duplicate merge each SKU has 1 active + 2 archived rows. Pin
+    # the match to the live row with an explicit ('active','=',True) so this
+    # resolves exactly one row per SKU even if a caller runs under an
+    # active_test=False context (the ORM default already excludes archived, but
+    # this makes the invariant hold regardless of context).
+    ids = cli.call(
+        "product.template",
+        "search",
+        [[["default_code", "=", CANARY_CODE], ["active", "=", True]]],
+        {"limit": 1},
+    )
     fields = {"list_price": 0.0, "sale_ok": True, "website_published": False}
     if ids:
         cli.call("product.template", "write", [ids, fields])
@@ -123,7 +134,14 @@ def resolve_variant_id() -> int | None:
     cli = _client()
     if not cli:
         return None
-    vids = cli.call("product.product", "search", [[["default_code", "=", CANARY_CODE]]], {"limit": 1})
+    # GOL-921: pin to the live variant row — default_code is not unique across
+    # active + archived product.product rows post-merge.
+    vids = cli.call(
+        "product.product",
+        "search",
+        [[["default_code", "=", CANARY_CODE], ["active", "=", True]]],
+        {"limit": 1},
+    )
     if not vids:
         _log("  canary: no variant found — seed first (setup-monitoring.py)")
         return None
