@@ -77,5 +77,25 @@ jobs:
 
           # Turn on auto-merge so GitHub merges once ALL required checks are green.
           # No-op-safe: needs the repo "Allow auto-merge" setting enabled.
-          gh pr merge "$PR" --repo "$REPO" --auto --squash \
-            || echo "Could not enable auto-merge (enable 'Allow auto-merge' in repo settings). Approval still stands; merge will be a one-click for a maintainer."
+          #
+          # GOL-938: enabling auto-merge FAILS on a PR that is ALREADY mergeable
+          # (GitHub rejects `--auto` with "Pull request is in clean status" —
+          # there's nothing to wait for). That happens exactly when CI's final
+          # required check goes green just before / as we approve, so the PR is
+          # instantly clean. The old bare `|| echo` swallowed that error and left
+          # the PR sitting un-merged (autoMergeRequest=null), forcing a manual
+          # `gh pr merge`. Fall back to a DIRECT squash merge in that case.
+          if merge_err=$(gh pr merge "$PR" --repo "$REPO" --auto --squash 2>&1); then
+            echo "Auto-merge enabled for PR #$PR; GitHub will merge once required checks are green."
+          else
+            echo "Enable auto-merge failed: $merge_err"
+            echo "PR may already be mergeable (clean status); attempting a direct squash merge..."
+            if direct_err=$(gh pr merge "$PR" --repo "$REPO" --squash 2>&1); then
+              echo "PR #$PR merged directly."
+            else
+              echo "::warning::Could not enable auto-merge OR merge PR #$PR directly."
+              echo "::warning::auto-merge error: $merge_err"
+              echo "::warning::direct-merge error: $direct_err"
+              echo "::warning::Approval still stands; a maintainer must merge (check 'Allow auto-merge' + branch is up to date)."
+            fi
+          fi
