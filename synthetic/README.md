@@ -64,6 +64,7 @@ OFF unless `SYNTHETIC_CANARY_ENABLED=true` + `ODOO_DB`/`ODOO_LOGIN`/`SYNTHETIC_O
 - **Shared $0 product.** `setup-monitoring.py` seeds one `SYNTHETIC-CANARY` product with `company_id=False` (visible to all tenants) and `website_published=False` (never in a storefront). One variant serves every tenant — no tenant→company mapping.
 - **Self-healing cleanup.** After each cycle the runner unlinks draft/sent orders whose partner email is `synthetic-canary@grove.invalid` — never confirmed orders, and `.invalid` can't collide with a real customer.
 - **Key handling.** The API key doubles as HTTP bearer + XML-RPC password; it's passed to Hurl via a temp variables-file (out of argv). Scope it to a least-privilege Odoo user.
+- **SKU matches pin to the live row (GOL-921).** `default_code` is NOT unique in `product.template`/`product.product` — after the July duplicate merge each SKU has 1 active + 2 archived rows. Any teardown/cleanup/resolve path that matches on SKU must add `('active','=',True)` to the domain so it touches exactly the one live row (the ORM default excludes archived, but an explicit filter holds even under an `active_test=False` context or a raw query). `canary.py` `seed`/`resolve` do this.
 
 ## ghost-content — opt-in
 
