@@ -274,6 +274,10 @@ jobs:
           exit-code: "1"
           format: table
           ignore-unfixed: true # CVEs Debian hasn't patched yet shouldn't block CI
+          # Honor the repo's documented, expiring suppressions (same file the
+          # security-scans.yml workflow reads). Entries are scoped + time-boxed
+          # so an unfixed-upstream CVE can't wedge CI indefinitely (GOL-934).
+          trivyignores: .trivyignore
 
       - name: Log in to GHCR
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
