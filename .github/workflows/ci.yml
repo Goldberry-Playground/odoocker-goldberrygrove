@@ -469,6 +469,12 @@ jobs:
     name: Terraform fmt + validate
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # GOL-938: share one on-disk provider cache across every env/module so
+    # `terraform init` downloads each provider ONCE (not per-dir), and a
+    # cache hit means zero network fetches at all. Cuts CI minutes and
+    # removes the per-dir network-flake surface that stranded PR #329.
+    env:
+      TF_PLUGIN_CACHE_DIR: ${{ github.workspace }}/.terraform-plugin-cache
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -478,22 +484,57 @@ jobs:
         with:
           terraform_version: "~1.10" # GOL-40: use_lockfile requires >= 1.10
 
+      # TF errors if TF_PLUGIN_CACHE_DIR doesn't exist; create it before init.
+      - name: Prepare provider cache dir
+        run: mkdir -p "$TF_PLUGIN_CACHE_DIR"
+
+      # Restore/save the provider cache keyed on ALL lockfiles: any provider
+      # version bump (which changes a .terraform.lock.hcl) invalidates the key
+      # so we re-download; otherwise we reuse the warm cache across runs.
+      - name: Cache Terraform providers
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: ${{ env.TF_PLUGIN_CACHE_DIR }}
+          key: tf-plugins-${{ runner.os }}-${{ hashFiles('infra/terraform/**/.terraform.lock.hcl') }}
+          restore-keys: |
+            tf-plugins-${{ runner.os }}-
+
       - name: terraform fmt -check (recursive)
         run: terraform fmt -check -recursive -diff infra/terraform/
 
       # Validate per env + module. Each needs its own `terraform init
       # -backend=false` so the providers (digitalocean, cloudflare, etc.)
-      # are downloaded but the S3 backend (which needs Spaces creds) is
-      # skipped. set -e + per-dir grouping = one specific error instead of
-      # a 7-env wall of red.
+      # are downloaded (into the shared TF_PLUGIN_CACHE_DIR) but the S3
+      # backend (which needs Spaces creds) is skipped. set -e + per-dir
+      # grouping = one specific error instead of a 7-env wall of red.
+      #
+      # GOL-938: `init` is wrapped in a bounded retry (3 attempts, backoff)
+      # so a transient provider-download reset (`connection reset by peer`
+      # from githubusercontent, seen on PR #329) self-heals instead of
+      # reddening CI and stranding an otherwise-mergeable agent PR.
       - name: terraform validate (every env + module)
         run: |
           set -e
+
+          tf_init_retry() {
+            local attempt=1 max=3 delay=5
+            until terraform init -backend=false -input=false >/dev/null; do
+              if [ "$attempt" -ge "$max" ]; then
+                echo "::error::terraform init failed after $max attempts in $(pwd)"
+                return 1
+              fi
+              echo "terraform init attempt $attempt/$max failed (likely a transient provider download); retrying in ${delay}s..."
+              sleep "$delay"
+              attempt=$((attempt + 1))
+              delay=$((delay * 2))
+            done
+          }
+
           for d in infra/terraform/environments/*/ infra/terraform/modules/*/; do
             echo "::group::$d"
             (
               cd "$d"
-              terraform init -backend=false -input=false >/dev/null
+              tf_init_retry
               terraform validate
             )
             echo "::endgroup::"
