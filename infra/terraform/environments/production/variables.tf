@@ -132,24 +132,14 @@ variable "odoo_image_tag" {
   default     = "latest"
 }
 
-# GOL-900 (overdue 6/26). The custom-modules-sync git-sync sidecar populates
-# /workspace/current (grove_headless + friends) that Odoo loads as addons.
-# Compose reads GITSYNC_REF=$${CUSTOM_MODULES_REF:-main}; leaving this unset
-# meant prod SILENTLY tracked grove-odoo-modules `main` HEAD and re-pulled it
-# every GITSYNC_PERIOD (60s) with no gate or approval -- an unpinned prod
-# addons feed is the exact drift GOL-385 is about. Pinning to a full SHA makes
-# the addons prod runs reproducible from code alone and stops main merges from
-# auto-shipping to production. Bump this deliberately alongside a prod rebuild.
-# Default is the main HEAD at pin time (GOL-837 #50), so pinning is behavior-
-# neutral -- it freezes the CURRENT state, it does not change what prod loads.
 variable "custom_modules_ref" {
-  description = "grove-odoo-modules git ref the prod git-sync sidecar pins to (GITSYNC_REF). Full commit SHA for reproducibility; a branch/tag would re-introduce drift. Bump on purpose with each prod addons release."
+  description = "grove-odoo-modules git ref the prod custom-modules-sync (git-sync) sidecar checks out into /workspace/current. MUST be a pinned 40-char commit SHA -- prod NEVER tracks a moving branch (a merge to grove-odoo-modules main would otherwise auto-deploy to prod within GITSYNC_PERIOD with no review gate). Same reproducible-release rationale as var.odoo_image_tag. Bumping this is a reviewed infra PR (see the 'Custom modules' section of the repo README). Default = grove-odoo-modules main HEAD as of the GOL-892 pin (behavior-neutral vs the previously unpinned :-main default, which prod was live on)."
   type        = string
   default     = "f49d80a5c818097887a24c5691b1b7bff5056941"
 
   validation {
     condition     = can(regex("^[0-9a-f]{40}$", var.custom_modules_ref))
-    error_message = "custom_modules_ref must be a full 40-char commit SHA (a branch/tag re-introduces the drift this pin exists to prevent)."
+    error_message = "custom_modules_ref must be a full 40-char lowercase hex commit SHA -- branch names like 'main'/'HEAD' are rejected so prod can never track a moving ref (GOL-892)."
   }
 }
 

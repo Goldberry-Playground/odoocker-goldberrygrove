@@ -147,13 +147,10 @@ resource "digitalocean_droplet" "odoo" {
   ]
 
   user_data = templatefile("${path.module}/cloud-init-odoo.yaml.tpl", {
-    odoo_zone      = local.odoo_zone
-    odoo_image_tag = var.odoo_image_tag
-    caddy_tag      = var.caddy_tag
-
-    # GOL-900: pinned grove-odoo-modules SHA for the git-sync sidecar. Without
-    # it the .env below omits CUSTOM_MODULES_REF and prod drifts onto main HEAD.
+    odoo_zone          = local.odoo_zone
+    odoo_image_tag     = var.odoo_image_tag
     custom_modules_ref = var.custom_modules_ref
+    caddy_tag          = var.caddy_tag
 
     # Managed PG connection params (private VPC network). odoorc.sh substitutes
     # these into /etc/odoo/odoo.conf at container start.

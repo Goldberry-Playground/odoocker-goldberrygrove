@@ -262,7 +262,7 @@ TF-managed compose at
 | `docker-compose.override.local.yml` | Local dev: ports exposed, no restart, modules bind-mounted | Development |
 | `docker-compose.override.grove.yml` | Adds 3 Ghost CMS instances | Any Grove environment |
 | `docker-compose.override.sandbox.yml` | Sandbox: staging DB, dev Ghost instances | QA/Testing |
-| `docker-compose.override.production.yml` | *Legacy (pre-Level 3)* — still read by CI/release for the Odoo image tag; NOT the live prod module pin. The live prod `GITSYNC_REF` pin is `custom_modules_ref` in `infra/terraform/environments/production` (GOL-900) | Historical / CI image-tag source |
+| `docker-compose.override.production.yml` | *Legacy (pre-Level 3)* — NOT applied to the Level-3 prod droplet; the prod modules pin now lives in `infra/terraform/environments/production` `var.custom_modules_ref` (GOL-892) | Historical reference |
 
 **Common combinations:**
 
@@ -375,10 +375,14 @@ The grove-odoo image bakes **no** custom modules. On the Odoo droplet, the
 
 - **QA** tracks the `main` branch of grove-odoo-modules (polling; no Docker
   rebuild needed).
-- **Production** pins a specific SHA via `GITSYNC_REF` — a module bump is an
-  explicit, reviewed infra PR. See the "Bumping the prod modules SHA"
-  procedure in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#module-updates).
-  Never set `GITSYNC_REF=main` in production.
+- **Production** pins a specific SHA via `var.custom_modules_ref` in
+  `infra/terraform/environments/production` (written to `CUSTOM_MODULES_REF`/
+  `GITSYNC_REF` in `/etc/grove/.env` by cloud-init; a TF `validation` block
+  rejects anything that is not a 40-char SHA, and the prod compose uses
+  `${CUSTOM_MODULES_REF:?...}` so a missing pin fails `up` loud rather than
+  silently syncing `main`). A module bump = edit that variable's `default` in an
+  explicit, reviewed infra PR (rides the gated prod-rebuild path, GOL-385).
+  Never pin it to `main` (GOL-892).
 
 ```bash
 # Install/upgrade modules via CLI (inside the Odoo container)
@@ -469,7 +473,7 @@ docker compose cp ghost-nursery:/var/lib/ghost/content ./ghost-nursery-backup
 | `ADMIN_PASSWD` | `odoo` | Strong password (via 1Password) |
 | `DEV_MODE` | `reload,qweb` | (empty) |
 | TLS | None | App Platform (frontends) + Caddy (droplet hosts) |
-| Custom modules | Bind-mounted from `../grove-odoo-modules` | git-sync sidecar (prod pins `GITSYNC_REF` SHA) |
+| Custom modules | Bind-mounted from `../grove-odoo-modules` | git-sync sidecar (prod pins a SHA via `var.custom_modules_ref`) |
 | Demo data | Loaded | Disabled |
 
 ## Deployment
@@ -518,7 +522,7 @@ land in that env's README.
 | Doc | What it covers |
 |-----|----------------|
 | [docs/DEPLOY-OVERVIEW.md](docs/DEPLOY-OVERVIEW.md) | Which doc/env to use for local, QA, prod |
-| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Legacy checklist; still canonical for the prod `GITSYNC_REF` bump procedure |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | **Deprecated** — superseded by [docs/DEPLOY.md](docs/DEPLOY.md). The prod modules pin is now codified in `infra/terraform/environments/production` `var.custom_modules_ref` (GOL-892), not in this checklist |
 | [docs/ADR/007-level-3-app-platform-migration.md](docs/ADR/007-level-3-app-platform-migration.md) | The Level 3 decision + phased execution plan |
 | [docs/ADR/008-observability-openobserve-supersedes-adr004.md](docs/ADR/008-observability-openobserve-supersedes-adr004.md) | OpenObserve + Keep observability plane |
 | [docs/ADR/](docs/ADR/) | All architecture decision records (001-008) |

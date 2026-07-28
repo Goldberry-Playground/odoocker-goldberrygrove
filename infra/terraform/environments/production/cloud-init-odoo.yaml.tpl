@@ -12,8 +12,9 @@
 # Templated variables (resolved by TF templatefile()):
 #   odoo_zone           : gatheringatthegrove.com  (Odoo host is odoo.<odoo_zone>)
 #   odoo_image_tag      : grove-odoo image tag
+#   custom_modules_ref  : pinned grove-odoo-modules SHA for the git-sync sidecar
+#                         (GOL-892; prod never tracks a moving branch)
 #   caddy_tag           : official caddy image tag
-#   custom_modules_ref  : pinned grove-odoo-modules SHA for git-sync (GOL-900)
 #   pg_host/port/...    : Managed PG connection (private VPC)
 #   origin_cert/key     : CF Origin CA cert + key for the hub zone (wildcard)
 #   compose_yml_b64     : base64 of compose/docker-compose.odoo.yml
@@ -77,10 +78,11 @@ write_files:
       # var Odoo silently runs stock community addons only.
       ADDONS_PATH=/usr/lib/python3/dist-packages/odoo/addons,/workspace/current
 
-      # GOL-900: pin the git-sync sidecar to a fixed grove-odoo-modules SHA.
-      # Compose reads GITSYNC_REF=$${CUSTOM_MODULES_REF:-main}; omitting this
-      # let prod drift onto main HEAD (re-pulled every 60s, ungated). The value
-      # is codified in variables.tf -- bump it deliberately per prod release.
+      # Pinned grove-odoo-modules ref for the custom-modules-sync git-sync
+      # sidecar (GOL-892). Consumed by compose as CUSTOM_MODULES_REF; the
+      # compose default was :-main, so WITHOUT this line prod silently tracked
+      # the moving main branch (a merge would auto-deploy in GITSYNC_PERIOD with
+      # no review gate). TF var custom_modules_ref enforces a 40-char SHA.
       CUSTOM_MODULES_REF=${custom_modules_ref}
 
   # Compose YAML - base64 so cloud-init's YAML parser never sees its content.
