@@ -162,18 +162,34 @@ resource "digitalocean_database_db" "odoo" {
 # forever ("FATAL: database \"postgres\" does not exist") and Odoo crash-loops
 # (observed on the prod keystone bring-up: GOL-737).
 #
-# This env's live `postgres` DB was hand-created (click-op drift never captured
-# in TF), so this resource CLOSES that drift. Because the DB already exists on
-# the live cluster, IMPORT it before the next apply so plan is clean (a plain
-# apply would 409 "database already exists"):
+# EXISTING-CLUSTER CONVERGENCE (GOL-954/GOL-955): once this DB exists on the
+# cluster (created by a prior apply, or hand-created click-op) the DO API
+# create is NOT idempotent -- a plain `apply` against the existing cluster with
+# a fresh/rebuilt state 422s "database name is not available" and blocks the
+# whole run. The `import` block below fixes that: if the resource is missing
+# from state but the DB exists remotely, Terraform imports it (clean plan)
+# instead of trying to re-create it. If the resource is already in state the
+# import block is a silent no-op. The DO provider's import ID is
+# COMMA-separated `<cluster_id>,<db_name>` (the slash form `<cid>/postgres` is
+# WRONG and the provider rejects it). QA was recovered live 2026-07-28 with the
+# comma form; apply then hit 0 changes.
 #
-#   CID=$(doctl databases list --format ID,Name --no-header \
-#           | awk '$2=="grove-qa-l3-pg"{print $1}')
-#   terraform import digitalocean_database_db.postgres "$CID/postgres"
+# FROM-SCRATCH CAVEAT: on a genuine PG-from-scratch bring-up (e.g. after
+# `make qa-l3-teardown-all`) the cluster id is unknown at plan and no `postgres`
+# DB exists yet, so the import block errors. For that one first apply, comment
+# the import block out -- the resource then CREATES the DB -- and re-enable it
+# afterwards. `prevent_destroy` on the cluster makes this a deliberate, rare
+# operator event, not a routine path.
 #
-# On a from-scratch apply (fresh cluster) no import is needed; the resource
-# creates it. Root-cause follow-up (GOL-750 Part 3): a grove-odoo image that
-# probes `defaultdb` removes the need for this stray DB entirely.
+# ROOT-CAUSE follow-up (GOL-750 Part 3, owned by Engineering - Alice): a
+# grove-odoo image whose probe hits `defaultdb` removes the need for this stray
+# DB entirely -- when that lands, delete this resource + import block in both
+# envs (GOL-954).
+import {
+  to = digitalocean_database_db.postgres
+  id = "${digitalocean_database_cluster.pg.id},postgres"
+}
+
 resource "digitalocean_database_db" "postgres" {
   cluster_id = digitalocean_database_cluster.pg.id
   name       = "postgres"
