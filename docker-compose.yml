@@ -296,9 +296,12 @@ services:
     environment:
       - GITSYNC_REPO=${CUSTOM_MODULES_REPO}
       # GITSYNC_REF supersedes GITSYNC_BRANCH (deprecated in git-sync v4) and
-      # accepts a branch name, tag, or full commit SHA. Production should pin
-      # to a SHA via docker-compose.override.production.yml. CUSTOM_MODULES_BRANCH
-      # kept as fallback for compat with older .env files.
+      # accepts a branch name, tag, or full commit SHA. Live prod (the Level-3
+      # Terraform env, infra/terraform/environments/production) pins to a SHA
+      # via the `custom_modules_ref` variable baked into the droplet cloud-init
+      # .env (GOL-900); the legacy pre-Level-3 docker-compose.override.production
+      # .yml pin is not on the live prod path. CUSTOM_MODULES_BRANCH kept as
+      # fallback for compat with older .env files.
       - GITSYNC_REF=${CUSTOM_MODULES_REF:-${CUSTOM_MODULES_BRANCH:-main}}
       - GITSYNC_ROOT=/workspace
       - GITSYNC_LINK=current
