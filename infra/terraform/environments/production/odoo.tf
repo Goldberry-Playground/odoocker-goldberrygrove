@@ -147,9 +147,10 @@ resource "digitalocean_droplet" "odoo" {
   ]
 
   user_data = templatefile("${path.module}/cloud-init-odoo.yaml.tpl", {
-    odoo_zone      = local.odoo_zone
-    odoo_image_tag = var.odoo_image_tag
-    caddy_tag      = var.caddy_tag
+    odoo_zone          = local.odoo_zone
+    odoo_image_tag     = var.odoo_image_tag
+    custom_modules_ref = var.custom_modules_ref
+    caddy_tag          = var.caddy_tag
 
     # Managed PG connection params (private VPC network). odoorc.sh substitutes
     # these into /etc/odoo/odoo.conf at container start.

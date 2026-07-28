@@ -132,6 +132,17 @@ variable "odoo_image_tag" {
   default     = "latest"
 }
 
+variable "custom_modules_ref" {
+  description = "grove-odoo-modules git ref the prod custom-modules-sync (git-sync) sidecar checks out into /workspace/current. MUST be a pinned 40-char commit SHA -- prod NEVER tracks a moving branch (a merge to grove-odoo-modules main would otherwise auto-deploy to prod within GITSYNC_PERIOD with no review gate). Same reproducible-release rationale as var.odoo_image_tag. Bumping this is a reviewed infra PR (see the 'Custom modules' section of the repo README). Default = grove-odoo-modules main HEAD as of the GOL-892 pin (behavior-neutral vs the previously unpinned :-main default, which prod was live on)."
+  type        = string
+  default     = "f49d80a5c818097887a24c5691b1b7bff5056941"
+
+  validation {
+    condition     = can(regex("^[0-9a-f]{40}$", var.custom_modules_ref))
+    error_message = "custom_modules_ref must be a full 40-char lowercase hex commit SHA -- branch names like 'main'/'HEAD' are rejected so prod can never track a moving ref (GOL-892)."
+  }
+}
+
 # === Track 2 (ADR-007 Phase 6, GOL-105/GOL-116) - App Platform frontends =====
 
 variable "app_instance_size_slug" {
