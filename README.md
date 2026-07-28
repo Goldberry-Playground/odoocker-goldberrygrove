@@ -262,7 +262,7 @@ TF-managed compose at
 | `docker-compose.override.local.yml` | Local dev: ports exposed, no restart, modules bind-mounted | Development |
 | `docker-compose.override.grove.yml` | Adds 3 Ghost CMS instances | Any Grove environment |
 | `docker-compose.override.sandbox.yml` | Sandbox: staging DB, dev Ghost instances | QA/Testing |
-| `docker-compose.override.production.yml` | *Legacy (pre-Level 3)* — retained as the home of the prod `GITSYNC_REF` module pin | Historical reference |
+| `docker-compose.override.production.yml` | *Legacy (pre-Level 3)* — still read by CI/release for the Odoo image tag; NOT the live prod module pin. The live prod `GITSYNC_REF` pin is `custom_modules_ref` in `infra/terraform/environments/production` (GOL-900) | Historical / CI image-tag source |
 
 **Common combinations:**
 
