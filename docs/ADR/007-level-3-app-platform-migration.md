@@ -1,6 +1,6 @@
 # ADR 007: Level 3 — migrate QA + prod to DO App Platform + Managed Postgres
 
-**Status:** Accepted — executed for QA (Phases 1-5 complete, 2026-07-07); prod (Phase 6) pending
+**Status:** Accepted — executed for QA (Phases 1-5 complete, 2026-07-07) **and prod** (Phase 6: Odoo/Caddy droplet + 4 App Platform frontends + Managed Postgres built and serving, 2026-07-26 — GOL-737 keystone apply, GOL-824/GOL-286 App Platform apps). Only the **apex DNS cutover** remains — apps currently serve on `*.ondigitalocean.app` / `*.qa.` subdomains; the one-way-door 4-apex flip is gated on board launch-go (GOL-287).
 **Date:** 2026-06-26
 **Deciders:** Josh Dunbar
 **Implementation target:** start after 2026-06-27 21:30 UTC (LE rate-limit clears + today's PRs validate end-to-end)
@@ -161,7 +161,15 @@ Independent + small = easy to review + rollback.
 - Update workflows (`qa-deploy.yml`, `chain-after-image-rebuild.yml`, etc.) to target new env
 - Tear down old droplet + volume
 
-### Phase 6: Replicate for prod (timeline TBD)
+### Phase 6: Replicate for prod — EXECUTED (2026-07-26, apex cutover pending)
+
+> **Update (2026-07-26):** Built and serving. `infra/terraform/environments/production/`
+> is live: the Odoo/Caddy droplet keystone applied and verified serving
+> (GOL-737), 4 App Platform frontends are up on `*.ondigitalocean.app` and
+> returning 200 (GOL-824/GOL-286), and Managed Postgres is the live DB. The
+> **only** remaining step is the one-way-door **apex DNS cutover** of the four
+> production hostnames — gated on board launch-go, tracked in **GOL-287**.
+> Details below describe the plan as originally written.
 
 After QA validates for 2-4 weeks, build `infra/terraform/environments/production/` with the same shape:
 - Larger instance sizes
