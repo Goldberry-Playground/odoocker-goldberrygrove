@@ -133,9 +133,9 @@ variable "odoo_image_tag" {
 }
 
 variable "custom_modules_ref" {
-  description = "grove-odoo-modules git ref the prod custom-modules-sync (git-sync) sidecar checks out into /workspace/current. MUST be a pinned 40-char commit SHA -- prod NEVER tracks a moving branch (a merge to grove-odoo-modules main would otherwise auto-deploy to prod within GITSYNC_PERIOD with no review gate). Same reproducible-release rationale as var.odoo_image_tag. Bumping this is a reviewed infra PR (see the 'Custom modules' section of the repo README). Default = grove-odoo-modules main HEAD as of the GOL-892 pin (behavior-neutral vs the previously unpinned :-main default, which prod was live on)."
+  description = "grove-odoo-modules git ref the prod custom-modules-sync (git-sync) sidecar checks out into /workspace/current. MUST be a pinned 40-char commit SHA -- prod NEVER tracks a moving branch (a merge to grove-odoo-modules main would otherwise auto-deploy to prod within GITSYNC_PERIOD with no review gate). Same reproducible-release rationale as var.odoo_image_tag. Bumping this is a reviewed infra PR (see the 'Custom modules' section of the repo README). Default = the SHA prod was actually serving when the GOL-987 pin was applied live (2026-07-30); this matches the live /etc/grove/.env pin so a droplet REPLACE reproduces prod exactly instead of rolling modules back. Supersedes the stale GOL-892 default f49d80a5 (grove-odoo-modules main had already advanced past it by apply time)."
   type        = string
-  default     = "f49d80a5c818097887a24c5691b1b7bff5056941"
+  default     = "f8ef75d1287f5a7dcc72d770bd51caef861c3882"
 
   validation {
     condition     = can(regex("^[0-9a-f]{40}$", var.custom_modules_ref))
