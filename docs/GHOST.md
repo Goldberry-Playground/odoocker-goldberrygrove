@@ -1,5 +1,13 @@
 # Ghost CMS in QA
 
+> **Scope — QA only.** This describes the per-tenant Ghost containers that run
+> on the **QA** droplet's docker-compose. It is **not** the production content
+> story: on Level-3 prod (ADR-007, executed 2026-07-26) storefronts point at
+> the live `blog.goldberrygrove.farm` Content API, and self-hosted
+> Ghost-per-tenant is **deferred** until tenant blog content actually exists
+> (see ADR-007 → "Updated Open items resolution → Ghost"). Task/Asana numbers
+> below are historical (Phase C, 2026-07-01) and reference the legacy tracker.
+
 QA runs one Ghost instance per tenant (goldberry / ggg / nursery). Each has
 its own SQLite database inside its container's volume and is reachable only
 from inside the Docker network — storefronts fetch posts server-side via the
@@ -96,5 +104,7 @@ is untouched.
 
 The hub's journal pages (`apps/hub/app/journal/*.tsx`) pull from
 `ghost-goldberry` in QA too, so hub's editorial content is testable without
-touching prod. In prod (post-Level-3), hub will point at a dedicated
-editorial Ghost — see ADR-007 Phase 6.
+touching prod. In prod (post-Level-3), storefronts and hub point at the live
+`blog.goldberrygrove.farm` Content API; a self-hosted per-tenant editorial
+Ghost is deferred until tenant blog content exists — see ADR-007 "Updated
+Open items resolution → Ghost".
