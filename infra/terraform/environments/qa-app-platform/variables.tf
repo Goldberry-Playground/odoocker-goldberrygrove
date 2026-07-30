@@ -332,14 +332,14 @@ variable "ghost_content_key_nursery" {
 # export every KEY=VALUE line in /etc/grove/.env into that environment, so
 # these two vars flow straight through the cloud-init .env write_files block.
 #
-# BLOCKED provisioning (GOL-696): the key VALUES are separate ITEMS in the
-# `grove-qa` 1Password vault (publishable/secret/webhook_secret), NOT fields
-# on the Admin `Grove Infra` item. Resolving TF_VAR_stripe_test_* at apply
-# time requires the deploy-time `op` account to READ `grove-qa` — the current
-# `op` service account (KMKXQVYQSRDVNCPIWQPVH7MXHY) is Admin-vault-only. Until
-# the `grove-devops-ro` token (3-vault read incl. grove-qa) is wired into the
-# CI/TF apply op context, these default to "" and the sandbox checkout stays
-# inert (grove_headless returns "" and the gate is a no-op — zero regression).
+# RESOLVED 2026-07-30 (GOL-899): wired to the `stripe-nursery-qa` item in the
+# `grove-qa` 1Password vault (see .env.op / RUNBOOK-checkout-stripe-guardrails).
+# NOTE: an empty default here is NOT "zero regression" — it 503s the checkout
+# SESSION route for ALL THREE storefronts, because the thin proxies (GOL-890)
+# make this the only key that route reads. Keep the empty default so `plan`
+# works without op, but treat an empty resolved value at APPLY time as an
+# outage, not a safe no-op. The apply-time `op` account MUST be grove-devops-ro
+# (reads grove-qa); the Admin-only SA silently resolves these to "".
 variable "stripe_test_secret_key" {
   description = "Stripe TEST-mode secret key (sk_test_...) for grove_headless sandbox checkout. Injected into /etc/grove/.env as lowercase `stripe_test_secret_key`; grove_headless reads it via os.environ. VALUE is an item in the `grove-qa` 1Password vault (GOL-696); read via TF_VAR_stripe_test_secret_key once the CI/TF apply op account can read grove-qa. Empty default keeps apply/plan working and the checkout inert until provisioned."
   type        = string
