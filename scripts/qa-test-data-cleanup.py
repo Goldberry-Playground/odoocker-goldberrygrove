@@ -127,6 +127,21 @@ def test_partner_email_domain() -> list:
     return clauses
 
 
+def anon_cart_domain(test_partner_ids: list) -> list:
+    """Odoo domain for anonymous website draft carts (REPORT ONLY, never deleted).
+
+    Excludes the reserved-domain test partners we already delete as test orders —
+    but ONLY when there are any. A `not in [0]` sentinel is NOT a harmless no-op in
+    Odoo: a many2one `not in [<id>]` matches ZERO rows, so `partner_ids or [0]`
+    would silently under-report every abandoned cart as 0 once the test partners
+    are gone (verified live on QA, 2026-07-30). Omit the clause entirely instead.
+    """
+    domain: list = [["state", "=", "draft"], ["website_id", "!=", False]]
+    if test_partner_ids:
+        domain.append(["partner_id", "not in", test_partner_ids])
+    return domain
+
+
 # QA/sandbox/staging markers. Prod and QA both run a DB literally named `odoo`,
 # so the DB name alone can't tell them apart — the reliable signal is the
 # hostname in the XML-RPC URL (odoo.qa.… vs odoo.…). A marker in EITHER qualifies.
@@ -202,11 +217,7 @@ def plan(client) -> dict:
     products = _read(client, "product.template", prod_tmpl_ids, ["id", "name", "default_code"])
 
     # 4. Anonymous website draft carts — REPORT ONLY (can't tell from a real one).
-    anon_cart_ids = _search(
-        client, "sale.order",
-        [["state", "=", "draft"], ["website_id", "!=", False],
-         ["partner_id", "not in", partner_ids or [0]]],
-    )
+    anon_cart_ids = _search(client, "sale.order", anon_cart_domain(partner_ids))
 
     return {
         "test_partners": partners,

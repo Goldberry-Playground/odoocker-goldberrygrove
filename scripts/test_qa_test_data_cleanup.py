@@ -263,6 +263,20 @@ def test_apply_deletes_confirmed_test_order_without_crashing() -> None:
     assert set(fake.records["sale.order"]) == set()
 
 
+def test_anon_cart_domain_never_emits_zero_sentinel() -> None:
+    # Regression (found live on QA 2026-07-30): a `not in [0]` sentinel is NOT a
+    # no-op in Odoo — a many2one `not in [<id>]` matches ZERO rows, so once the
+    # test partners are gone the anon-cart report silently collapses to 0. When
+    # there are no test partners the domain must carry NO partner_id clause.
+    empty = cleanup.anon_cart_domain([])
+    assert ["state", "=", "draft"] in empty and ["website_id", "!=", False] in empty
+    assert all(clause[0] != "partner_id" for clause in empty if isinstance(clause, list)), empty
+    # With test partners present, exclude exactly those (never a [0] sentinel).
+    with_ids = cleanup.anon_cart_domain([40, 41])
+    assert ["partner_id", "not in", [40, 41]] in with_ids
+    assert ["partner_id", "not in", [0]] not in with_ids
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
