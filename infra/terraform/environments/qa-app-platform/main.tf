@@ -396,6 +396,14 @@ resource "digitalocean_droplet" "odoo" {
     stripe_test_secret_key     = var.stripe_test_secret_key
     stripe_test_webhook_secret = var.stripe_test_webhook_secret
 
+    # Publish-webhook sender secret (GOL-985/986/1004). grove_headless reads
+    # GROVE_PUBLISH_WEBHOOK_SECRET_GOLDBERRY from the odoo process env and signs
+    # the raw body; must byte-match the goldberry app's GROVE_PUBLISH_WEBHOOK_SECRET.
+    # The destination URL is NOT sensitive -- derived from qa_zone in the tpl.
+    # Empty default => sender skips (no secret to sign with). Provisioned live
+    # 2026-07-30; durable value awaits the 1Password item (see variables.tf).
+    grove_publish_webhook_secret_goldberry = var.grove_publish_webhook_secret_goldberry
+
     # base64-encode embedded files (ADR-005 PR-B pattern — bypasses cloud-init
     # YAML parser entirely for content with awkward characters).
     compose_yml_b64   = base64encode(file("${path.module}/compose/docker-compose.qa.yml"))
