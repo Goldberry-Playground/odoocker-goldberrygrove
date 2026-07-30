@@ -19,9 +19,21 @@ allowed-tools: Bash, Read, Grep, Glob, Edit, Write, Agent
 Unified DevOps skill for the Gather at the Grove ecosystem — covers local testing
 with OrbStack, DigitalOcean droplet deployment, sandbox/QA environments, and CI/CD.
 
-**Stack**: Odoo 19 + PostgreSQL 17 + Nginx + Ghost CMS (x3) + 4 Next.js frontends (hub + 3 storefronts) + KeyDB + MinIO
+> **Current architecture — Level 3 (ADR-007, executed for QA + prod 2026-07-26).**
+> QA and prod no longer run everything on one monolithic docker-compose droplet.
+> The live shape is: **4 Next.js frontends on DO App Platform** (managed TLS,
+> deploy from GHCR), **Managed Postgres** as the DB, and a **single Odoo + Caddy
+> droplet** (cloud-init + git-sync) fronting one host. The infra-as-code lives in
+> `infra/terraform/environments/{qa,production}/`. The **"DigitalOcean Production
+> Deployment"** section below describes the **legacy pre-Level-3 monolithic
+> droplet** — kept for local-compose/historical reference; it is **not** the live
+> QA/prod deploy path. For the live cloud-init/droplet invariants that DO still
+> apply, see "Cloud-init / droplet invariants" near the end.
+
+**Stack (local compose / Odoo droplet)**: Odoo 19 + PostgreSQL 17 + Nginx + Ghost CMS (x3) + 4 Next.js frontends (hub + 3 storefronts) + KeyDB + MinIO
+**Stack (live Level-3)**: Odoo 19 + Caddy on one droplet · 4 Next.js frontends on DO App Platform · DO Managed Postgres
 **Tenants**: Goldberry Grove Farm, George George George Woodworking LLC, At The Grove Nursery LLC
-**Infrastructure**: DigitalOcean Droplet (Docker Compose) + OrbStack (local dev)
+**Infrastructure**: DO App Platform (frontends) + DO Managed Postgres + one Odoo/Caddy droplet (Level-3) · OrbStack for local dev · legacy monolithic droplet retained for local compose
 
 ---
 
@@ -198,6 +210,14 @@ docker compose config --services
 
 ## DigitalOcean Production Deployment
 
+> **⚠️ LEGACY (pre-Level-3).** This whole section describes the retired
+> monolithic single-droplet pattern (all sites + Ghost + nginx-proxy + Postgres
+> on one droplet, deployed by `docker-compose.override.production.yml` + `git
+> pull`). Live QA/prod moved to **Level 3** (App Platform frontends + Managed
+> Postgres + one Odoo/Caddy droplet) per **ADR-007** — see the banner in the
+> Overview. Kept here for local-compose parity and historical context; do **not**
+> follow "Updating Production" against the live Level-3 env.
+
 ### Architecture
 
 ```
@@ -329,8 +349,9 @@ docker compose -f docker-compose.yml \
 | `ci.yml` | push/PR to `main` | Lint Python (Ruff), validate compose YAML, validate nginx config, third-party-addon branch check, reject tracked `.env`, gitleaks (push only), backend-stack smoke test |
 | `docker-odoo.yml` | push/PR touching `odoo/**` or `.env.example` | Build `grove-odoo` image, smoke test (`odoo --stop-after-init`), Trivy scan (HIGH+CRITICAL blocking, `ignore-unfixed`), on main push to `ghcr.io/goldberry-playground/grove-odoo:{sha,latest}` |
 | `release.yml` | semver tag push OR manual dispatch | Build + smoke + Trivy → require-approval (GitHub Environment gate) → deploy → post-deploy verify. Uses the `grove-odoo` image from `docker-odoo.yml`. |
-| `sandbox-deploy.yml` | dispatch | Provision/refresh QA droplet via Terraform (`environments/sandbox/`), apply, smoke check. Posts `DISCORD_OPS_WEBHOOK_URL`. |
-| `sandbox-reaper.yml` | cron daily | Detect QA droplets older than N hours and destroy them. Posts to Discord on action taken. |
+| ~~`sandbox-deploy.yml`~~ | — | **Retired** (#131, 2026-06). Level-3 QA is provisioned by `qa-app-platform`/`qa` Terraform env + `qa-health.yml`, not a sandbox droplet. |
+| ~~`sandbox-reaper.yml`~~ | — | **Retired** (#131, 2026-06) alongside `sandbox-deploy.yml`. |
+| `qa-health.yml` | cron + dispatch | Content-validating QA health probes (asset bundle + attachment image). The QA CI health check that actually runs (applies are manual). |
 | `terraform-drift.yml` | cron 6h | `terraform plan` against all envs, fail if non-zero diff. Posts to Discord. |
 | Security scans (Trivy fs + image, gitleaks, pgadmin scan) | push/PR | Cleared as of 2026-06-17; HIGH+CRITICAL blocking. |
 
