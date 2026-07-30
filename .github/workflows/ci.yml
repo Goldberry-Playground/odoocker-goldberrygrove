@@ -76,6 +76,22 @@ jobs:
         # was bitten by a U+2026 ellipsis on cloud-init.yaml.tpl:131.
         run: bash scripts/check-cloud-init-ascii.sh
 
+  checkout-secrets-wired:
+    name: checkout Stripe secrets wired
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Verify checkout Stripe secret refs are active in .env.op
+        # GOL-899: the checkout SESSION route reads ONE lowercase env
+        # (stripe_test_secret_key) that all three storefronts proxy to. A prior
+        # change commented out that op:// ref; the TF var defaults to "" so
+        # plan/apply stayed green while checkout 503'd for a week. This static
+        # ref-presence check (no secret VALUES read) makes that regression loud
+        # at PR time. See docs/RUNBOOK-checkout-stripe-guardrails.md.
+        run: bash scripts/check-checkout-secrets-wired.sh
+
   no-tracked-env-files:
     name: Reject tracked .env files
     runs-on: ubuntu-latest
