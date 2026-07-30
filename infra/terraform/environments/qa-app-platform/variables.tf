@@ -353,3 +353,59 @@ variable "stripe_test_webhook_secret" {
   sensitive   = true
   default     = ""
 }
+
+# === Mailgun SMTP — transactional email (GOL-248/GOL-995) ==================
+# Odoo reads these from /etc/grove/.env (SMTP_SERVER/PORT/SSL/USER/PASSWORD +
+# EMAIL_FROM/FROM_FILTER); entrypoint.sh + odoorc.sh substitute them into the
+# SMTP group of /etc/odoo/odoo.conf. Only smtp_password is a real secret — the
+# server/port/ssl/user/from defaults are the hub Mailgun sending domain
+# (mg.gatheringatthegrove.com) per docs/RUNBOOK-mailgun-transactional-email.md.
+#
+# BLOCKED live delivery (mirrors the Stripe GOL-696 blocker above): the
+# password VALUE lives in the `grove-qa` 1Password vault, which the current
+# deploy-time `op` account cannot read; and mg.gatheringatthegrove.com must be
+# Mailgun DNS-verified (SPF/DKIM — GOL-244) before mail actually sends. The
+# empty password default keeps plan/apply working and SMTP auth inert (zero
+# regression) until both clear.
+variable "smtp_server" {
+  description = "Mailgun SMTP relay host for Odoo transactional email. Injected into /etc/grove/.env as SMTP_SERVER. Default is the Mailgun US endpoint; switch to smtp.eu.mailgun.org for an EU account."
+  type        = string
+  default     = "smtp.mailgun.org"
+}
+
+variable "smtp_port" {
+  description = "Mailgun SMTP port. 587 => Odoo negotiates STARTTLS (smtp_ssl=False). Injected as SMTP_PORT."
+  type        = string
+  default     = "587"
+}
+
+variable "smtp_ssl" {
+  description = "Odoo smtp_ssl (SMTP_SSL). False on port 587 (STARTTLS, not implicit TLS)."
+  type        = string
+  default     = "False"
+}
+
+variable "smtp_user" {
+  description = "Mailgun SMTP login (postmaster@mg.<sending-domain>). Injected as SMTP_USER. Default = hub sending domain per RUNBOOK-mailgun-transactional-email.md."
+  type        = string
+  default     = "postmaster@mg.gatheringatthegrove.com"
+}
+
+variable "smtp_password" {
+  description = "Mailgun SMTP password for smtp_user. Injected as SMTP_PASSWORD. VALUE is an item in the `grove-qa` 1Password vault; read via TF_VAR_smtp_password once the CI/TF apply op account can read grove-qa (GOL-696) AND the Mailgun sending domain is DNS-verified (GOL-244). Empty default keeps apply/plan working and SMTP auth inert (zero regression) until provisioned."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "email_from" {
+  description = "Odoo email_from — display-name + address on the hub Mailgun sending domain. Injected as EMAIL_FROM (double-quoted in the .env because it is shell-`source`d and contains spaces + `<>`; odoorc.sh strips one quote layer for odoo.conf). Mailgun rejects a From outside the authenticated domain, so all QA order/shipping mail sends from the hub sending domain (per-brand From is a GOL-248 follow-up)."
+  type        = string
+  default     = "Gathering at the Grove <orders@mg.gatheringatthegrove.com>"
+}
+
+variable "from_filter" {
+  description = "Odoo from_filter (FROM_FILTER) — the authenticated Mailgun sending domain Odoo is allowed to send From."
+  type        = string
+  default     = "mg.gatheringatthegrove.com"
+}

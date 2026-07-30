@@ -396,6 +396,19 @@ resource "digitalocean_droplet" "odoo" {
     stripe_test_secret_key     = var.stripe_test_secret_key
     stripe_test_webhook_secret = var.stripe_test_webhook_secret
 
+    # Mailgun SMTP — transactional order/shipping email (GOL-248/GOL-995).
+    # odoo.conf's SMTP group reads these from the odoo process env. Non-secret
+    # defaults are the hub sending domain; smtp_password stays empty until the
+    # CI/TF apply op account can read grove-qa (GOL-696) and Mailgun DNS is
+    # verified (GOL-244) — see variables.tf.
+    smtp_server   = var.smtp_server
+    smtp_port     = var.smtp_port
+    smtp_ssl      = var.smtp_ssl
+    smtp_user     = var.smtp_user
+    smtp_password = var.smtp_password
+    email_from    = var.email_from
+    from_filter   = var.from_filter
+
     # base64-encode embedded files (ADR-005 PR-B pattern — bypasses cloud-init
     # YAML parser entirely for content with awkward characters).
     compose_yml_b64   = base64encode(file("${path.module}/compose/docker-compose.qa.yml"))

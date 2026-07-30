@@ -98,6 +98,27 @@ write_files:
       stripe_test_secret_key=${stripe_test_secret_key}
       stripe_test_webhook_secret=${stripe_test_webhook_secret}
 
+      # Mailgun SMTP - transactional order/shipping notifications (GOL-248/
+      # GOL-995). odoo.conf's SMTP group reads SMTP_SERVER/PORT/SSL/USER/
+      # PASSWORD + EMAIL_FROM/FROM_FILTER; entrypoint.sh + odoorc.sh substitute
+      # them into /etc/odoo/odoo.conf. Non-secret defaults are the hub Mailgun
+      # sending domain (mg.gatheringatthegrove.com). SMTP_PASSWORD is the ONLY
+      # secret and stays empty until the CI/TF apply op account can read the
+      # grove-qa 1P vault (same GOL-696 blocker as the Stripe keys above) AND
+      # mg.gatheringatthegrove.com is Mailgun DNS-verified (GOL-244). Empty
+      # password => SMTP auth can't succeed => sending stays inert (nothing
+      # auto-sends in QA until Ada places a test order), zero regression.
+      # EMAIL_FROM is double-quoted: this .env is `.`-sourced by the runcmd
+      # steps below, and a bare `Name <addr>` would break `source` on the `<`
+      # redirection metachar; odoorc.sh strips one quote layer for odoo.conf.
+      SMTP_SERVER=${smtp_server}
+      SMTP_PORT=${smtp_port}
+      SMTP_SSL=${smtp_ssl}
+      SMTP_USER=${smtp_user}
+      SMTP_PASSWORD=${smtp_password}
+      EMAIL_FROM="${email_from}"
+      FROM_FILTER=${from_filter}
+
   # Compose YAML - base64-encoded so cloud-init's YAML parser never sees
   # its content (avoids the embedded-block-scalar parse failures we hit
   # repeatedly on the monolith).
