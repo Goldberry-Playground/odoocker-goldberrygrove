@@ -184,6 +184,16 @@ qa-l3-teardown:
 qa-l3-teardown-all:
 	bash scripts/qa-l3-teardown.sh all
 
+## qa-test-data-cleanup: DRY-RUN report of QA test data (canary/journey orders, test partners) — deletes nothing
+.PHONY: qa-test-data-cleanup
+qa-test-data-cleanup:
+	bash scripts/qa-test-data-cleanup.sh $(ARGS)
+
+## qa-test-data-cleanup-apply: actually remove QA test data (surgical; reserved-domain markers only)
+.PHONY: qa-test-data-cleanup-apply
+qa-test-data-cleanup-apply:
+	bash scripts/qa-test-data-cleanup.sh --apply $(ARGS)
+
 # ── Help ─────────────────────────────────────────────────────────────────────
 
 .PHONY: help
