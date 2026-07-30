@@ -153,6 +153,17 @@ def test_qa_db_guard() -> None:
         assert not cleanup.is_qa_db_name(prod), prod
 
 
+def test_qa_target_guard() -> None:
+    # Real QA and prod both run a DB named 'odoo' — the HOST is what distinguishes
+    # them, so the guard must accept the QA host even with a prod-shaped DB name.
+    assert cleanup.is_qa_target("https://odoo.qa.gatheringatthegrove.com", "odoo")
+    assert not cleanup.is_qa_target("https://odoo.gatheringatthegrove.com", "odoo")
+    # A DB-name marker alone still qualifies (named sandbox/staging DBs).
+    assert cleanup.is_qa_target("http://odoo:8069", "grove_sandbox")
+    # Bare on-box default against a prod-shaped DB name is refused (needs override).
+    assert not cleanup.is_qa_target("http://odoo:8069", "odoo")
+
+
 # ── lifecycle tests ────────────────────────────────────────────────────────────
 
 def test_plan_selects_only_test_data() -> None:

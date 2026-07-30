@@ -38,9 +38,11 @@ SAFETY RAILS
 ------------
   * DRY-RUN BY DEFAULT. Prints exactly what it *would* remove and exits without
     touching anything. You must pass --apply to delete.
-  * DB-NAME GUARD. Refuses to run unless ODOO_DB looks like a QA/sandbox/staging
-    DB, so a mis-set env can't point this at prod. Override intentionally with
-    --allow-nonqa-db (loud warning).
+  * TARGET GUARD. Refuses to run unless the XML-RPC host OR the DB name looks
+    like QA/sandbox/staging, so a mis-set env can't point this at prod. Prod and
+    QA both run a DB literally named `odoo`, so the QA *host*
+    (odoo.qa.gatheringatthegrove.com) is the real signal. Override intentionally
+    with --allow-nonqa-db (loud warning).
   * IDEMPOTENT. Selectors are stable; a second --apply run finds nothing and
     reports 0 removed. Safe to run twice, safe to run after a partial run.
   * The SYNTHETIC-CANARY *product* is a persistent monitoring fixture (setup-
@@ -123,10 +125,26 @@ def test_partner_email_domain() -> list:
     return clauses
 
 
+# QA/sandbox/staging markers. Prod and QA both run a DB literally named `odoo`,
+# so the DB name alone can't tell them apart — the reliable signal is the
+# hostname in the XML-RPC URL (odoo.qa.… vs odoo.…). A marker in EITHER qualifies.
+QA_MARKERS = ("qa", "sandbox", "staging", "sbx", "preview")
+
+
 def is_qa_db_name(db: str) -> bool:
-    """Heuristic guard: does this DB name look like a QA/sandbox/staging DB (not prod)?"""
-    d = (db or "").lower()
-    return any(tok in d for tok in ("qa", "sandbox", "staging", "sbx", "preview"))
+    """Heuristic: does this DB name look like a QA/sandbox/staging DB (not prod)?"""
+    return any(tok in (db or "").lower() for tok in QA_MARKERS)
+
+
+def is_qa_target(url: str, db: str) -> bool:
+    """Guard: does the target (XML-RPC host OR DB name) look like QA — not prod?
+
+    The real QA DB is named `odoo` (same as prod), so `is_qa_db_name` is False
+    for it; the host `odoo.qa.gatheringatthegrove.com` is what distinguishes QA
+    from prod. A bare on-box `http://odoo:8069` carries no marker and is
+    intentionally refused, so on-box use must pass --allow-nonqa-db explicitly.
+    """
+    return is_qa_db_name(db) or any(tok in (url or "").lower() for tok in QA_MARKERS)
 
 
 # ── XML-RPC client (mirrors synthetic/canary.py; mockable in tests) ───────────
@@ -281,12 +299,13 @@ def main(argv: list[str]) -> int:
         _log(f"ERROR: missing required env {missing}")
         return 1
 
-    if not is_qa_db_name(db) and not args.allow_nonqa_db:
-        _log(f"ERROR: ODOO_DB={db!r} does not look like a QA/sandbox/staging DB.")
+    if not is_qa_target(url, db) and not args.allow_nonqa_db:
+        _log(f"ERROR: neither ODOO_XMLRPC_URL={url!r} nor ODOO_DB={db!r} looks like QA/sandbox/staging.")
+        _log("       (prod and QA share the DB name 'odoo' — the QA host is the signal.)")
         _log("       Refusing to run so a mis-set env can't hit prod. Pass --allow-nonqa-db to override.")
         return 1
-    if not is_qa_db_name(db):
-        _log(f"WARNING: --allow-nonqa-db set; operating on non-QA DB {db!r}.")
+    if not is_qa_target(url, db):
+        _log(f"WARNING: --allow-nonqa-db set; operating on non-QA target url={url!r} db={db!r}.")
 
     try:
         client = OdooClient(url, db, login, key)
