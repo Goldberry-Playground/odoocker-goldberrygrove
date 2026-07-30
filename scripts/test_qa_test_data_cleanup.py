@@ -17,6 +17,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
+import xmlrpc.client as _xmlrpc
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _spec = importlib.util.spec_from_file_location(
@@ -55,11 +56,13 @@ class FakeOdoo:
             return actual in val
         if op == "not in":
             return actual not in val
-        if op == "=like":  # case-insensitive, % wildcard tail (as Odoo does)
+        if op in ("=like", "=ilike"):  # % wildcard tail, as Odoo does
             if not isinstance(actual, str):
                 return False
-            pat = val.lower()
-            a = actual.lower()
+            # Real Odoo: '=like'→SQL LIKE (case-SENSITIVE), '=ilike'→ILIKE
+            # (case-insensitive). Modelling that distinction is what pins the
+            # bug the script must avoid (see test_ilike_selector_is_case_insensitive).
+            a, pat = (actual, val) if op == "=like" else (actual.lower(), val.lower())
             if pat.startswith("%"):
                 return a.endswith(pat[1:])
             return a == pat
@@ -105,8 +108,29 @@ class FakeOdoo:
                 # the records dict doesn't store) can't clobber it with None.
                 out.append({**{f: rec.get(f) for f in fields}, "id": rid})
             return out
-        if method == "unlink":
+        if method == "action_cancel":
+            # Odoo moves the order to state 'cancel' (unless an invoice blocks it;
+            # not modelled — all test orders here cancel cleanly).
             for rid in args[0]:
+                if rid in self.records.get(model, {}):
+                    self.records[model][rid]["state"] = "cancel"
+            return True
+        if method == "unlink":
+            ids = args[0]
+            # Real Odoo: sale.order.unlink() raises for any order whose state is
+            # not in ('draft','cancel'). Model that so a direct bulk unlink of a
+            # confirmed order fails exactly as production would.
+            if model == "sale.order":
+                blocked = [rid for rid in ids
+                           if self.records.get(model, {}).get(rid, {}).get("state")
+                           not in ("draft", "cancel")]
+                if blocked:
+                    raise _xmlrpc.Fault(
+                        2,
+                        "You can not delete a sent quotation or a confirmed sales "
+                        f"order. You must first cancel it. (orders {blocked})",
+                    )
+            for rid in ids:
                 self.records[model].pop(rid, None)
             return True
         raise AssertionError(f"unsupported method {method!r}")
@@ -200,6 +224,43 @@ def test_second_apply_is_idempotent() -> None:
     assert p2["test_partners"] == [] and p2["test_orders"] == [] and p2["canary_products"] == []
     removed2 = cleanup.apply_cleanup(fake, p2, include_canary_product=True)
     assert removed2 == {"orders": 0, "partners": 0, "products": 0}
+
+
+# ── regression tests: pin the two real-Odoo semantics the fixture must model ───
+
+def test_ilike_selector_is_case_insensitive() -> None:
+    # Odoo does not force-lowercase partner emails on write, and '=like' maps to
+    # case-SENSITIVE SQL LIKE. A reserved-domain test email stored with any
+    # uppercase (QA@Example.COM, dev@Grove.TEST) must still be selected — which
+    # requires '=ilike'. This test fails if the selector regresses to '=like'.
+    fake = FakeOdoo({
+        "res.partner": {
+            1: {"name": "Mixed-Case QA", "email": "QA@Example.COM"},
+            2: {"name": "Upper TLD", "email": "dev@Grove.TEST"},
+            3: {"name": "Real Customer", "email": "Alice@Gmail.com"},
+        },
+        "sale.order": {},
+        "product.template": {},
+    })
+    p = cleanup.plan(fake)
+    assert {r["id"] for r in p["test_partners"]} == {1, 2}, p["test_partners"]
+
+
+def test_apply_deletes_confirmed_test_order_without_crashing() -> None:
+    # sale.order.unlink() refuses any state not in ('draft','cancel'); a confirmed
+    # reserved-domain test order must be cancelled-then-deleted, not abort the
+    # whole teardown with a Fault. The fixture now enforces that real guard.
+    fake = FakeOdoo({
+        "res.partner": {2: {"name": "QA Tester", "email": "qa@example.com"}},
+        "sale.order": {
+            30: {"name": "SO-CONFIRMED-TEST", "partner_id": 2, "state": "sale",
+                 "amount_total": 5.0, "website_id": False},
+        },
+        "product.template": {},
+    })
+    removed = cleanup.apply_cleanup(fake, cleanup.plan(fake), include_canary_product=False)
+    assert removed["orders"] == 1
+    assert set(fake.records["sale.order"]) == set()
 
 
 if __name__ == "__main__":

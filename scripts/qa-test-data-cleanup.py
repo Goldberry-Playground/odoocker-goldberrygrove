@@ -117,11 +117,13 @@ def is_test_email(email: object) -> bool:
 
 
 def test_partner_email_domain() -> list:
-    """Odoo domain (OR of 'email =like' clauses) selecting reserved-test-domain partners."""
+    """Odoo domain (OR of 'email =ilike' clauses) selecting reserved-test-domain partners."""
     clauses: list = ["|"] * (len(RESERVED_TEST_SUFFIXES) - 1)
     for suffix in RESERVED_TEST_SUFFIXES:
-        # '=like' is case-insensitive in Odoo; '%'+suffix matches the address tail.
-        clauses.append(["email", "=like", f"%{suffix}"])
+        # '=ilike' → SQL ILIKE (case-INSENSITIVE); '=like' → LIKE is case-SENSITIVE,
+        # so an email stored as 'QA@Example.com' would escape a '=like' match.
+        # '%'+suffix matches the address tail.
+        clauses.append(["email", "=ilike", f"%{suffix}"])
     return clauses
 
 
@@ -189,9 +191,9 @@ def plan(client) -> dict:
     order_domain: list = []
     if partner_ids:
         order_domain = ["|", ["partner_id", "in", partner_ids],
-                        ["partner_id.email", "=like", "%.invalid"]]
+                        ["partner_id.email", "=ilike", "%.invalid"]]
     else:
-        order_domain = [["partner_id.email", "=like", "%.invalid"]]
+        order_domain = [["partner_id.email", "=ilike", "%.invalid"]]
     order_ids = _search(client, "sale.order", order_domain)
     orders = _read(client, "sale.order", order_ids, ["id", "name", "state", "amount_total"])
 
@@ -220,8 +222,16 @@ def apply_cleanup(client, plan_data: dict, include_canary_product: bool) -> dict
 
     order_ids = [o["id"] for o in plan_data["test_orders"]]
     if order_ids:
-        client.call("sale.order", "unlink", [order_ids])
-        removed["orders"] = len(order_ids)
+        # sale.order.unlink() refuses any order whose state is not in
+        # ('draft','cancel') — but plan() intentionally selects test orders in
+        # ANY state (a reserved-TLD email is never a real sale), so a confirmed
+        # ('sale'/'done') or 'sent' test order would abort the whole teardown.
+        # Cancel the non-deletable ones first (best-effort, per-record fallback),
+        # then route through _safe_unlink so anything still referenced is
+        # surfaced-and-skipped rather than fatal.
+        _cancel_orders(client, [o["id"] for o in plan_data["test_orders"]
+                                if o.get("state") not in ("draft", "cancel")])
+        removed["orders"] = _safe_unlink(client, "sale.order", order_ids)
 
     # Partners only after their orders are gone, so unlink isn't FK-blocked. Any
     # partner the ORM still refuses (other live references) is left in place and
@@ -236,6 +246,27 @@ def apply_cleanup(client, plan_data: dict, include_canary_product: bool) -> dict
             removed["products"] = _safe_unlink(client, "product.template", prod_ids)
 
     return removed
+
+
+def _cancel_orders(client, ids: list) -> None:
+    """Best-effort cancel sale.orders so they leave the unlink-blocked states.
+
+    action_cancel can itself refuse (e.g. an order with a posted invoice); that's
+    fine — the order simply stays and is surfaced-and-skipped by _safe_unlink.
+    Per-record fallback so one un-cancellable order doesn't strand the rest.
+    """
+    if not ids:
+        return
+    try:
+        client.call("sale.order", "action_cancel", [ids])
+        return
+    except xmlrpc.client.Fault as exc:
+        _log(f"  sale.order: bulk cancel blocked ({exc.faultString.splitlines()[0]}); cancelling per-record")
+    for oid in ids:
+        try:
+            client.call("sale.order", "action_cancel", [[oid]])
+        except xmlrpc.client.Fault as inner:
+            _log(f"  sale.order#{oid}: cancel failed, will be skipped ({inner.faultString.splitlines()[0]})")
 
 
 def _safe_unlink(client, model: str, ids: list) -> int:
