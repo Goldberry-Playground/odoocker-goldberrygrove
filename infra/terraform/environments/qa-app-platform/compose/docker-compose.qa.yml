@@ -70,6 +70,14 @@ services:
       # when behind a reverse proxy.
       PROXY_MODE: "true"
       LIST_DB: "false"   # hide the DB selector since we have one fixed DB
+      # GOL-1009: run a blocking `-u grove_headless` at boot whenever git-sync
+      # advances the modules revision, so new models' DB tables are created on
+      # deploy (the qa branch boots --init=base with NO --update, so a new-since-
+      # last-upgrade model would otherwise load code-only -> UndefinedTable 500,
+      # e.g. grove.publish.event from GOL-985). Idempotent + rev-gated in
+      # odoo/entrypoint.sh (marker on the durable /mnt/odoo-filestore volume); a
+      # plain restart on the same revision is a no-op.
+      AUTO_UPGRADE_MODULES: grove_headless
       # Stripe TEST-mode sandbox checkout (GOL-688). grove_headless reads these
       # from os.environ (LOWERCASE names, controllers/main.py). The odoo process
       # env comes ONLY from this compose environment block -- the /.env mount
