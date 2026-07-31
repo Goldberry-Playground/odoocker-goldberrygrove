@@ -98,6 +98,18 @@ write_files:
       stripe_test_secret_key=${stripe_test_secret_key}
       stripe_test_webhook_secret=${stripe_test_webhook_secret}
 
+      # Publish-webhook sender (GOL-985/986/1004). grove_headless
+      # (models/grove_publish.py) reads these from the odoo PROCESS env via
+      # os.environ -- so they must ALSO be listed in the odoo service's
+      # `environment:` block in docker-compose.qa.yml (the /.env mount only
+      # feeds odoo.conf substitution, NOT os.environ; same rule as the
+      # stripe_test_* keys). URL is not sensitive (derived from qa_zone);
+      # SECRET must byte-match the goldberry app's GROVE_PUBLISH_WEBHOOK_SECRET.
+      # Empty SECRET => sender skips. goldberry only for now (single-tenant QA
+      # E2E, GOL-1003); add _GGG / _NURSERY when those tenants are provisioned.
+      GROVE_PUBLISH_WEBHOOK_URL_GOLDBERRY=https://goldberry.${qa_zone}/api/webhooks/publish
+      GROVE_PUBLISH_WEBHOOK_SECRET_GOLDBERRY=${grove_publish_webhook_secret_goldberry}
+
       # Mailgun SMTP - transactional order/shipping notifications (GOL-248/
       # GOL-995). odoo.conf's SMTP group reads SMTP_SERVER/PORT/SSL/USER/
       # PASSWORD + EMAIL_FROM/FROM_FILTER; entrypoint.sh + odoorc.sh substitute

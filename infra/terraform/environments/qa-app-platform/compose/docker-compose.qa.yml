@@ -87,6 +87,15 @@ services:
       # controller no-ops (checkout 503 / webhook inert) until provisioned.
       stripe_test_secret_key: ${stripe_test_secret_key:-}
       stripe_test_webhook_secret: ${stripe_test_webhook_secret:-}
+      # Publish-webhook sender (GOL-985/986/1004). grove_headless
+      # (models/grove_publish.py) reads these from os.environ to sign + POST the
+      # "Publish Guide to Storefront" webhook to the goldberry storefront. Values
+      # come from `docker compose --env-file /etc/grove/.env` (cloud-init writes
+      # GROVE_PUBLISH_WEBHOOK_URL_GOLDBERRY / _SECRET_GOLDBERRY there). Default
+      # empty => the sender has no secret and skips (fail-closed), same shape as
+      # the stripe_test_* keys above.
+      GROVE_PUBLISH_WEBHOOK_URL_GOLDBERRY: ${GROVE_PUBLISH_WEBHOOK_URL_GOLDBERRY:-}
+      GROVE_PUBLISH_WEBHOOK_SECRET_GOLDBERRY: ${GROVE_PUBLISH_WEBHOOK_SECRET_GOLDBERRY:-}
     # GOL-746: gate the Odoo start on git-sync's FIRST clone. depends_on
     # (service_started, below) only guarantees the sidecar CONTAINER started,
     # not that /workspace/current is populated. The old assumption that Odoo

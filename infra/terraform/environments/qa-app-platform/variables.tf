@@ -288,6 +288,46 @@ variable "stripe_webhook_secret_nursery" {
   default     = ""
 }
 
+# === Publish-webhook HMAC secrets (GOL-985/986/1004) ========================
+# Shared HMAC-SHA256 secret for the Odoo -> grove-sites "Publish Guide to
+# Storefront" webhook. Odoo (the sender, on the Odoo QA droplet) signs the
+# raw body with GROVE_PUBLISH_WEBHOOK_SECRET_<TENANT>; the grove-sites tenant
+# app (the receiver) verifies with GROVE_PUBLISH_WEBHOOK_SECRET. The two MUST
+# be byte-identical or every delivery 401s. Wire contract:
+# grove-odoo-modules grove_headless/docs/publish-webhook-contract.md.
+#
+# Default "" => receiver fails CLOSED (401 on every delivery), sender skips.
+# Same "wired-but-empty until provisioned" shape as the stripe_webhook_secret_*
+# vars above. The value is provisioned by DevOps (Terra) in 1Password `Grove QA`
+# (item grove-publish-webhook-<tenant>-qa, field `secret`); uncomment the
+# matching .env.op ref once the item exists.
+#
+# NOTE (2026-07-30): goldberry was provisioned LIVE first (doctl app env +
+# droplet .env) to unblock the GOL-1003 E2E; the 1Password item + .env.op ref
+# is the durable follow-up (needs Grove QA vault WRITE, which the ops SA lacks).
+# Do NOT `make qa-l3-up` before that item exists or the apply will zero the
+# live goldberry secret (default "").
+variable "grove_publish_webhook_secret_goldberry" {
+  description = "HMAC secret for the goldberry publish webhook (Odoo sender <-> grove-sites receiver). From 1Password `Grove QA`/grove-publish-webhook-goldberry-qa/secret via TF_VAR_grove_publish_webhook_secret_goldberry. Generate with `openssl rand -hex 32`."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "grove_publish_webhook_secret_ggg" {
+  description = "HMAC secret for the ggg publish webhook. Not provisioned yet; wired-but-empty (receiver 401s) until the 1Password `Grove QA`/grove-publish-webhook-ggg-qa/secret item + .env.op ref exist."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "grove_publish_webhook_secret_nursery" {
+  description = "HMAC secret for the nursery publish webhook. Not provisioned yet; wired-but-empty (receiver 401s) until the 1Password `Grove QA`/grove-publish-webhook-nursery-qa/secret item + .env.op ref exist."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 # === Ghost Content API keys (prod blogs droplet, read-only) =================
 # The QA frontends read the PROD Ghost blogs (blog.<brand-zone>, the 4x
 # Ghost 6 droplet in environments/production -- see docs/GHOST.md and
