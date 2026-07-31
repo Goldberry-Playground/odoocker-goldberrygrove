@@ -140,6 +140,60 @@ case "$1" in
         else
             wait-for-psql.py --db_host ${HOST} --db_port ${PORT} --db_user ${USER} --db_password ${PASSWORD} --timeout=30
 
+            # GOL-1009: revision-gated custom-module upgrade at boot.
+            #
+            # WHY: git-sync (custom-modules-sync sidecar) delivers new module
+            # CODE into /workspace/current, but the qa + production branches
+            # below boot with --init=base and NO --update -- deliberately, so a
+            # plain `restart: unless-stopped` bounce doesn't re-run migrations
+            # (see the qa/production branch comments + GOL-746). The gap: a
+            # module's NEW models (added since the last upgrade) load into
+            # Odoo's Python registry on the next boot WITHOUT their DB tables
+            # ever being created, because only an explicit `-u <module>` runs a
+            # model's DDL. Result: psycopg2 UndefinedTable 500 the first time
+            # the new model is touched (GOL-985 shipped grove.publish.event;
+            # Publish -> `relation "grove_publish_event" does not exist`).
+            #
+            # FIX: when the git-synced revision advances, run ONE blocking
+            # `--init=base,<mods> --update=<mods> --stop-after-init` pass before
+            # the server starts, so new DDL always lands on deploy. Opt-in via
+            # AUTO_UPGRADE_MODULES (comma list) -- set ONLY in the qa +
+            # production compose environment blocks, so local/preview/testing
+            # are untouched. Including <mods> in --init makes a from-scratch
+            # env self-serve (installs the module -> full DDL) instead of the
+            # old undocumented manual `-i` step, and guarantees --update never
+            # targets a not-installed module.
+            #
+            # IDEMPOTENT: the last-upgraded revision is recorded in a marker on
+            # the durable filestore volume (/var/lib/odoo, survives a droplet
+            # replace). A restart on the SAME revision is a no-op (preserves the
+            # "no --update on every restart" design); only a revision advance
+            # (a real code change, or a deliberate git-sync SHA-pin bump on
+            # prod per GOL-987) re-runs the upgrade. The revision is git-sync's
+            # per-commit worktree name -- basename of the /workspace/current
+            # symlink target (git-sync v4 repoints it to a new SHA-named
+            # worktree on every synced commit).
+            #
+            # FAILS LOUD: under `set -e` a failed upgrade aborts boot ->
+            # restart loop, logged in `docker logs` -- rather than serving a
+            # half-migrated DB. The marker is written ONLY after a successful
+            # upgrade, so a failed migration retries on the next boot.
+            if [ -n "${AUTO_UPGRADE_MODULES:-}" ]; then
+                _gitsync_target="$(readlink -f /workspace/current 2>/dev/null || true)"
+                _synced_rev=""
+                [ -n "$_gitsync_target" ] && _synced_rev="$(basename "$_gitsync_target")"
+                _rev_marker="${MODULE_UPGRADE_MARKER:-/var/lib/odoo/.grove-modules-rev}"
+                _last_rev="$(cat "$_rev_marker" 2>/dev/null || true)"
+                if [ -n "$_synced_rev" ] && [ "$_synced_rev" != "$_last_rev" ]; then
+                    echo "GOL-1009: git-synced modules revision advanced ('${_last_rev:-<none>}' -> '${_synced_rev}'); running --init=base,${AUTO_UPGRADE_MODULES} --update=${AUTO_UPGRADE_MODULES} --stop-after-init on ${DB_NAME:-<unset>}"
+                    odoo --config ${ODOO_RC} --database=${DB_NAME} --init=base,${AUTO_UPGRADE_MODULES} --update=${AUTO_UPGRADE_MODULES} --stop-after-init --no-http --workers=0 --without-demo=all --load-language=
+                    printf '%s\n' "$_synced_rev" > "$_rev_marker"
+                    echo "GOL-1009: module upgrade complete; recorded revision '${_synced_rev}' in ${_rev_marker}"
+                else
+                    echo "GOL-1009: modules revision unchanged ('${_synced_rev:-<none>}'); skipping upgrade (plain restart, no --update)"
+                fi
+            fi
+
             if [ ${APP_ENV} = 'fresh' ] || [ ${APP_ENV} = 'restore' ] || [ ${APP_ENV} = 'preview' ]; then
                 # Ideal for a fresh install or restore a production database.
                 # APP_ENV=preview (per-PR ephemeral droplets) is a restore case:
