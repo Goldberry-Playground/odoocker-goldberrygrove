@@ -57,6 +57,18 @@ services:
       # Trust Caddy's X-Forwarded-* headers (CSRF + URL generation).
       PROXY_MODE: "true"
       LIST_DB: "false" # one fixed DB; hide the selector
+      # GOL-1009: run a blocking `-u grove_headless` at boot whenever the
+      # git-synced modules revision advances, so new models' DB tables are
+      # created on deploy. The production branch boots --init=base with NO
+      # --update by design (prod upgrades are a deliberate deploy, not a
+      # per-restart side effect); this scopes the upgrade to a REVISION ADVANCE
+      # only, which on prod means a deliberate git-sync SHA-pin bump (GOL-987) --
+      # NOT every `restart: unless-stopped` bounce. Without it, prod hits the
+      # identical missing-table 500 when the GOL-985 publish flow rolls out.
+      # Idempotent + rev-gated in odoo/entrypoint.sh (marker on the durable
+      # /mnt/odoo-filestore volume). Fails loud on a bad migration rather than
+      # serving a half-migrated DB.
+      AUTO_UPGRADE_MODULES: grove_headless
     # GOL-746: gate the Odoo start on git-sync's FIRST clone. depends_on
     # (service_started) only guarantees the sidecar CONTAINER started, not
     # that /workspace/current is populated. On the 2026-07-22 droplet replace
