@@ -219,25 +219,28 @@ locals {
   # EOM-July decision; Content API keys are read-only by design.
   tenant_apps = {
     goldberry = {
-      image                 = "grove-goldberry"
-      ghost_url             = "https://blog.goldberrygrove.farm"
-      ghost_content_key     = var.ghost_content_keys["goldberry"]
-      stripe_secret_key     = var.stripe_secret_key_goldberry
-      stripe_webhook_secret = var.stripe_webhook_secret_goldberry
+      image                  = "grove-goldberry"
+      ghost_url              = "https://blog.goldberrygrove.farm"
+      ghost_content_key      = var.ghost_content_keys["goldberry"]
+      stripe_secret_key      = var.stripe_secret_key_goldberry
+      stripe_webhook_secret  = var.stripe_webhook_secret_goldberry
+      publish_webhook_secret = var.grove_publish_webhook_secret_goldberry
     }
     ggg = {
-      image                 = "grove-ggg"
-      ghost_url             = "https://blog.woodworkingeorge.com"
-      ghost_content_key     = var.ghost_content_keys["ggg"]
-      stripe_secret_key     = var.stripe_secret_key_ggg
-      stripe_webhook_secret = var.stripe_webhook_secret_ggg
+      image                  = "grove-ggg"
+      ghost_url              = "https://blog.woodworkingeorge.com"
+      ghost_content_key      = var.ghost_content_keys["ggg"]
+      stripe_secret_key      = var.stripe_secret_key_ggg
+      stripe_webhook_secret  = var.stripe_webhook_secret_ggg
+      publish_webhook_secret = var.grove_publish_webhook_secret_ggg
     }
     nursery = {
-      image                 = "grove-nursery"
-      ghost_url             = "https://blog.atthegrovenursery.com"
-      ghost_content_key     = var.ghost_content_keys["nursery"]
-      stripe_secret_key     = var.stripe_secret_key_nursery
-      stripe_webhook_secret = var.stripe_webhook_secret_nursery
+      image                  = "grove-nursery"
+      ghost_url              = "https://blog.atthegrovenursery.com"
+      ghost_content_key      = var.ghost_content_keys["nursery"]
+      stripe_secret_key      = var.stripe_secret_key_nursery
+      stripe_webhook_secret  = var.stripe_webhook_secret_nursery
+      publish_webhook_secret = var.grove_publish_webhook_secret_nursery
     }
   }
 }
@@ -329,6 +332,20 @@ resource "digitalocean_app" "tenant" {
       env {
         key   = "STRIPE_WEBHOOK_SECRET"
         value = each.value.stripe_webhook_secret
+        scope = "RUN_AND_BUILD_TIME"
+      }
+
+      # Publish-webhook HMAC secret (GOL-985/986/1004). tenant.secrets.ts reads
+      # process.env.GROVE_PUBLISH_WEBHOOK_SECRET (NO tenant suffix -- each app is
+      # its own deployment) WITHOUT requireEnv, so an empty value fails CLOSED
+      # (receiver 401s every delivery) rather than crashing the app at boot.
+      # Must byte-match the Odoo sender's GROVE_PUBLISH_WEBHOOK_SECRET_<TENANT>.
+      # GENERAL, not SECRET, for the same DO-provider drift reason as
+      # STRIPE_SECRET_KEY above (#869/#514). Provisioned by DevOps (Terra) --
+      # goldberry was set live 2026-07-30; ggg/nursery empty until minted.
+      env {
+        key   = "GROVE_PUBLISH_WEBHOOK_SECRET"
+        value = each.value.publish_webhook_secret
         scope = "RUN_AND_BUILD_TIME"
       }
 
