@@ -198,6 +198,23 @@ runcmd:
   # filestore (product photos) there -- silently, with a green boot -- until the
   # next droplet replace wipes it. That is exactly the GOL-93 durable-volume loss.
   # Assert the mountpoints and fail the boot loudly instead of writing to root.
+  #
+  # GOL-1033: the DO block volume attaches ASYNCHRONOUSLY. cc_mounts writes the
+  # fstab entries early, but the kernel may not have finished attaching the
+  # device when runcmd fires -- with `nofail` the mount is silently skipped, so
+  # the guard below saw an unmounted path and aborted boot on a healthy droplet
+  # (observed on QA replace 589062682, 2026-07-31). Actively mount with a
+  # bounded retry (30 x 2s = up to 60s) so boot CONVERGES through the attach
+  # race; the guard immediately after still aborts if the volume genuinely
+  # never attaches. `mount "$m"` uses the fstab entry cc_mounts already wrote.
+  - |
+    for m in /mnt/odoo-filestore /mnt/caddy-data; do
+      for i in $(seq 1 30); do
+        mountpoint -q "$m" && break
+        mount "$m" 2>/dev/null || true
+        sleep 2
+      done
+    done
   - |
     for m in /mnt/odoo-filestore /mnt/caddy-data; do
       mountpoint -q "$m" || { echo "::error:: expected block volume NOT mounted at $m -- aborting boot (refusing to run on ephemeral disk; GOL-93)"; exit 1; }

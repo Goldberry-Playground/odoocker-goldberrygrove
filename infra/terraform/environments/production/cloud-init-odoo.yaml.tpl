@@ -304,6 +304,24 @@ runcmd:
   # fresh volume unwritable. The probe pulls grove-odoo (compose-up reuses it);
   # the 100:101 fallback is correct if the probe fails. The mounts: module has
   # already mounted LABEL=filestore by the time runcmd fires.
+  #
+  # GOL-1033: the DO block volume attaches ASYNCHRONOUSLY. cc_mounts writes the
+  # fstab entry early, but the kernel may not have finished attaching the device
+  # when runcmd fires -- with `nofail` the mount is silently skipped. Actively
+  # mount with a bounded retry (30 x 2s = up to 60s) so boot CONVERGES through
+  # the attach race, then ASSERT the mountpoint and abort loudly if the volume
+  # genuinely never attached. Without the assert, a failed attach would let the
+  # `mkdir -p` below recreate the path on the ephemeral ROOT disk and the compose
+  # bind would silently store the Odoo filestore (product photos) there with a
+  # green boot -- the exact GOL-93 durable-volume loss. QA already had the assert
+  # (qa-app-platform); prod was missing it -- this brings prod to parity.
+  - |
+    for i in $(seq 1 30); do
+      mountpoint -q /mnt/odoo-filestore && break
+      mount /mnt/odoo-filestore 2>/dev/null || true
+      sleep 2
+    done
+    mountpoint -q /mnt/odoo-filestore || { echo "::error:: expected block volume NOT mounted at /mnt/odoo-filestore -- aborting boot (refusing to run on ephemeral disk; GOL-93)"; exit 1; }
   - |
     . /etc/grove/.env
     IMG="ghcr.io/goldberry-playground/grove-odoo:$${ODOO_TAG:-latest}"
