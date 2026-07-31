@@ -396,6 +396,16 @@ resource "digitalocean_droplet" "odoo" {
     stripe_test_secret_key     = var.stripe_test_secret_key
     stripe_test_webhook_secret = var.stripe_test_webhook_secret
 
+    # Per-tenant Stripe webhook signing secrets (GOL-1016). grove_headless's
+    # webhook handler verifies an incoming Stripe-Signature against ALL three
+    # tenant secrets (try-each, GOL-1020) since the three sandbox storefronts
+    # sign one Odoo endpoint with three distinct whsec_. Same os.environ path
+    # as stripe_test_* above (lowercase names). Empty until the CI/TF apply op
+    # account reads Grove QA -- grove_headless just tries fewer secrets.
+    stripe_webhook_secret_goldberry = var.stripe_webhook_secret_goldberry
+    stripe_webhook_secret_ggg       = var.stripe_webhook_secret_ggg
+    stripe_webhook_secret_nursery   = var.stripe_webhook_secret_nursery
+
     # Publish-webhook sender secret (GOL-985/986/1004). grove_headless reads
     # GROVE_PUBLISH_WEBHOOK_SECRET_GOLDBERRY from the odoo process env and signs
     # the raw body; must byte-match the goldberry app's GROVE_PUBLISH_WEBHOOK_SECRET.

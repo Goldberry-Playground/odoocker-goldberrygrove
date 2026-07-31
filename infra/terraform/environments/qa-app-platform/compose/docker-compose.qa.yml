@@ -87,6 +87,14 @@ services:
       # controller no-ops (checkout 503 / webhook inert) until provisioned.
       stripe_test_secret_key: ${stripe_test_secret_key:-}
       stripe_test_webhook_secret: ${stripe_test_webhook_secret:-}
+      # Per-tenant Stripe webhook signing secrets (GOL-1016). The webhook
+      # handler tries EACH of these against the incoming Stripe-Signature
+      # (GOL-1020) so all three sandbox storefronts can sign the one Odoo
+      # endpoint. Same os.environ path + --env-file source as stripe_test_*
+      # above; default-empty => that tenant's secret is simply not tried.
+      stripe_webhook_secret_goldberry: ${stripe_webhook_secret_goldberry:-}
+      stripe_webhook_secret_ggg: ${stripe_webhook_secret_ggg:-}
+      stripe_webhook_secret_nursery: ${stripe_webhook_secret_nursery:-}
       # Publish-webhook sender (GOL-985/986/1004). grove_headless
       # (models/grove_publish.py) reads these from os.environ to sign + POST the
       # "Publish Guide to Storefront" webhook to the goldberry storefront. Values

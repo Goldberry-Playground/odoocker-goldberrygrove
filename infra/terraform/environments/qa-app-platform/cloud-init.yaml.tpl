@@ -98,6 +98,16 @@ write_files:
       stripe_test_secret_key=${stripe_test_secret_key}
       stripe_test_webhook_secret=${stripe_test_webhook_secret}
 
+      # Per-tenant Stripe webhook signing secrets (GOL-1016). One Odoo webhook
+      # endpoint is signed by three sandbox storefronts with three distinct
+      # whsec_, so grove_headless verifies against ALL of these (try-each,
+      # GOL-1020). LOWERCASE + also mirrored in the odoo `environment:` block
+      # in docker-compose.qa.yml (same os.environ rule as stripe_test_* above).
+      # Empty => that tenant's secret is simply not tried.
+      stripe_webhook_secret_goldberry=${stripe_webhook_secret_goldberry}
+      stripe_webhook_secret_ggg=${stripe_webhook_secret_ggg}
+      stripe_webhook_secret_nursery=${stripe_webhook_secret_nursery}
+
       # Publish-webhook sender (GOL-985/986/1004). grove_headless
       # (models/grove_publish.py) reads these from the odoo PROCESS env via
       # os.environ -- so they must ALSO be listed in the odoo service's
