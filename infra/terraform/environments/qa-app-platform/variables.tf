@@ -296,33 +296,26 @@ variable "stripe_webhook_secret_nursery" {
 # content. Keys come from each Ghost admin -> Settings -> Integrations
 # and live in 1Password `Grove Infra`. qa-stub defaults keep plan working
 # until the .env.op refs are filled in.
+#
+# GOL-1013: converged onto the SAME single JSON-map vault field prod reads
+# (`ghost_content_keys_tf_json` -> TF_VAR_ghost_content_keys). One secret,
+# one representation across both envs -- no silent drift on key rotation.
+# Shape mirrors production/variables.tf verbatim.
 
-variable "ghost_content_key_hub" {
-  description = "Ghost Content API key for the hub journal (blog.gatheringatthegrove.com) -- injected as HUB_GHOST_CONTENT_API_KEY. From 1Password `Grove Infra` via TF_VAR_ghost_content_key_hub."
-  type        = string
+variable "ghost_content_keys" {
+  description = "Per-frontend Ghost Content API keys for the live blog.* hosts on the Track-1 blogs droplet (QA reads prod Ghost per the EOM-July decision; Content API keys are read-only). Read from the single JSON-map 1Password field `ghost_content_keys_tf_json` via TF_VAR_ghost_content_keys -- the same source prod reads, so the two envs can never drift. qa-stub defaults keep `plan` working until the .env.op ref resolves. Content keys are read-only + rotatable in Ghost, so GENERAL scope is fine."
+  type        = map(string)
   sensitive   = true
-  default     = "qa-stub-no-ghost-key-yet"
-}
-
-variable "ghost_content_key_goldberry" {
-  description = "Ghost Content API key for blog.goldberrygrove.farm -- injected as GHOST_CONTENT_KEY on the goldberry app. From 1Password `Grove Infra` via TF_VAR_ghost_content_key_goldberry."
-  type        = string
-  sensitive   = true
-  default     = "qa-stub-no-ghost-key-yet"
-}
-
-variable "ghost_content_key_ggg" {
-  description = "Ghost Content API key for blog.woodworkingeorge.com -- injected as GHOST_CONTENT_KEY on the ggg app. From 1Password `Grove Infra` via TF_VAR_ghost_content_key_ggg."
-  type        = string
-  sensitive   = true
-  default     = "qa-stub-no-ghost-key-yet"
-}
-
-variable "ghost_content_key_nursery" {
-  description = "Ghost Content API key for blog.atthegrovenursery.com -- injected as GHOST_CONTENT_KEY on the nursery app. From 1Password `Grove Infra` via TF_VAR_ghost_content_key_nursery."
-  type        = string
-  sensitive   = true
-  default     = "qa-stub-no-ghost-key-yet"
+  default = {
+    hub       = "qa-stub-no-ghost-key-yet"
+    goldberry = "qa-stub-no-ghost-key-yet"
+    ggg       = "qa-stub-no-ghost-key-yet"
+    nursery   = "qa-stub-no-ghost-key-yet"
+  }
+  validation {
+    condition     = alltrue([for t in ["hub", "goldberry", "ggg", "nursery"] : contains(keys(var.ghost_content_keys), t)])
+    error_message = "ghost_content_keys must contain keys: hub, goldberry, ggg, nursery."
+  }
 }
 
 # === Stripe TEST-mode keys (sandbox checkout — GOL-688/696) =================

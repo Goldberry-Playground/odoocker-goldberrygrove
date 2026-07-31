@@ -98,7 +98,7 @@ resource "digitalocean_app" "hub" {
       # GROVE_REVALIDATE_SECRET below (#869/#514). Read-only content key.
       env {
         key   = "HUB_GHOST_CONTENT_API_KEY"
-        value = var.ghost_content_key_hub
+        value = var.ghost_content_keys["hub"]
         scope = "RUN_AND_BUILD_TIME"
       }
 
@@ -221,21 +221,21 @@ locals {
     goldberry = {
       image                 = "grove-goldberry"
       ghost_url             = "https://blog.goldberrygrove.farm"
-      ghost_content_key     = var.ghost_content_key_goldberry
+      ghost_content_key     = var.ghost_content_keys["goldberry"]
       stripe_secret_key     = var.stripe_secret_key_goldberry
       stripe_webhook_secret = var.stripe_webhook_secret_goldberry
     }
     ggg = {
       image                 = "grove-ggg"
       ghost_url             = "https://blog.woodworkingeorge.com"
-      ghost_content_key     = var.ghost_content_key_ggg
+      ghost_content_key     = var.ghost_content_keys["ggg"]
       stripe_secret_key     = var.stripe_secret_key_ggg
       stripe_webhook_secret = var.stripe_webhook_secret_ggg
     }
     nursery = {
       image                 = "grove-nursery"
       ghost_url             = "https://blog.atthegrovenursery.com"
-      ghost_content_key     = var.ghost_content_key_nursery
+      ghost_content_key     = var.ghost_content_keys["nursery"]
       stripe_secret_key     = var.stripe_secret_key_nursery
       stripe_webhook_secret = var.stripe_webhook_secret_nursery
     }
