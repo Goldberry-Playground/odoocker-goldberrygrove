@@ -103,20 +103,33 @@ done
 
 # Emit the 1Password seed block. Deliberately printed as a code block the
 # operator copies wholesale -- avoids the "forgot one tenant" mistake.
-# Writes to the same Grove Infra fields the rest of the stack reads
-# (GOL-418; replaced the Infisical seed block when Infisical was retired).
+#
+# Writes the single `ghost_content_keys_tf_json` JSON-map field on the Grove
+# Infra item -- the ONE field terraform reads for both QA and prod
+# (TF_VAR_ghost_content_keys, GOL-1013/#359). The old discrete
+# `ghost_content_key_*` fields are dead (deleted from the vault item), so the
+# block must NOT write them or it becomes a silent no-op rotation trap
+# (GOL-1069). It merges into the existing map so the 'hub' key -- which this
+# script does not reseed -- survives; a blind overwrite would drop it.
 echo ""
 echo "===================================================================="
 echo "Copy + run this block on the operator laptop (where op auth is alive):"
 echo "===================================================================="
 echo ""
 echo "# --- BEGIN 1Password seed for QA Ghost Content Keys ---"
+echo "# Requires: op (authed) + jq. Reads the current map, merges the 3 fresh"
+echo "# tenant keys, writes back -- 'hub' is preserved untouched."
+echo "CUR=\$(op read 'op://Goldberry Grove - Admin/qvkpvg24x2wbsn6owjyvn4vhx4/ghost_content_keys_tf_json' 2>/dev/null)"
+echo "[ -n \"\$CUR\" ] || CUR='{}'   # first-ever seed: start from an empty map"
 echo "op item edit qvkpvg24x2wbsn6owjyvn4vhx4 \\"
 echo "  --vault 'Goldberry Grove - Admin' \\"
-echo "  'ghost_content_key_goldberry[password]=${KEYS[goldberry]}' \\"
-echo "  'ghost_content_key_ggg[password]=${KEYS[ggg]}' \\"
-echo "  'ghost_content_key_nursery[password]=${KEYS[nursery]}' \\"
-echo "  >/dev/null && echo 'Ghost keys pushed to 1Password'"
+echo "  \"ghost_content_keys_tf_json[concealed]=\$(jq -cn \\"
+echo "     --argjson cur \"\$CUR\" \\"
+echo "     --arg goldberry '${KEYS[goldberry]}' \\"
+echo "     --arg ggg '${KEYS[ggg]}' \\"
+echo "     --arg nursery '${KEYS[nursery]}' \\"
+echo "     '\$cur + {goldberry: \$goldberry, ggg: \$ggg, nursery: \$nursery}')\" \\"
+echo "  >/dev/null && echo 'Ghost keys pushed to 1Password (ghost_content_keys_tf_json; hub preserved)'"
 echo "# --- END 1Password seed ---"
 echo ""
 echo "Then either re-run 'gh workflow run \"QA Deploy\"' OR (fast path):"
