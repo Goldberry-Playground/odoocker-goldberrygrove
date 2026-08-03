@@ -199,6 +199,30 @@ resource "digitalocean_droplet" "blogs" {
     create = "15m"
     delete = "15m"
   }
+
+  # GOL-385 — DEFUSE THE ACCIDENTAL-REPLACE LANDMINE.
+  # The RUNNING droplet was provisioned from an EARLIER render of
+  # cloud-init-blogs.yaml.tpl (state user_data SHA1 f6071c8…) than the template
+  # renders today (0baae2b…), and `monitoring` was flipped on in code AFTER the
+  # droplet was created. Both attributes are ForceNew, so today a ROUTINE prod
+  # apply — even one that touches only postgres/odoo/observability — drags a full
+  # `digitalocean_droplet.blogs` REPLACE with it: a 10-20 min outage on all four
+  # brand blogs (root-disk loss; durable content survives on the prevent_destroy
+  # volume + reserved IP re-points rather than recreates).
+  #
+  # ignore_changes makes routine applies NON-DESTRUCTIVE: terraform stops diffing
+  # these two fields against the live droplet, so `terraform plan` no longer
+  # forces a replacement — and it does so at PLAN time from config, so no prod
+  # apply is required for this fix to take effect.
+  #
+  # The deliberate blog.* cutover (docs/RUNBOOK-blogs-reserved-ip-cutover.md
+  # "Phase 2") is UNAFFECTED: it is an intentional, board-gated, named-window
+  # `terraform apply -replace=digitalocean_droplet.blogs`, which re-renders the
+  # current template on create regardless of ignore_changes. Reversible: delete
+  # this block to restore the pending replace.
+  lifecycle {
+    ignore_changes = [user_data, monitoring]
+  }
 }
 
 # -- Reserved IP ---------------------------------------------------------------
