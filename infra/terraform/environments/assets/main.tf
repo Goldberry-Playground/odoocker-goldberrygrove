@@ -110,6 +110,30 @@ resource "digitalocean_spaces_key" "assets_rw" {
   }
 }
 
+# ---- Social-ingest re-host: NO dedicated key (GOL-1120 / GOL-1123) ----------
+#
+# The Phase-4 social-media ingest re-host was originally scoped to a hand-rolled
+# SpacesAssetStore in the discord-bridge, which would have needed its own
+# bucket-scoped RW key here. That architecture was superseded (GOL-1122, Ada's
+# Lead-Eng call, reconciled on GOL-1123):
+#
+#   - The discord-bridge image is zero-runtime-dependency by design and cannot
+#     run native `sharp` (required for the EXIF/GPS strip). It stays zero-dep.
+#   - The re-host now runs INSIDE apps/hub, as a sibling of
+#     apps/hub/app/api/assets/optimize, reusing @grove/assets
+#     (optimizeToVariants + uploadAsset). That code path already writes to this
+#     bucket public-read via the EXISTING operator key below
+#     (GROVE_ASSETS_KEY / GROVE_ASSETS_SECRET, already in hub's deploy env for
+#     the live optimize route). No new Spaces credential is required.
+#   - The bridge just forwards the raw drop to that hub route over HTTP, gated
+#     by the existing shared bearer GROVE_ASSETS_OPTIMIZE_TOKEN.
+#
+# So there is intentionally no `assets_social_rw` resource: adding a second key
+# consumed by the same hub process buys no real isolation (same env, same blast
+# radius) while adding a terraform apply, a 1Password secret, and a CEO gate.
+# If the re-host is ever split into its own service, revisit identity separation
+# then. See docs/ADR/009-grove-asset-storage.md.
+
 # ---- CORS ------------------------------------------------------------------
 # Frontends fetch images from a different origin (their tenant hostname)
 # than the bucket's CDN hostname. Browsers block cross-origin image reads

@@ -29,3 +29,7 @@ output "operator_secret_key" {
   value       = digitalocean_spaces_key.assets_rw.secret_key
   sensitive   = true
 }
+
+# NOTE (GOL-1123): the social-ingest re-host does NOT get its own Spaces key.
+# It runs inside apps/hub and reuses the operator key above via @grove/assets
+# (GROVE_ASSETS_KEY / GROVE_ASSETS_SECRET). See main.tf + ADR-009.
