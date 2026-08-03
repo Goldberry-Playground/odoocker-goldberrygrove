@@ -199,6 +199,26 @@ resource "digitalocean_droplet" "odoo" {
     create = "15m"
     delete = "15m"
   }
+
+  # GOL-385: DEFUSE the accidental-replace landmine (same fix as blogs.tf).
+  # `user_data` and `monitoring` are both ForceNew. DO does not return user_data
+  # after create, so state holds only a SHA1; the live box's cloud-init bytes are
+  # not reproducible from any candidate tfvars, so the rendered template will
+  # perpetually differ from state. Left unguarded, EVERY routine `terraform apply`
+  # force-REPLACES grove-prod-odoo (id 588824343) = 10-20 min Odoo outage (durable
+  # data survives: filestore is on the prevent_destroy volume, the DB is external
+  # Managed PG, and the reserved IP is a separate resource). ignore_changes stops
+  # terraform diffing them so routine applies are non-destructive.
+  #
+  # This does NOT block a DELIBERATE rebuild: that is an explicit, board-gated
+  # `terraform apply -replace=digitalocean_droplet.odoo` in a named window (the
+  # box picks up the current template on create regardless of ignore_changes).
+  # Reversible: delete this block to re-expose the drift. Restoring byte-for-byte
+  # reproducibility (a conscious rebuild to reconcile the snowflake) is the
+  # separate GOL-391 decision, not this safety guard.
+  lifecycle {
+    ignore_changes = [user_data, monitoring]
+  }
 }
 
 # ── Reserved IP (GOL-382) ───────────────────────────────────────────────────
