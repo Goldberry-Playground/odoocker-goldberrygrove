@@ -30,14 +30,6 @@ output "operator_secret_key" {
   sensitive   = true
 }
 
-output "social_ingest_access_key_id" {
-  description = "Spaces access key ID for the discord-bridge social-ingest store (GOL-1120). Push to 1Password under Grove Infra / grove_asset_store_key; injected into the bridge as GROVE_ASSET_STORE_KEY."
-  value       = digitalocean_spaces_key.assets_social_rw.access_key
-  sensitive   = true
-}
-
-output "social_ingest_secret_key" {
-  description = "Spaces secret key for the discord-bridge social-ingest store (GOL-1120). Push to 1Password under Grove Infra / grove_asset_store_secret; injected as GROVE_ASSET_STORE_SECRET. NEVER commit."
-  value       = digitalocean_spaces_key.assets_social_rw.secret_key
-  sensitive   = true
-}
+# NOTE (GOL-1123): the social-ingest re-host does NOT get its own Spaces key.
+# It runs inside apps/hub and reuses the operator key above via @grove/assets
+# (GROVE_ASSETS_KEY / GROVE_ASSETS_SECRET). See main.tf + ADR-009.

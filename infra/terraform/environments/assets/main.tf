@@ -110,31 +110,29 @@ resource "digitalocean_spaces_key" "assets_rw" {
   }
 }
 
-# ---- Social-ingest service key (used by the discord-bridge, GOL-1120) -------
+# ---- Social-ingest re-host: NO dedicated key (GOL-1120 / GOL-1123) ----------
 #
-# The Phase-4 social-media ingest seam (grove-sites, apps/discord-bridge)
-# re-hosts approved media into this bucket under the `social/` prefix and hands
-# Buffer the public CDN URL (see docs/ADR/009-grove-asset-storage.md).
+# The Phase-4 social-media ingest re-host was originally scoped to a hand-rolled
+# SpacesAssetStore in the discord-bridge, which would have needed its own
+# bucket-scoped RW key here. That architecture was superseded (GOL-1122, Ada's
+# Lead-Eng call, reconciled on GOL-1123):
 #
-# A SEPARATE key from assets_rw (the operator upload key) on purpose:
-#   - Least privilege by IDENTITY: an automated service and a human operator
-#     get distinct credentials, so one can be rotated/revoked without breaking
-#     the other. (DO Spaces keys are bucket-scoped, not prefix-scoped, so this
-#     grant is still bucket-wide readwrite — the isolation is on the identity
-#     axis, which is the one that matters for independent rotation.)
-#   - Blast radius: a leaked bridge key never touches the operator flow.
+#   - The discord-bridge image is zero-runtime-dependency by design and cannot
+#     run native `sharp` (required for the EXIF/GPS strip). It stays zero-dep.
+#   - The re-host now runs INSIDE apps/hub, as a sibling of
+#     apps/hub/app/api/assets/optimize, reusing @grove/assets
+#     (optimizeToVariants + uploadAsset). That code path already writes to this
+#     bucket public-read via the EXISTING operator key below
+#     (GROVE_ASSETS_KEY / GROVE_ASSETS_SECRET, already in hub's deploy env for
+#     the live optimize route). No new Spaces credential is required.
+#   - The bridge just forwards the raw drop to that hub route over HTTP, gated
+#     by the existing shared bearer GROVE_ASSETS_OPTIMIZE_TOKEN.
 #
-# Secret lands in 1Password `Grove Infra` (grove_asset_store_key /
-# grove_asset_store_secret) and is injected into the bridge as
-# GROVE_ASSET_STORE_KEY / GROVE_ASSET_STORE_SECRET (never committed).
-resource "digitalocean_spaces_key" "assets_social_rw" {
-  name = "${var.bucket_name}-social-rw"
-
-  grant {
-    bucket     = digitalocean_spaces_bucket.assets.name
-    permission = "readwrite"
-  }
-}
+# So there is intentionally no `assets_social_rw` resource: adding a second key
+# consumed by the same hub process buys no real isolation (same env, same blast
+# radius) while adding a terraform apply, a 1Password secret, and a CEO gate.
+# If the re-host is ever split into its own service, revisit identity separation
+# then. See docs/ADR/009-grove-asset-storage.md.
 
 # ---- CORS ------------------------------------------------------------------
 # Frontends fetch images from a different origin (their tenant hostname)

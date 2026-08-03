@@ -22,7 +22,7 @@ Frontends fetch via `${process.env.NEXT_PUBLIC_ASSETS_URL}/goldberry/spring-plan
 | **Product photos** | Odoo | Products live in Odoo; product images are attached in Odoo's product form. URL pattern: `${ODOO_URL}${imageUrl}`. |
 | **Blog post images** | Ghost | Editorial content flows through Ghost; images are uploaded via Ghost admin. Ghost returns the URL in Content API responses. |
 | **Marketing / brand imagery** | **Spaces (this doc)** | Everything else — hero backgrounds, illustrations, brand logos. Not tied to products, not editorial. |
-| **Social-media re-host media** | **Spaces, `social/` prefix** | Approved social posts' media, re-hosted to a durable public URL Buffer fetches at publish time. Written by the discord-bridge (GOL-1120, [ADR-009](ADR/009-grove-asset-storage.md)) via its own `grove-assets-social-rw` key. |
+| **Social-media re-host media** | **Spaces, `social/` prefix** | Approved social posts' media, re-hosted to a durable public URL Buffer fetches at publish time. Written by an apps/hub Node route reusing `@grove/assets` + the existing operator key `GROVE_ASSETS_KEY` (GOL-1120 / GOL-1122, [ADR-009](ADR/009-grove-asset-storage.md)); the discord-bridge just forwards the drop over HTTP. No dedicated key. |
 | **OpenObserve Parquet** | Obs droplet MinIO | Log/metric/trace storage backend. Not visible to frontends. |
 | **TF remote state** | `grove-tf-state` Spaces bucket | Separate concern; different bucket, different access model. |
 
