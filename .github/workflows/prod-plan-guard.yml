@@ -1,0 +1,170 @@
+name: Production Plan Guard
+
+# Fail any PR whose PRODUCTION terraform plan would REPLACE a live droplet.
+#
+# Why this exists (GOL-385): the prod blogs droplet was silently marked for a
+# force-replace by a routine `terraform plan` because two ForceNew attributes
+# (user_data, monitoring) had drifted from applied state. A replace = root-disk
+# loss + a 10-20 min public outage on the four brand blogs. That landmine was
+# found only because an operator happened to read the plan by hand. This check
+# turns "a prod plan would replace a live droplet" into a hard, automatic PR
+# failure so it can never again depend on a human noticing.
+#
+# Read-only and non-destructive: plan-only, NO apply. Credentials come from the
+# grove-ci-prod-ro 1Password service account (read-only to the Grove Prod vault)
+# -- the identical pattern terraform-drift.yml already uses. A plan refreshes and
+# locks prod state, so this serializes on the production-state concurrency group.
+#
+# NOTE: this workflow is NOT yet a required status check. Making it required is a
+# repo-ruleset change (governance, board-owned) -- see GOL-392. Until then it
+# runs and reports on every prod-touching PR but does not block merge on its own.
+
+on:
+  pull_request:
+    paths:
+      - "infra/terraform/environments/production/**"
+      - ".github/workflows/prod-plan-guard.yml"
+
+permissions: {}
+
+concurrency:
+  # Keyed to production/terraform.tfstate so this plan serializes with any other
+  # prod plan/apply that adopts the same group (GOL-34 item 3a). A plan takes a
+  # state lock; overlapping runs are not safe. cancel-in-progress:false -- let an
+  # in-flight plan finish rather than abandoning a held lock.
+  group: terraform-production
+  cancel-in-progress: false
+
+jobs:
+  plan-guard:
+    name: Prod plan must not replace a live droplet
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    permissions:
+      contents: read # no id-token needed: 1Password uses a service-account token, not OIDC
+
+    env:
+      TF_DIR: infra/terraform/environments/production
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        timeout-minutes: 2
+
+      # Read-only prod secrets from 1Password (ADR-0001 Phase 3). Authenticated by
+      # the REPO-level OP_CI_SA_TOKEN (grove-ci-prod-ro service account, read-only
+      # to Grove Prod). export-env writes each resolved value to $GITHUB_ENV.
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
+        timeout-minutes: 2
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_CI_SA_TOKEN }}
+          DIGITALOCEAN_TOKEN:       op://Grove Prod/odoocker/DIGITALOCEAN_TOKEN
+          SPACES_ACCESS_KEY_ID:     op://Grove Prod/odoocker/SPACES_ACCESS_KEY_ID
+          SPACES_SECRET_ACCESS_KEY: op://Grove Prod/odoocker/SPACES_SECRET_ACCESS_KEY
+          CLOUDFLARE_API_TOKEN:     op://Grove Prod/odoocker/CLOUDFLARE_API_TOKEN
+          GROVE_REVALIDATE_SECRET:  op://Grove Prod/odoocker/GROVE_REVALIDATE_SECRET
+          DISCORD_OPS_WEBHOOK_URL:  op://Grove Prod/odoocker/DISCORD_OPS_WEBHOOK_URL
+          ODOO_API_KEYS_TF_JSON:    op://Grove Prod/odoocker/ODOO_API_KEYS_TF_JSON
+        with:
+          export-env: true
+
+      # The TF S3 backend reads AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY; 1Password
+      # holds them under their canonical SPACES_* names (DO Spaces, not AWS).
+      - name: Alias SPACES_* env vars to AWS_* for TF S3 backend
+        timeout-minutes: 1
+        run: |
+          echo "AWS_ACCESS_KEY_ID=$SPACES_ACCESS_KEY_ID" >> "$GITHUB_ENV"
+          echo "AWS_SECRET_ACCESS_KEY=$SPACES_SECRET_ACCESS_KEY" >> "$GITHUB_ENV"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        timeout-minutes: 3
+        with:
+          terraform_version: "~1.10" # GOL-40: use_lockfile requires >= 1.10
+          terraform_wrapper: false   # we parse plan output directly; the wrapper corrupts it
+
+      - name: Write backend config
+        timeout-minutes: 1
+        run: |
+          cat > "$TF_DIR/backend.hcl" <<'EOF'
+          endpoint                    = "https://nyc3.digitaloceanspaces.com"
+          bucket                      = "grove-tf-state"
+          key                         = "production/terraform.tfstate"
+          region                      = "us-east-1"
+          skip_credentials_validation = true
+          skip_metadata_api_check     = true
+          skip_region_validation      = true
+          skip_requesting_account_id  = true
+          force_path_style            = true
+          EOF
+
+      # Every production variable that has no default (do_token, cloudflare_api_token,
+      # spaces_access_id, spaces_secret_key, grove_revalidate_secret, discord_webhook_url)
+      # must be supplied or the plan errors before it can even report a replace.
+      - name: Map env-specific TF vars
+        timeout-minutes: 1
+        run: |
+          {
+            echo "TF_VAR_do_token=$DIGITALOCEAN_TOKEN"
+            echo "TF_VAR_cloudflare_api_token=$CLOUDFLARE_API_TOKEN"
+            echo "TF_VAR_spaces_access_id=$SPACES_ACCESS_KEY_ID"
+            echo "TF_VAR_spaces_secret_key=$SPACES_SECRET_ACCESS_KEY"
+            echo "TF_VAR_grove_revalidate_secret=$GROVE_REVALIDATE_SECRET"
+            echo "TF_VAR_discord_webhook_url=$DISCORD_OPS_WEBHOOK_URL"
+            # map(string) var: 1Password stores the JSON object verbatim. Optional
+            # (has a stub default) but mapping the real value keeps the plan clean.
+            echo "TF_VAR_odoo_api_keys=$ODOO_API_KEYS_TF_JSON"
+          } >> "$GITHUB_ENV"
+
+      - name: Terraform init
+        timeout-minutes: 5
+        run: |
+          terraform -chdir="$TF_DIR" init \
+            -backend-config=backend.hcl \
+            -input=false
+
+      - name: Terraform plan
+        id: plan
+        timeout-minutes: 10
+        # -detailed-exitcode: 0 = no changes, 1 = error, 2 = changes present.
+        # Capture via PIPESTATUS[0] (tee otherwise masks terraform's exit code).
+        # Drift (exit 2) is EXPECTED here -- prod declares resources not yet applied
+        # (GOL-391), which show as pure "create". We only fail on a droplet REPLACE,
+        # decided from the JSON plan below, not from the exit code.
+        run: |
+          set +e
+          terraform -chdir="$TF_DIR" plan \
+            -detailed-exitcode \
+            -input=false \
+            -lock-timeout=5m \
+            -out=tfplan.binary 2>&1 | tee plan.txt
+          EXIT_CODE="${PIPESTATUS[0]}"
+          set -e
+          if [ "$EXIT_CODE" -eq 1 ]; then
+            echo "::error::terraform plan failed with an error (see log above)"
+            exit 1
+          fi
+          echo "exitcode=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+
+      - name: Fail if the plan replaces a live droplet
+        timeout-minutes: 2
+        run: |
+          terraform -chdir="$TF_DIR" show -json tfplan.binary > plan.json
+          # Terraform encodes a replace as actions containing BOTH "create" and
+          # "delete" (["delete","create"], or the create_before_destroy variant
+          # ["create","delete"]). A pure create/update/no-op never matches.
+          REPLACED=$(jq -r '
+            .resource_changes[]
+            | select(.type == "digitalocean_droplet")
+            | select((.change.actions | index("create")) and (.change.actions | index("delete")))
+            | .address
+          ' plan.json)
+          if [ -n "$REPLACED" ]; then
+            echo "::error::Production plan would REPLACE a live droplet -- that is a root-disk loss + public outage. Guard it (e.g. lifecycle { ignore_changes = [<ForceNew attr>] } per GOL-385) or take the replace deliberately in a named, board-gated window."
+            echo "Droplet(s) marked for replacement:"
+            echo "$REPLACED" | sed 's/^/  - /'
+            exit 1
+          fi
+          echo "OK: no digitalocean_droplet replacement in the production plan."
