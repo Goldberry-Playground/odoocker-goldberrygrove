@@ -110,6 +110,32 @@ resource "digitalocean_spaces_key" "assets_rw" {
   }
 }
 
+# ---- Social-ingest service key (used by the discord-bridge, GOL-1120) -------
+#
+# The Phase-4 social-media ingest seam (grove-sites, apps/discord-bridge)
+# re-hosts approved media into this bucket under the `social/` prefix and hands
+# Buffer the public CDN URL (see docs/ADR/009-grove-asset-storage.md).
+#
+# A SEPARATE key from assets_rw (the operator upload key) on purpose:
+#   - Least privilege by IDENTITY: an automated service and a human operator
+#     get distinct credentials, so one can be rotated/revoked without breaking
+#     the other. (DO Spaces keys are bucket-scoped, not prefix-scoped, so this
+#     grant is still bucket-wide readwrite — the isolation is on the identity
+#     axis, which is the one that matters for independent rotation.)
+#   - Blast radius: a leaked bridge key never touches the operator flow.
+#
+# Secret lands in 1Password `Grove Infra` (grove_asset_store_key /
+# grove_asset_store_secret) and is injected into the bridge as
+# GROVE_ASSET_STORE_KEY / GROVE_ASSET_STORE_SECRET (never committed).
+resource "digitalocean_spaces_key" "assets_social_rw" {
+  name = "${var.bucket_name}-social-rw"
+
+  grant {
+    bucket     = digitalocean_spaces_bucket.assets.name
+    permission = "readwrite"
+  }
+}
+
 # ---- CORS ------------------------------------------------------------------
 # Frontends fetch images from a different origin (their tenant hostname)
 # than the bucket's CDN hostname. Browsers block cross-origin image reads
