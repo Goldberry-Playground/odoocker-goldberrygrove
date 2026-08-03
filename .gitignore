@@ -3,6 +3,11 @@
 .env.*
 !.env.example
 !.env.*.example
+# `.env.op*` are committed 1Password env-file TEMPLATES: they hold op:// refs,
+# not secret values (see infra/.../.env.op header). `.env.op` predates this
+# rule and is already tracked; `.env.op.seed` (GOL-1152) needs the negation.
+!.env.op
+!.env.op.seed
 
 # Ignores the pgadmin private key
 pgadmin/private_key
