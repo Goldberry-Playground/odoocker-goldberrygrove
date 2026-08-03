@@ -184,6 +184,29 @@ qa-l3-teardown:
 qa-l3-teardown-all:
 	bash scripts/qa-l3-teardown.sh all
 
+# ── QA E2E test-inventory fixture seed (GOL-1152) ────────────────────────────
+# Idempotently seed the Playwright E2E test-inventory fixture (a Potted-only,
+# in-stock nursery product) into the QA Odoo so a rebuilt QA comes up
+# E2E-test-ready with NO manual reseed. Run once after `qa-l3-up` (or any QA
+# rebuild) has the Odoo droplet serving. The seed script (GOL-1148) lives in
+# grove-odoo-modules; it is an XML-RPC client, so it runs from here against the
+# network-reachable QA Odoo. It is fetched pinned to a ref (default main) so a
+# clean odoocker checkout works without the sibling repo. Creds flow from
+# 1Password via the same `op run --env-file` path the apply uses; see
+# $(QA_L3_DIR)/.env.op.seed for the vault refs and the "why local-ops not CI"
+# note (grove-ci-prod-ro cannot read Grove QA). Idempotent: a converged fixture
+# is a no-op re-run. Pass DRY_RUN=1 for a read-only plan.
+QA_L3_SEED_ENV_FILE := $(QA_L3_DIR)/.env.op.seed
+SEED_E2E_REF ?= main
+SEED_E2E_URL := https://raw.githubusercontent.com/Goldberry-Playground/grove-odoo-modules/$(SEED_E2E_REF)/scripts/seed_e2e_test_inventory.py
+
+## qa-l3-seed-e2e: seed the Playwright E2E test-inventory fixture into QA Odoo (idempotent; DRY_RUN=1 for a plan)
+.PHONY: qa-l3-seed-e2e
+qa-l3-seed-e2e:
+	@tmp=$$(mktemp); trap 'rm -f "$$tmp"' EXIT; \
+		curl -fsSL "$(SEED_E2E_URL)" -o "$$tmp"; \
+		DRY_RUN="$(DRY_RUN)" op run --env-file=$(QA_L3_SEED_ENV_FILE) -- python3 "$$tmp"
+
 ## qa-test-data-cleanup: DRY-RUN report of QA test data (canary/journey orders, test partners) — deletes nothing
 .PHONY: qa-test-data-cleanup
 qa-test-data-cleanup:

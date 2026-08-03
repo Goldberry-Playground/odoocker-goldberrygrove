@@ -78,6 +78,36 @@ terraform validate
 terraform fmt -check -recursive
 ```
 
+## Post-apply: seed the E2E test-inventory fixture (GOL-1152)
+
+A QA rebuild comes up with the real (sanitized) catalog, in which every nursery
+template defaults its `Format` axis to **Bareroot** — 0-on-hand in preorder
+season — so the buy box renders **"Reserve"**, not "Add to Cart". The Playwright
+checkout E2E suite (GOL-1074) needs at least one product that renders an
+**enabled "Add to Cart" on first paint**. That single missing state is provided
+by an idempotent fixture seed (a Potted-only, in-stock product) so QA is
+E2E-test-ready **from code alone, with no manual reseed**:
+
+```bash
+# From the repo root, after `make qa-l3-up` has the Odoo droplet serving.
+make qa-l3-seed-e2e DRY_RUN=1   # read-only plan (recommended first)
+make qa-l3-seed-e2e            # converge the fixture (idempotent no-op if present)
+```
+
+- The seed script lives in `grove-odoo-modules` (GOL-1148); `qa-l3-seed-e2e`
+  fetches it pinned to `SEED_E2E_REF` (default `main`) and runs it against the
+  network-reachable QA Odoo (XML-RPC).
+- Creds come from 1Password via `op run --env-file=.env.op.seed` — the same
+  `op run` / grove-devops-ro path the apply uses. It is a **local-ops** target,
+  not a GitHub Actions job, because the CI service account (grove-ci-prod-ro,
+  behind `OP_CI_SA_TOKEN`) is read-only to **Grove Prod** and cannot read
+  **Grove QA**; moving the seed into CI requires a board-provisioned
+  Grove-QA-scoped CI SA.
+- **Preview droplets** are not auto-seeded yet: the per-PR preview stack has no
+  git-sync sidecar for `grove_headless` (see `../preview/compose/
+  docker-compose.preview.yml`), so `/shop` can't render the catalog there
+  regardless of the fixture. Revisit when preview gains the custom modules.
+
 ## SSH access
 
 Same two-key pattern as monolith QA:
