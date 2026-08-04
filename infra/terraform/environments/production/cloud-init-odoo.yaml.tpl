@@ -85,6 +85,27 @@ write_files:
       # no review gate). TF var custom_modules_ref enforces a 40-char SHA.
       CUSTOM_MODULES_REF=${custom_modules_ref}
 
+      # Stripe LIVE-mode keys for grove_headless prod checkout (GOL-973).
+      # LOWERCASE names on purpose: grove_headless controllers/main.py reads
+      # them via os.environ.get("stripe_test_secret_key") /
+      # ...("stripe_test_webhook_secret") (the env NAMES are historical; the
+      # VALUES are live in prod). These lines are the `--env-file` SOURCE:
+      # `docker compose --env-file /etc/grove/.env up` interpolates them into
+      # the odoo service's `environment:` block in docker-compose.odoo.yml,
+      # which is what actually reaches os.environ (the /.env mount only feeds
+      # odoorc.sh's odoo.conf substitution). BOTH must carry the var.
+      #
+      # DEDICATED BACKEND KEY — runbook §4 (docs/RUNBOOK-checkout-stripe-
+      # guardrails.md). QA deliberately shares ONE stripe-nursery-qa key
+      # between the storefront and this backend; prod MUST NOT repeat that.
+      # These two vars resolve from their OWN 1Password item, never a
+      # storefront key: revoking a storefront key must never disable checkout.
+      # Empty default => grove_headless treats it as "" (checkout inert), so
+      # this scaffold is a safe no-op until CFO (Penny) mints the live keys and
+      # the board greenlights a prod-checkout rebuild (see .env.op + GOL-973).
+      stripe_test_secret_key=${stripe_test_secret_key}
+      stripe_test_webhook_secret=${stripe_test_webhook_secret}
+
   # Compose YAML - base64 so cloud-init's YAML parser never sees its content.
   - path: /etc/grove/docker-compose.yml
     permissions: "0644"
