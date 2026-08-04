@@ -116,6 +116,23 @@ jobs:
             # map(string) var: 1Password stores the JSON object verbatim. Optional
             # (has a stub default) but mapping the real value keeps the plan clean.
             echo "TF_VAR_odoo_api_keys=$ODOO_API_KEYS_TF_JSON"
+            # GOL-1122 grove_assets_* : required (no defaults, deliberately -- a bare
+            # apply must not ship a placeholder credential to prod). This guard only
+            # ever runs `terraform plan` and never applies, and these three feed App
+            # Platform app envs, NOT droplet user_data, so a placeholder here cannot
+            # influence the droplet-replacement verdict this job exists to compute.
+            #
+            # They are NOT loaded from 1Password here on purpose: the real values live
+            # in `op://Goldberry Grove - Admin/Grove Infra/*` (see environments/
+            # production/.env.op), while this workflow authenticates as
+            # grove-ci-prod-ro, scoped read-only to the `Grove Prod` vault -- and
+            # 1Password SA grants are vault-granular and immutable after creation, so
+            # referencing the Admin vault here would 403. If these ever need to be real
+            # in CI, mirror them into `op://Grove Prod/odoocker/*` and map them like
+            # the neighbours above.
+            echo "TF_VAR_grove_assets_key=ci-plan-placeholder"
+            echo "TF_VAR_grove_assets_secret=ci-plan-placeholder"
+            echo "TF_VAR_grove_assets_optimize_token=ci-plan-placeholder"
           } >> "$GITHUB_ENV"
 
       - name: Terraform init
