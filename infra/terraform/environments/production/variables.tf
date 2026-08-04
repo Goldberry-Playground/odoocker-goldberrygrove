@@ -293,6 +293,33 @@ variable "blog_apex_redirects_enabled" {
   default     = false
 }
 
+# --- Grove assets (ADR-009 amendment 2026-08-02, GOL-1122) -------------------
+# ADR-009 states the hub "already holds" these in its deploy env. It did not:
+# verified 2026-08-03 via `doctl apps spec get d5fa7795-...` that none of the
+# three were on grove-hub-prod, so /api/assets/optimize was returning 503
+# not_configured to every caller. These three variables are what put them there.
+# GENERAL (not SECRET) app scope for the same provider re-diff reason documented
+# on odoo_api_keys. No defaults, per grove_revalidate_secret's precedent: a bare
+# apply must not be able to ship a placeholder credential to prod.
+
+variable "grove_assets_key" {
+  description = "Spaces access key ID for the grove-assets bucket, read by packages/assets spacesConfigFromEnv() on the hub's /api/assets/optimize upload path (and the social/ re-host seam per ADR-009). Minted by environments/assets as digitalocean_spaces_key.assets_rw and copied into 1Password by hand. Read from TF_VAR_grove_assets_key -- note the 1P field is named grove_assets_access_key_id, not grove_assets_key."
+  type        = string
+  sensitive   = true
+}
+
+variable "grove_assets_secret" {
+  description = "Spaces secret key paired with grove_assets_key (same digitalocean_spaces_key.assets_rw). Read from TF_VAR_grove_assets_secret -- 1P field is grove_assets_secret_key."
+  type        = string
+  sensitive   = true
+}
+
+variable "grove_assets_optimize_token" {
+  description = "Shared bearer token the discord-bridge presents to the hub's /api/assets/optimize. apps/hub/lib/assets/service.ts checkAuth() returns 503 not_configured when this is empty rather than failing loudly -- which is exactly how the unset prod value went unnoticed. The SAME value must also be set on the grove-discord-bridge App Platform app (DO UI; its committed spec is all REPLACE_ME placeholders, so never `doctl apps update --spec` that file)."
+  type        = string
+  sensitive   = true
+}
+
 # --- Prod checkout Stripe keys (GOL-973) -------------------------------------
 # DEDICATED backend key, NOT a storefront key. Runbook §4 (docs/RUNBOOK-
 # checkout-stripe-guardrails.md): QA shares one stripe-nursery-qa key between

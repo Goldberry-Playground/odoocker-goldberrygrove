@@ -104,6 +104,30 @@ resource "digitalocean_app" "hub" {
         scope = "RUN_AND_BUILD_TIME"
       }
 
+      # Hub's /api/assets/optimize (apps/hub/lib/assets/service.ts) plus the
+      # ADR-009 social/ re-host seam: Spaces upload credentials + the shared
+      # bearer the discord-bridge presents on its forward call. RUN_TIME only --
+      # the route reads these at request time, never during the Next build, so
+      # they stay out of the build environment. GENERAL (not SECRET) for the
+      # same provider re-diff reason documented on odoo_api_keys.
+      env {
+        key   = "GROVE_ASSETS_KEY"
+        value = var.grove_assets_key
+        scope = "RUN_TIME"
+      }
+
+      env {
+        key   = "GROVE_ASSETS_SECRET"
+        value = var.grove_assets_secret
+        scope = "RUN_TIME"
+      }
+
+      env {
+        key   = "GROVE_ASSETS_OPTIMIZE_TOKEN"
+        value = var.grove_assets_optimize_token
+        scope = "RUN_TIME"
+      }
+
       env {
         key   = "NEXT_TELEMETRY_DISABLED"
         value = "1"
