@@ -95,7 +95,7 @@ write_files:
       # which is what actually reaches os.environ (the /.env mount only feeds
       # odoorc.sh's odoo.conf substitution). BOTH must carry the var.
       #
-      # DEDICATED BACKEND KEY — runbook §4 (docs/RUNBOOK-checkout-stripe-
+      # DEDICATED BACKEND KEY -- runbook section 4 (docs/RUNBOOK-checkout-stripe-
       # guardrails.md). QA deliberately shares ONE stripe-nursery-qa key
       # between the storefront and this backend; prod MUST NOT repeat that.
       # These two vars resolve from their OWN 1Password item, never a
