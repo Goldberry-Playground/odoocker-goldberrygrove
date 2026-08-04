@@ -69,6 +69,18 @@ services:
       # /mnt/odoo-filestore volume). Fails loud on a bad migration rather than
       # serving a half-migrated DB.
       AUTO_UPGRADE_MODULES: grove_headless
+      # Stripe LIVE-mode prod checkout (GOL-973). grove_headless reads these
+      # from os.environ (LOWERCASE names, controllers/main.py). The odoo process
+      # env comes ONLY from this compose environment block -- the /.env mount
+      # below feeds odoorc.sh's odoo.conf substitution, NOT os.environ. Values
+      # come from `docker compose --env-file /etc/grove/.env` (cloud-init writes
+      # stripe_test_* there from TF_VAR_stripe_test_*). DEDICATED backend key,
+      # never a storefront key (runbook §4) -- prod must not repeat QA's shared-
+      # key shortcut or revoking a storefront key would kill checkout. Default-
+      # empty so the controller no-ops (checkout inert / webhook not verified)
+      # until CFO mints the live keys AND the board greenlights a rebuild.
+      stripe_test_secret_key: ${stripe_test_secret_key:-}
+      stripe_test_webhook_secret: ${stripe_test_webhook_secret:-}
     # GOL-746: gate the Odoo start on git-sync's FIRST clone. depends_on
     # (service_started) only guarantees the sidecar CONTAINER started, not
     # that /workspace/current is populated. On the 2026-07-22 droplet replace

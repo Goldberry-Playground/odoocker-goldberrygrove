@@ -152,6 +152,15 @@ resource "digitalocean_droplet" "odoo" {
     custom_modules_ref = var.custom_modules_ref
     caddy_tag          = var.caddy_tag
 
+    # Stripe LIVE-mode keys for grove_headless prod checkout (GOL-973). These
+    # are the DEDICATED backend key + webhook secret — runbook §4 forbids
+    # reusing a storefront key here. Empty defaults keep checkout inert until
+    # CFO mints the live keys and the board greenlights a rebuild; user_data is
+    # in ignore_changes (below) so landing this scaffold does NOT touch the
+    # running droplet — only a board-gated rebuild activates it.
+    stripe_test_secret_key     = var.stripe_test_secret_key
+    stripe_test_webhook_secret = var.stripe_test_webhook_secret
+
     # Managed PG connection params (private VPC network). odoorc.sh substitutes
     # these into /etc/odoo/odoo.conf at container start.
     pg_host     = digitalocean_database_cluster.pg.private_host
