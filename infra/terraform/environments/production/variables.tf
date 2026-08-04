@@ -33,7 +33,7 @@ variable "admin_ip_cidr" {
 }
 
 variable "healthchecks_ping_url" {
-  description = "Healthchecks.io ping URL for the nightly blogs backup dead-man's switch. Empty string disables pings. Feeds the blogs droplet's user_data, so a placeholder here does not merely misconfigure the backup ping -- it changes the user_data hash and forces a droplet REPLACE (GOL-385)."
+  description = "Obs-stack OpenObserve JSON-ingest URL (basic-auth embedded, op-injected) for the nightly blogs backup dead-man's switch. GOL-854 / board 3a05a40b: the receiver is the self-hosted obs stack (grove-obs), NOT Healthchecks.io -- the var NAME is kept only to avoid a churny cross-file rename. The blogs backup POSTs a `{job:blogs,...}` heartbeat to the `backup_heartbeat` stream; an OpenObserve absence alert fires to Discord (via Keep) on a miss >28h. Empty string disables the heartbeat. Feeds the blogs droplet's user_data, so a placeholder here does not merely misconfigure the ping -- it changes the user_data hash and forces a droplet REPLACE (GOL-385)."
   type        = string
   default     = ""
   # A placeholder in user_data is invisible until it detonates: the plan just
@@ -46,7 +46,7 @@ variable "healthchecks_ping_url" {
 }
 
 variable "odoo_backup_healthchecks_ping_url" {
-  description = "Healthchecks.io ping URL for the nightly Odoo FILESTORE backup dead-man's switch (GOL-99). Deliberately a SEPARATE check from var.healthchecks_ping_url: one check per job, else a green blogs ping masks a dead Odoo backup. The script pings only on success, so a silent failure trips the check. Empty string disables pings - acceptable for `plan`, but an unmonitored backup is not a backup: populate this before the prod apply (GOL-382)."
+  description = "Obs-stack OpenObserve JSON-ingest URL (basic-auth embedded, op-injected) for the nightly Odoo FILESTORE backup dead-man's switch (GOL-99). GOL-854 / board 3a05a40b: receiver is the self-hosted obs stack (grove-obs), NOT Healthchecks.io -- var NAME kept to avoid a churny rename. Deliberately a SEPARATE check from var.healthchecks_ping_url: one heartbeat job per backup, else a green blogs heartbeat masks a dead Odoo backup. The script heartbeats only on success (job=odoo-filestore), so a silent failure trips the absence alert (Discord via Keep) after ~28h. Empty string disables the heartbeat - acceptable for `plan`, but an unmonitored backup is not a backup: populate this before the prod apply (GOL-382). Rides the prod->obs ingress from GOL-381."
   type        = string
   default     = ""
 }

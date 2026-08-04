@@ -23,7 +23,10 @@
 #                         filestore backup (GOL-99) - never the plumbing key
 #   backups_bucket      : grove-odoo-backups
 #   healthchecks_ping_url : dead-man's switch for the filestore backup ONLY
-#                         (separate check from the blogs backup)
+#                         (separate check from the blogs backup). GOL-854: this
+#                         is the obs-stack OpenObserve JSON-ingest URL (basic-auth
+#                         embedded), NOT Healthchecks.io (board 3a05a40b). Name
+#                         kept to avoid a churny cross-file rename.
 
 ssh_pwauth: false
 
@@ -190,11 +193,23 @@ write_files:
       rclone copyto /tmp/manifest.json "$BUCKET/filestore/manifest/$STAMP.json" --s3-no-check-bucket
       rm -f /tmp/manifest.json
 
-      # Ping LAST and only on success: set -euo pipefail means any failure above
-      # skips this, and the dead-man's switch fires. A backup nobody is watching
-      # is not a backup.
+      # Heartbeat LAST and only on success: set -euo pipefail means any failure
+      # above skips this, so a silent backup failure trips the dead-man's switch.
+      # A backup nobody is watching is not a backup.
+      #
+      # GOL-854 (board decision 3a05a40b): the receiver is the self-hosted obs
+      # stack, NOT Healthchecks.io. healthchecks_ping_url now holds the obs-stack
+      # OpenObserve JSON-ingest endpoint (basic-auth embedded in the URL,
+      # op-injected) for the `backup_heartbeat` stream. An OpenObserve absence
+      # alert fires to Discord (via Keep) when no heartbeat lands in ~28h. We POST
+      # a small JSON record (not a bare GET) so a row actually lands in the stream
+      # for the absence alert to count. "" disables the heartbeat. The prod->obs
+      # ingress this rides on is GOL-381.
       if [ -n "${healthchecks_ping_url}" ]; then
-        curl -fsS -m 10 --retry 3 "${healthchecks_ping_url}" > /dev/null
+        curl -fsS -m 10 --retry 3 \
+          -H 'Content-Type: application/json' \
+          --data "[{\"job\":\"odoo-filestore\",\"stamp\":\"$STAMP\",\"files\":$COUNT,\"bytes\":$BYTES,\"host\":\"$(hostname)\"}]" \
+          "${healthchecks_ping_url}" > /dev/null
       fi
       echo "[ok] odoo filestore backup $STAMP synced ($COUNT files, $BYTES bytes)"
 

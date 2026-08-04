@@ -17,8 +17,13 @@
 #
 # That leaves TWO inputs a plan/apply needs, and NEITHER belongs in this file:
 #
-#   healthchecks_ping_url   -> op://Goldberry Grove - Admin/Grove Infra/healthchecks_ping_url
-#                              "" disables backup pings. Wire via .env.op.
+#   healthchecks_ping_url   -> op://Goldberry Grove - Admin/Grove Infra/blogs_backup_heartbeat_ingest_url
+#                              GOL-854 (board 3a05a40b): now the obs-stack
+#                              OpenObserve backup_heartbeat ingest URL, NOT
+#                              Healthchecks.io (var name kept to avoid a rename).
+#                              "" disables the heartbeat. Wire via .env.op.
+#                              odoo_backup_healthchecks_ping_url is the same for
+#                              the Odoo filestore backup (job=odoo-filestore).
 #   grove_revalidate_secret -> op://Goldberry Grove - Admin/Grove Infra/grove_revalidate_secret
 #                              >=32 chars. Deliberately has NO default so a bare
 #                              apply cannot ship a placeholder secret to prod;
