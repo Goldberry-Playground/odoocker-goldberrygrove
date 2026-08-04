@@ -319,3 +319,28 @@ variable "grove_assets_optimize_token" {
   type        = string
   sensitive   = true
 }
+
+# --- Prod checkout Stripe keys (GOL-973) -------------------------------------
+# DEDICATED backend key, NOT a storefront key. Runbook §4 (docs/RUNBOOK-
+# checkout-stripe-guardrails.md): QA shares one stripe-nursery-qa key between
+# the storefront and grove_headless as an accepted QA-only shortcut; prod must
+# not repeat it, or revoking a storefront key would also kill checkout (a
+# self-inflicted revenue outage). These resolve from their OWN 1Password item
+# (see .env.op), wired via TF_VAR_stripe_test_secret_key /
+# TF_VAR_stripe_test_webhook_secret. Empty default keeps plan/apply working and
+# checkout INERT until CFO mints the live keys AND the board greenlights a
+# prod-checkout rebuild (activation replaces the droplet — board-gated per
+# GOL-920). Sensitive so the value never prints in plan/apply output.
+variable "stripe_test_secret_key" {
+  description = "Stripe LIVE-mode restricted secret key (rk_live_...) for grove_headless prod checkout — scoped to Checkout Session create + webhook ops only (live equivalent of the QA rk_test_ scope GOL-956 proved sufficient). DEDICATED backend key, never a storefront key (runbook §4). Injected into /etc/grove/.env as lowercase `stripe_test_secret_key`; grove_headless reads it via os.environ. VALUE is its own item in the `Goldberry Grove - Admin` vault (minted by CFO under GOL-973); read via TF_VAR_stripe_test_secret_key. Empty default keeps apply/plan working and checkout inert until provisioned + board-greenlit."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "stripe_test_webhook_secret" {
+  description = "Stripe LIVE-mode webhook signing secret (whsec_...) for grove_headless prod webhook verification, from the prod Stripe webhook endpoint registered under GOL-973. Its OWN 1Password field, not shared with any storefront. Injected into /etc/grove/.env as lowercase `stripe_test_webhook_secret`; grove_headless reads it via os.environ. Empty default keeps apply/plan working and webhook verification inert until provisioned + board-greenlit."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
