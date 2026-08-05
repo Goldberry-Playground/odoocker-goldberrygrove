@@ -6,6 +6,22 @@
 import { DISCORD_API_BASE } from "./config.ts";
 import type { DiscordMessage } from "./render.ts";
 
+/**
+ * Percent-encode a value before it is interpolated into a Discord API URL PATH.
+ *
+ * Every path segment below comes from data we do not author: the interaction
+ * token arrives in the webhook body, the channel id from config. Even though
+ * `server.ts` Ed25519-verifies each interaction before we ever read its token,
+ * an unencoded segment is a request-forgery primitive — a value containing
+ * `../` or a query/fragment character re-points the request at a DIFFERENT
+ * Discord API endpoint than intended (CodeQL js/request-forgery, alert 530).
+ * Encoding removes the primitive at the sink, so the guarantee no longer rests
+ * on upstream validation alone.
+ */
+function urlSegment(value: string): string {
+  return encodeURIComponent(value);
+}
+
 async function assertOk(res: Response, action: string): Promise<void> {
   if (!res.ok) {
     let body = "";
@@ -25,7 +41,7 @@ export async function postChannelMessage(
   message: DiscordMessage,
   fetchImpl: typeof fetch = fetch,
 ): Promise<void> {
-  const res = await fetchImpl(`${DISCORD_API_BASE}/channels/${channelId}/messages`, {
+  const res = await fetchImpl(`${DISCORD_API_BASE}/channels/${urlSegment(channelId)}/messages`, {
     method: "POST",
     headers: { Authorization: `Bot ${botToken}`, "Content-Type": "application/json" },
     body: JSON.stringify(message),
@@ -45,7 +61,7 @@ export async function editInteractionOriginal(
   fetchImpl: typeof fetch = fetch,
 ): Promise<void> {
   const res = await fetchImpl(
-    `${DISCORD_API_BASE}/webhooks/${appId}/${interactionToken}/messages/@original`,
+    `${DISCORD_API_BASE}/webhooks/${urlSegment(appId)}/${urlSegment(interactionToken)}/messages/@original`,
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },

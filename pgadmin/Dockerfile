@@ -30,10 +30,13 @@ RUN apk update && apk upgrade --no-cache && \
 #   - urllib3 2.6.3 → 2.7.0+
 #     CVE-2026-44432 (HIGH) — fixed in 2.7.0
 #
-#   - cryptography 47.0.0 → 48.0.1+
+#   - cryptography 47.0.0 → 50.0.0+  (floor raised 2026-08-04)
 #     GHSA-537c-gmf6-5ccf (HIGH, "Vulnerable OpenSSL included in
 #     cryptography wheels") — the wheel bundles its own OpenSSL; pre-48.0.1
-#     wheels shipped a CVE-vulnerable version; 48.0.1+ ships current OpenSSL.
+#     wheels shipped a CVE-vulnerable version. The original `<50.0` cap then
+#     resolved to 49.0.0, which CVE-2026-69247 (HIGH) hits — fixed in 50.0.0,
+#     so the floor moves to 50.0.0 and the cap to <51.0. Lesson: an upper cap
+#     silently re-introduces findings as new CVEs land under it.
 #
 #   - PyJWT 2.12.1 → 2.13.0+
 #     GHSA-xgmm-8j9v-c9wx / CVE-2026-48526 (HIGH, "Public-key JWK accepted
@@ -97,7 +100,7 @@ RUN rm -rf "${PGADMIN_VENV_SITE_PACKAGES}/urllib3" \
         --target="${PGADMIN_VENV_SITE_PACKAGES}" \
         --root-user-action=ignore \
         'urllib3>=2.7.0,<3.0' \
-        'cryptography>=48.0.1,<50.0' \
+        'cryptography>=50.0.0,<51.0' \
         'PyJWT>=2.13.0,<3.0' \
         'python-socketio>=5.16.2,<6.0' \
         'python-engineio>=4.13.2,<5.0' \

@@ -102,8 +102,20 @@ async function call(method, path, body) {
     integration = c.payload.integrations[0];
   }
 
-  // 5. Emit the content key
+  // 5. Emit the content key.
+  //
+  // This is a DATA CHANNEL, not a log line: stdout is the script's documented
+  // return value (`GHOST_CONTENT_KEY=<key>`), captured by command substitution
+  // in scripts/qa-ghost-autoseed.sh and written straight into /etc/grove/.env.
+  // Progress/diagnostics go to stderr precisely so stdout stays parseable.
+  //
+  // Written with process.stdout.write rather than console.log so the secret
+  // never passes through a logging API — console.* output is what gets picked
+  // up by container log drivers and shipped to aggregators, which is the real
+  // exposure this guards against (CodeQL js/clear-text-logging, alert 531).
+  // The Ghost CONTENT key is a read-only public-content credential, but it is
+  // still a credential and should not be sprayed into log storage.
   const key = (integration.api_keys || []).find((k) => k.type === "content");
   if (!key) fail("integration has no content API key (Ghost schema change?)");
-  console.log(`GHOST_CONTENT_KEY=${key.secret}`);
+  process.stdout.write(`GHOST_CONTENT_KEY=${key.secret}\n`);
 })().catch((e) => fail(e?.message || String(e)));
