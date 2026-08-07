@@ -113,11 +113,18 @@ check_backup() {
   [ -f "$ENV_FILE" ] || die "missing $ENV_FILE; cannot load Spaces credentials (gate fails closed)"
   command -v op >/dev/null || die "1Password CLI not found (gate fails closed)"
 
+  # Variable names MUST match production/.env.op. That file exports the Spaces
+  # credentials as AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (both resolve to
+  # op://Goldberry Grove - Admin/Grove Infra/spaces_bootstrap_*), aliased to the
+  # AWS names because every S3-compatible tool expects them. There is no
+  # SPACES_KEY / SPACES_SECRET in that file -- asking for those yields an empty
+  # string and the gate below aborts with a misleading "run op signin".
   local key secret
-  key="$(op run --env-file="$ENV_FILE" -- printenv SPACES_KEY 2>/dev/null || true)"
-  secret="$(op run --env-file="$ENV_FILE" -- printenv SPACES_SECRET 2>/dev/null || true)"
-  # op read fails OPEN (exit 0 + empty string) — emptiness must be fatal.
-  [ -n "$key" ] && [ -n "$secret" ] || die "Spaces credentials came back EMPTY — run 'op signin' (gate fails closed)"
+  key="$(op run --env-file="$ENV_FILE" -- printenv AWS_ACCESS_KEY_ID 2>/dev/null || true)"
+  secret="$(op run --env-file="$ENV_FILE" -- printenv AWS_SECRET_ACCESS_KEY 2>/dev/null || true)"
+  # op run fails OPEN (exit 0 + empty string) -- emptiness must be fatal.
+  [ -n "$key" ] && [ -n "$secret" ] \
+    || die "Spaces credentials resolved EMPTY from $ENV_FILE (expected AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY). Check 'op signin' AND that those names still exist in .env.op (gate fails closed)"
 
   local listing
   listing="$(s3cmd --access_key="$key" --secret_key="$secret" \
