@@ -13,33 +13,103 @@ name: Production Plan Guard
 # Read-only and non-destructive: plan-only, NO apply. Credentials come from the
 # grove-ci-prod-ro 1Password service account (read-only to the Grove Prod vault)
 # -- the identical pattern terraform-drift.yml already uses. A plan refreshes and
-# locks prod state, so this serializes on the production-state concurrency group.
+# locks prod state, so the plan job serializes on the production-state
+# concurrency group.
 #
-# NOTE: this workflow is NOT yet a required status check. Making it required is a
-# repo-ruleset change (governance, board-owned) -- see GOL-392. Until then it
-# runs and reports on every prod-touching PR but does not block merge on its own.
+# ---------------------------------------------------------------------------
+# ENFORCEMENT SHAPE (GOL-1190): this workflow is designed to be a *required*
+# status check on the `main` ruleset. Three constraints drove the shape:
+#
+#   1. A path-FILTERED workflow (`on.pull_request.paths`) can never be a
+#      required check: on any PR that does not touch the filtered path GitHub
+#      leaves the check "Expected -- waiting for status to be reported" forever,
+#      blocking merge. So this workflow now runs on EVERY PR (no `paths:`) and
+#      decides internally whether a plan is needed.
+#
+#   2. A required check must also report on the merge queue's `merge_group`
+#      event (this repo runs an ALLGREEN merge queue, 30-min check timeout) or
+#      queued entries stall and get evicted. Hence the `merge_group` trigger.
+#
+#   3. The single stable required context is the `prod-plan-guard` gate job.
+#      It ALWAYS runs to a definitive green/red -- it is never "skipped" or
+#      "pending" -- so unrelated PRs pass instantly and only a real
+#      droplet-replacing prod plan makes it red. The expensive plan runs in a
+#      separate `prod-plan` job that is skipped when no prod TF path changed,
+#      which also keeps the `terraform-production` state-lock concurrency group
+#      OFF the cheap path (an in-flight 20-min prod plan can never queue an
+#      unrelated PR's guard).
+#
+# To make this enforcing, add required status check context `prod-plan-guard`
+# to the `main-branch-protection` ruleset (id 15851626). That is a board-gated
+# governance change tracked in GOL-1190 itself.
+# ---------------------------------------------------------------------------
 
 on:
   pull_request:
-    paths:
-      - "infra/terraform/environments/production/**"
-      - ".github/workflows/prod-plan-guard.yml"
+    branches: [main]
+  merge_group:
 
-permissions: {}
-
-concurrency:
-  # Keyed to production/terraform.tfstate so this plan serializes with any other
-  # prod plan/apply that adopts the same group (GOL-34 item 3a). A plan takes a
-  # state lock; overlapping runs are not safe. cancel-in-progress:false -- let an
-  # in-flight plan finish rather than abandoning a held lock.
-  group: terraform-production
-  cancel-in-progress: false
+permissions:
+  contents: read
 
 jobs:
-  plan-guard:
+  # --- Cheap change detection. No concurrency group, no secrets, ~5s. --------
+  # Decides whether the production terraform path changed in this PR / merge
+  # group. Uses the compare API (three-dot: net changes vs the merge base) so it
+  # works identically for `pull_request` and `merge_group` without a checkout.
+  detect:
+    name: detect prod TF changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+    outputs:
+      prod_changed: ${{ steps.detect.outputs.prod_changed }}
+    steps:
+      - name: Compare base..head for production terraform paths
+        id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+            HEAD="${{ github.event.pull_request.head.sha }}"
+          else
+            BASE="${{ github.event.merge_group.base_sha }}"
+            HEAD="${{ github.event.merge_group.head_sha }}"
+          fi
+          echo "event=${{ github.event_name }} base=$BASE head=$HEAD"
+          FILES="$(gh api "repos/${REPO}/compare/${BASE}...${HEAD}" \
+            --paginate --jq '.files[].filename')"
+          echo "--- changed files ---"
+          echo "$FILES"
+          echo "---------------------"
+          if echo "$FILES" | grep -qE '^infra/terraform/environments/production/'; then
+            echo "prod_changed=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::production terraform paths changed -- running full plan guard"
+          else
+            echo "prod_changed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::no production terraform changes -- guard passes without a plan"
+          fi
+
+  # --- The real work: plan prod and fail on a droplet replace. ---------------
+  # Runs ONLY when the production TF path changed. Carries the state-lock
+  # concurrency group so it never races another prod plan/apply.
+  prod-plan:
     name: Prod plan must not replace a live droplet
+    needs: detect
+    if: ${{ needs.detect.outputs.prod_changed == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+
+    concurrency:
+      # Keyed to production/terraform.tfstate so this plan serializes with any
+      # other prod plan/apply that adopts the same group (GOL-34 item 3a). A plan
+      # takes a state lock; overlapping runs are not safe. cancel-in-progress:false
+      # -- let an in-flight plan finish rather than abandoning a held lock.
+      group: terraform-production
+      cancel-in-progress: false
 
     permissions:
       contents: read # no id-token needed: 1Password uses a service-account token, not OIDC
@@ -185,3 +255,39 @@ jobs:
             exit 1
           fi
           echo "OK: no digitalocean_droplet replacement in the production plan."
+
+  # --- The single stable REQUIRED status check. -----------------------------
+  # Always runs to a definitive green/red; never skipped, never pending. Add
+  # context `prod-plan-guard` to the main ruleset to enforce (GOL-1190).
+  #   - prod-plan skipped  (no prod TF change)        -> pass
+  #   - prod-plan success  (plan clean, no replace)   -> pass
+  #   - prod-plan failure  (droplet replace or error) -> FAIL, PR unmergeable
+  #   - detect not success (cannot trust the verdict) -> FAIL closed
+  prod-plan-guard:
+    name: prod-plan-guard
+    needs: [detect, prod-plan]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Aggregate guard verdict
+        env:
+          DETECT_RESULT: ${{ needs.detect.result }}
+          PLAN_RESULT: ${{ needs.prod-plan.result }}
+          PROD_CHANGED: ${{ needs.detect.outputs.prod_changed }}
+        run: |
+          echo "detect=$DETECT_RESULT  prod_changed=$PROD_CHANGED  prod-plan=$PLAN_RESULT"
+          if [ "$DETECT_RESULT" != "success" ]; then
+            echo "::error::change-detection job did not succeed ($DETECT_RESULT) -- failing closed"
+            exit 1
+          fi
+          case "$PLAN_RESULT" in
+            success|skipped)
+              echo "OK: prod-plan-guard satisfied (prod-plan job: $PLAN_RESULT)."
+              exit 0
+              ;;
+            *)
+              echo "::error::prod-plan-guard FAILED (prod-plan job: $PLAN_RESULT). A production plan would replace a live droplet, or the plan errored. See the 'Prod plan must not replace a live droplet' job."
+              exit 1
+              ;;
+          esac
