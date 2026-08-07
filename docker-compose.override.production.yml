@@ -34,7 +34,19 @@ services:
       # to production — bumping requires an infra PR that updates this SHA.
       # See docs/DEPLOYMENT.md "Bumping the prod modules SHA" for the workflow.
       # Closes Asana 1215643893776947.
-      - GITSYNC_REF=515dcb3fa89966266bdf5dbdacae0835d8aa3981
+      #
+      # GOL-484 checkout go-live (board-approved 2026-08-07, interaction
+      # 5b2c6abb): bumped 515dcb3f -> 8accb94, the first checkout-capable
+      # grove_headless HEAD (exposes /grove/api/v1/products|cart|shipping|
+      # stripe/webhook; the old 515dcb3f pin predates checkout and live prod
+      # 404s on those routes -- GOL-484 recon). Kept in lockstep with the
+      # terraform prod pin var.custom_modules_ref so BOTH deploy paths converge
+      # on the same reviewed SHA regardless of which one drives the live box.
+      # Takes effect only on a DELIBERATE deploy/rebuild (supply-chain pin; a
+      # push to main never auto-deploys). Prod grove_headless is UNINSTALLED
+      # (GOL-1258) -> the go-live rebuild does a FRESH --init grove_headless,
+      # not an upgrade (GOL-1214 sign-off); non-destructive on the bare DB.
+      - GITSYNC_REF=8accb943d664a78df69f79eab689e7024d2b2445
 
   nginx:
     restart: unless-stopped
