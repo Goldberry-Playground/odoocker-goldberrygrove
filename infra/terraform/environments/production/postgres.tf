@@ -49,6 +49,18 @@ resource "digitalocean_database_cluster" "pg" {
 resource "digitalocean_database_db" "odoo" {
   cluster_id = digitalocean_database_cluster.pg.id
   name       = "odoo"
+
+  # This IS the production ERP database — every product, order, customer, and
+  # accounting row lives here. The cluster carries prevent_destroy, but the
+  # database *inside* it did not, so a `terraform destroy`, a drop of this block,
+  # or anything that recreated the DB would wipe all ERP data while the guarded
+  # cluster shell survived. Track 2 is live now (GOL-391), so the real risk is a
+  # drift-driven destroy/replace of live revenue data, not an accidental launch —
+  # guard the data object itself, not just its container. Removing this guard is
+  # a deliberate, reviewed act (PITR restore, cluster rebuild), never routine.
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 # Maintenance/bootstrap database named `postgres`.

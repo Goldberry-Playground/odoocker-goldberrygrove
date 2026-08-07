@@ -1,6 +1,7 @@
 name: Production Plan Guard
 
-# Fail any PR whose PRODUCTION terraform plan would REPLACE a live droplet.
+# Fail any PR whose PRODUCTION terraform plan would DESTROY or REPLACE a live
+# resource -- any resource that already exists in prod state.
 #
 # Why this exists (GOL-385): the prod blogs droplet was silently marked for a
 # force-replace by a routine `terraform plan` because two ForceNew attributes
@@ -9,6 +10,20 @@ name: Production Plan Guard
 # found only because an operator happened to read the plan by hand. This check
 # turns "a prod plan would replace a live droplet" into a hard, automatic PR
 # failure so it can never again depend on a human noticing.
+#
+# Widened for GOL-391: Track 2 (Managed PG + the ERP database, the Odoo droplet
+# + filestore, the Odoo DNS record + firewalls, and the four App Platform apps)
+# is now LIVE in prod state (serial 23), so the same landmine now spans the
+# whole revenue tier, not just one droplet. The original GOL-391 fix (count-gate
+# Track 2 off, default false) would itself propose DESTROYING that live tier, so
+# it was unsafe and reverted. The durable, CEO-accepted mechanism (Option A) is:
+# guard the irreplaceable data objects with prevent_destroy in the TF (the PG
+# cluster, the ERP `odoo` database, both durable volumes, both backups buckets,
+# the reserved IPs), and make THIS check the codified backstop that fails a PR
+# whose prod plan would destroy or replace ANY live resource -- the enforcement
+# that was previously only a README sentence. A deliberate rebuild is still
+# possible: it is an explicit `terraform apply -replace=<addr>` in a named,
+# board-gated window, NOT a config change that lands via a merged PR.
 #
 # Read-only and non-destructive: plan-only, NO apply. Credentials come from the
 # grove-ci-prod-ro 1Password service account (read-only to the Grove Prod vault)
@@ -97,7 +112,7 @@ jobs:
   # Runs ONLY when the production TF path changed. Carries the state-lock
   # concurrency group so it never races another prod plan/apply.
   prod-plan:
-    name: Prod plan must not replace a live droplet
+    name: Prod plan must not destroy or replace a live resource
     needs: detect
     if: ${{ needs.detect.outputs.prod_changed == 'true' }}
     runs-on: ubuntu-latest
@@ -217,9 +232,12 @@ jobs:
         timeout-minutes: 10
         # -detailed-exitcode: 0 = no changes, 1 = error, 2 = changes present.
         # Capture via PIPESTATUS[0] (tee otherwise masks terraform's exit code).
-        # Drift (exit 2) is EXPECTED here -- prod declares resources not yet applied
-        # (GOL-391), which show as pure "create". We only fail on a droplet REPLACE,
-        # decided from the JSON plan below, not from the exit code.
+        # Drift (exit 2) is EXPECTED here and is NOT a failure on its own: prod is
+        # applied `-target`'d, so a full plan legitimately shows pure "create" for
+        # any not-yet-applied resource and "update" for benign in-place diffs. We
+        # fail ONLY on a destroy or replace of a resource that is already live
+        # (before != null), decided from the JSON plan below -- never on the exit
+        # code, and never on a pure create/update.
         run: |
           set +e
           terraform -chdir="$TF_DIR" plan \
@@ -235,34 +253,54 @@ jobs:
           fi
           echo "exitcode=$EXIT_CODE" >> "$GITHUB_OUTPUT"
 
-      - name: Fail if the plan replaces a live droplet
+      - name: Fail if the plan destroys or replaces a live resource
         timeout-minutes: 2
         run: |
           terraform -chdir="$TF_DIR" show -json tfplan.binary > plan.json
-          # Terraform encodes a replace as actions containing BOTH "create" and
-          # "delete" (["delete","create"], or the create_before_destroy variant
-          # ["create","delete"]). A pure create/update/no-op never matches.
-          REPLACED=$(jq -r '
+
+          # A resource is LIVE when .change.before != null (it exists in prod
+          # state). Terraform encodes a destroy as actions ["delete"] and a
+          # replace as ["delete","create"] (or the create_before_destroy variant
+          # ["create","delete"]) -- both contain "delete". A live resource whose
+          # plan actions contain "delete" is therefore being destroyed or
+          # replaced. A pure create (before == null), an in-place update
+          # (["update"]), or a no-op never matches, so routine drift and new,
+          # not-yet-applied resources do not trip this guard.
+          DOOMED=$(jq -r '
             .resource_changes[]
-            | select(.type == "digitalocean_droplet")
-            | select((.change.actions | index("create")) and (.change.actions | index("delete")))
-            | .address
+            | select(.change.before != null)
+            | select(.change.actions | index("delete"))
+            | "\(.address)\t[\(.change.actions | join(","))]"
           ' plan.json)
-          if [ -n "$REPLACED" ]; then
-            echo "::error::Production plan would REPLACE a live droplet -- that is a root-disk loss + public outage. Guard it (e.g. lifecycle { ignore_changes = [<ForceNew attr>] } per GOL-385) or take the replace deliberately in a named, board-gated window."
-            echo "Droplet(s) marked for replacement:"
-            echo "$REPLACED" | sed 's/^/  - /'
+
+          if [ -n "$DOOMED" ]; then
+            echo "::error::Production plan would DESTROY or REPLACE one or more LIVE resources -- for Track 2 that is live revenue infra (ERP database, Odoo droplet, storefront apps); for Track 1 it is a public blog outage. Guard the ForceNew attribute (lifecycle { ignore_changes = [...] } per GOL-385), keep prevent_destroy on the data objects (GOL-391), or take the change deliberately as \`terraform apply -replace=<addr>\` in a named, board-gated window -- do NOT land it via this PR."
+            echo "Live resource(s) marked for destroy/replace:"
+            echo "$DOOMED" | sed 's/^/  - /'
+            # Call out droplet replaces specifically -- those are the
+            # root-disk-loss + outage class that first motivated this guard.
+            DROPLETS=$(jq -r '
+              .resource_changes[]
+              | select(.type == "digitalocean_droplet")
+              | select(.change.before != null)
+              | select(.change.actions | index("delete"))
+              | .address
+            ' plan.json)
+            if [ -n "$DROPLETS" ]; then
+              echo "Of those, droplet replacement (root-disk loss + public outage):"
+              echo "$DROPLETS" | sed 's/^/  - /'
+            fi
             exit 1
           fi
-          echo "OK: no digitalocean_droplet replacement in the production plan."
+          echo "OK: no destroy or replace of any live resource in the production plan."
 
   # --- The single stable REQUIRED status check. -----------------------------
   # Always runs to a definitive green/red; never skipped, never pending. Add
   # context `prod-plan-guard` to the main ruleset to enforce (GOL-1190).
-  #   - prod-plan skipped  (no prod TF change)        -> pass
-  #   - prod-plan success  (plan clean, no replace)   -> pass
-  #   - prod-plan failure  (droplet replace or error) -> FAIL, PR unmergeable
-  #   - detect not success (cannot trust the verdict) -> FAIL closed
+  #   - prod-plan skipped  (no prod TF change)              -> pass
+  #   - prod-plan success  (plan clean, no destroy/replace) -> pass
+  #   - prod-plan failure  (destroy/replace or error)       -> FAIL, PR unmergeable
+  #   - detect not success (cannot trust the verdict)       -> FAIL closed
   prod-plan-guard:
     name: prod-plan-guard
     needs: [detect, prod-plan]
@@ -287,7 +325,7 @@ jobs:
               exit 0
               ;;
             *)
-              echo "::error::prod-plan-guard FAILED (prod-plan job: $PLAN_RESULT). A production plan would replace a live droplet, or the plan errored. See the 'Prod plan must not replace a live droplet' job."
+              echo "::error::prod-plan-guard FAILED (prod-plan job: $PLAN_RESULT). A production plan would destroy or replace a live resource, or the plan errored. See the 'Prod plan must not destroy or replace a live resource' job."
               exit 1
               ;;
           esac
