@@ -1,6 +1,7 @@
 name: Production Plan Guard
 
-# Fail any PR whose PRODUCTION terraform plan would REPLACE a live droplet.
+# Fail any PR whose PRODUCTION terraform plan would DESTROY or REPLACE a live
+# resource -- any resource that already exists in prod state.
 #
 # Why this exists (GOL-385): the prod blogs droplet was silently marked for a
 # force-replace by a routine `terraform plan` because two ForceNew attributes
@@ -10,36 +11,120 @@ name: Production Plan Guard
 # turns "a prod plan would replace a live droplet" into a hard, automatic PR
 # failure so it can never again depend on a human noticing.
 #
+# Widened for GOL-391: Track 2 (Managed PG + the ERP database, the Odoo droplet
+# + filestore, the Odoo DNS record + firewalls, and the four App Platform apps)
+# is now LIVE in prod state (serial 23), so the same landmine now spans the
+# whole revenue tier, not just one droplet. The original GOL-391 fix (count-gate
+# Track 2 off, default false) would itself propose DESTROYING that live tier, so
+# it was unsafe and reverted. The durable, CEO-accepted mechanism (Option A) is:
+# guard the irreplaceable data objects with prevent_destroy in the TF (the PG
+# cluster, the ERP `odoo` database, both durable volumes, both backups buckets,
+# the reserved IPs), and make THIS check the codified backstop that fails a PR
+# whose prod plan would destroy or replace ANY live resource -- the enforcement
+# that was previously only a README sentence. A deliberate rebuild is still
+# possible: it is an explicit `terraform apply -replace=<addr>` in a named,
+# board-gated window, NOT a config change that lands via a merged PR.
+#
 # Read-only and non-destructive: plan-only, NO apply. Credentials come from the
 # grove-ci-prod-ro 1Password service account (read-only to the Grove Prod vault)
 # -- the identical pattern terraform-drift.yml already uses. A plan refreshes and
-# locks prod state, so this serializes on the production-state concurrency group.
+# locks prod state, so the plan job serializes on the production-state
+# concurrency group.
 #
-# NOTE: this workflow is NOT yet a required status check. Making it required is a
-# repo-ruleset change (governance, board-owned) -- see GOL-392. Until then it
-# runs and reports on every prod-touching PR but does not block merge on its own.
+# ---------------------------------------------------------------------------
+# ENFORCEMENT SHAPE (GOL-1190): this workflow is designed to be a *required*
+# status check on the `main` ruleset. Three constraints drove the shape:
+#
+#   1. A path-FILTERED workflow (`on.pull_request.paths`) can never be a
+#      required check: on any PR that does not touch the filtered path GitHub
+#      leaves the check "Expected -- waiting for status to be reported" forever,
+#      blocking merge. So this workflow now runs on EVERY PR (no `paths:`) and
+#      decides internally whether a plan is needed.
+#
+#   2. A required check must also report on the merge queue's `merge_group`
+#      event (this repo runs an ALLGREEN merge queue, 30-min check timeout) or
+#      queued entries stall and get evicted. Hence the `merge_group` trigger.
+#
+#   3. The single stable required context is the `prod-plan-guard` gate job.
+#      It ALWAYS runs to a definitive green/red -- it is never "skipped" or
+#      "pending" -- so unrelated PRs pass instantly and only a real
+#      droplet-replacing prod plan makes it red. The expensive plan runs in a
+#      separate `prod-plan` job that is skipped when no prod TF path changed,
+#      which also keeps the `terraform-production` state-lock concurrency group
+#      OFF the cheap path (an in-flight 20-min prod plan can never queue an
+#      unrelated PR's guard).
+#
+# To make this enforcing, add required status check context `prod-plan-guard`
+# to the `main-branch-protection` ruleset (id 15851626). That is a board-gated
+# governance change tracked in GOL-1190 itself.
+# ---------------------------------------------------------------------------
 
 on:
   pull_request:
-    paths:
-      - "infra/terraform/environments/production/**"
-      - ".github/workflows/prod-plan-guard.yml"
+    branches: [main]
+  merge_group:
 
-permissions: {}
-
-concurrency:
-  # Keyed to production/terraform.tfstate so this plan serializes with any other
-  # prod plan/apply that adopts the same group (GOL-34 item 3a). A plan takes a
-  # state lock; overlapping runs are not safe. cancel-in-progress:false -- let an
-  # in-flight plan finish rather than abandoning a held lock.
-  group: terraform-production
-  cancel-in-progress: false
+permissions:
+  contents: read
 
 jobs:
-  plan-guard:
-    name: Prod plan must not replace a live droplet
+  # --- Cheap change detection. No concurrency group, no secrets, ~5s. --------
+  # Decides whether the production terraform path changed in this PR / merge
+  # group. Uses the compare API (three-dot: net changes vs the merge base) so it
+  # works identically for `pull_request` and `merge_group` without a checkout.
+  detect:
+    name: detect prod TF changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+    outputs:
+      prod_changed: ${{ steps.detect.outputs.prod_changed }}
+    steps:
+      - name: Compare base..head for production terraform paths
+        id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+            HEAD="${{ github.event.pull_request.head.sha }}"
+          else
+            BASE="${{ github.event.merge_group.base_sha }}"
+            HEAD="${{ github.event.merge_group.head_sha }}"
+          fi
+          echo "event=${{ github.event_name }} base=$BASE head=$HEAD"
+          FILES="$(gh api "repos/${REPO}/compare/${BASE}...${HEAD}" \
+            --paginate --jq '.files[].filename')"
+          echo "--- changed files ---"
+          echo "$FILES"
+          echo "---------------------"
+          if echo "$FILES" | grep -qE '^infra/terraform/environments/production/'; then
+            echo "prod_changed=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::production terraform paths changed -- running full plan guard"
+          else
+            echo "prod_changed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::no production terraform changes -- guard passes without a plan"
+          fi
+
+  # --- The real work: plan prod and fail on a droplet replace. ---------------
+  # Runs ONLY when the production TF path changed. Carries the state-lock
+  # concurrency group so it never races another prod plan/apply.
+  prod-plan:
+    name: Prod plan must not destroy or replace a live resource
+    needs: detect
+    if: ${{ needs.detect.outputs.prod_changed == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+
+    concurrency:
+      # Keyed to production/terraform.tfstate so this plan serializes with any
+      # other prod plan/apply that adopts the same group (GOL-34 item 3a). A plan
+      # takes a state lock; overlapping runs are not safe. cancel-in-progress:false
+      # -- let an in-flight plan finish rather than abandoning a held lock.
+      group: terraform-production
+      cancel-in-progress: false
 
     permissions:
       contents: read # no id-token needed: 1Password uses a service-account token, not OIDC
@@ -147,9 +232,12 @@ jobs:
         timeout-minutes: 10
         # -detailed-exitcode: 0 = no changes, 1 = error, 2 = changes present.
         # Capture via PIPESTATUS[0] (tee otherwise masks terraform's exit code).
-        # Drift (exit 2) is EXPECTED here -- prod declares resources not yet applied
-        # (GOL-391), which show as pure "create". We only fail on a droplet REPLACE,
-        # decided from the JSON plan below, not from the exit code.
+        # Drift (exit 2) is EXPECTED here and is NOT a failure on its own: prod is
+        # applied `-target`'d, so a full plan legitimately shows pure "create" for
+        # any not-yet-applied resource and "update" for benign in-place diffs. We
+        # fail ONLY on a destroy or replace of a resource that is already live
+        # (before != null), decided from the JSON plan below -- never on the exit
+        # code, and never on a pure create/update.
         run: |
           set +e
           terraform -chdir="$TF_DIR" plan \
@@ -165,23 +253,79 @@ jobs:
           fi
           echo "exitcode=$EXIT_CODE" >> "$GITHUB_OUTPUT"
 
-      - name: Fail if the plan replaces a live droplet
+      - name: Fail if the plan destroys or replaces a live resource
         timeout-minutes: 2
         run: |
           terraform -chdir="$TF_DIR" show -json tfplan.binary > plan.json
-          # Terraform encodes a replace as actions containing BOTH "create" and
-          # "delete" (["delete","create"], or the create_before_destroy variant
-          # ["create","delete"]). A pure create/update/no-op never matches.
-          REPLACED=$(jq -r '
+
+          # A resource is LIVE when .change.before != null (it exists in prod
+          # state). Terraform encodes a destroy as actions ["delete"] and a
+          # replace as ["delete","create"] (or the create_before_destroy variant
+          # ["create","delete"]) -- both contain "delete". A live resource whose
+          # plan actions contain "delete" is therefore being destroyed or
+          # replaced. A pure create (before == null), an in-place update
+          # (["update"]), or a no-op never matches, so routine drift and new,
+          # not-yet-applied resources do not trip this guard.
+          DOOMED=$(jq -r '
             .resource_changes[]
-            | select(.type == "digitalocean_droplet")
-            | select((.change.actions | index("create")) and (.change.actions | index("delete")))
-            | .address
+            | select(.change.before != null)
+            | select(.change.actions | index("delete"))
+            | "\(.address)\t[\(.change.actions | join(","))]"
           ' plan.json)
-          if [ -n "$REPLACED" ]; then
-            echo "::error::Production plan would REPLACE a live droplet -- that is a root-disk loss + public outage. Guard it (e.g. lifecycle { ignore_changes = [<ForceNew attr>] } per GOL-385) or take the replace deliberately in a named, board-gated window."
-            echo "Droplet(s) marked for replacement:"
-            echo "$REPLACED" | sed 's/^/  - /'
+
+          if [ -n "$DOOMED" ]; then
+            echo "::error::Production plan would DESTROY or REPLACE one or more LIVE resources -- for Track 2 that is live revenue infra (ERP database, Odoo droplet, storefront apps); for Track 1 it is a public blog outage. Guard the ForceNew attribute (lifecycle { ignore_changes = [...] } per GOL-385), keep prevent_destroy on the data objects (GOL-391), or take the change deliberately as \`terraform apply -replace=<addr>\` in a named, board-gated window -- do NOT land it via this PR."
+            echo "Live resource(s) marked for destroy/replace:"
+            echo "$DOOMED" | sed 's/^/  - /'
+            # Call out droplet replaces specifically -- those are the
+            # root-disk-loss + outage class that first motivated this guard.
+            DROPLETS=$(jq -r '
+              .resource_changes[]
+              | select(.type == "digitalocean_droplet")
+              | select(.change.before != null)
+              | select(.change.actions | index("delete"))
+              | .address
+            ' plan.json)
+            if [ -n "$DROPLETS" ]; then
+              echo "Of those, droplet replacement (root-disk loss + public outage):"
+              echo "$DROPLETS" | sed 's/^/  - /'
+            fi
             exit 1
           fi
-          echo "OK: no digitalocean_droplet replacement in the production plan."
+          echo "OK: no destroy or replace of any live resource in the production plan."
+
+  # --- The single stable REQUIRED status check. -----------------------------
+  # Always runs to a definitive green/red; never skipped, never pending. Add
+  # context `prod-plan-guard` to the main ruleset to enforce (GOL-1190).
+  #   - prod-plan skipped  (no prod TF change)              -> pass
+  #   - prod-plan success  (plan clean, no destroy/replace) -> pass
+  #   - prod-plan failure  (destroy/replace or error)       -> FAIL, PR unmergeable
+  #   - detect not success (cannot trust the verdict)       -> FAIL closed
+  prod-plan-guard:
+    name: prod-plan-guard
+    needs: [detect, prod-plan]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Aggregate guard verdict
+        env:
+          DETECT_RESULT: ${{ needs.detect.result }}
+          PLAN_RESULT: ${{ needs.prod-plan.result }}
+          PROD_CHANGED: ${{ needs.detect.outputs.prod_changed }}
+        run: |
+          echo "detect=$DETECT_RESULT  prod_changed=$PROD_CHANGED  prod-plan=$PLAN_RESULT"
+          if [ "$DETECT_RESULT" != "success" ]; then
+            echo "::error::change-detection job did not succeed ($DETECT_RESULT) -- failing closed"
+            exit 1
+          fi
+          case "$PLAN_RESULT" in
+            success|skipped)
+              echo "OK: prod-plan-guard satisfied (prod-plan job: $PLAN_RESULT)."
+              exit 0
+              ;;
+            *)
+              echo "::error::prod-plan-guard FAILED (prod-plan job: $PLAN_RESULT). A production plan would destroy or replace a live resource, or the plan errored. See the 'Prod plan must not destroy or replace a live resource' job."
+              exit 1
+              ;;
+          esac

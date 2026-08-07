@@ -6,7 +6,12 @@ of late July 2026 — it was stood up via `-target`'d applies and now exists in
 prod state (serial 23). The "apply gated on GOL-105" language that used to be
 here is dead: GOL-105 was cancelled 2026-07-08 and the tier launched anyway.
 GOL-391 tracks the now-inverted concern — blast-radius / drift protection for the
-LIVE tier — and its mechanism is a pending CEO + Founding Engineer decision.
+LIVE tier. Its mechanism is **decided (Option A, CEO-accepted 2026-08-07)**:
+`prevent_destroy` on the irreplaceable data objects (PG cluster + the `odoo` ERP
+database, both volumes, both backups buckets, the reserved IPs), plus the
+`prod-plan-guard` CI check (`.github/workflows/prod-plan-guard.yml`) which fails
+any PR whose prod plan would **destroy or replace any live resource**. The gate
+is now code, not this README sentence.
 
 ## ⚠️ Do not run a bare `terraform apply` here (GOL-385)
 
@@ -25,9 +30,11 @@ stop-and-escalate for the inverse reason:
   A bare apply against `main` no longer *launches* them; the danger is the
   opposite — drift-driven **destroy/replace** of live revenue infra. `count`-gating
   them off (the original GOL-391 plan) would itself propose destroying the tier,
-  so it is not the fix; `prevent_destroy` on the stateful resources (PG cluster,
-  both volumes, both backups buckets, reserved IPs) is currently the backstop.
-  GOL-391 (CEO + Founding Engineer) owns the durable mechanism.
+  so it is not the fix. The backstop (GOL-391 Option A) is two-layered:
+  `prevent_destroy` on the irreplaceable data objects (PG cluster + the `odoo`
+  ERP database, both volumes, both backups buckets, reserved IPs), and the
+  `prod-plan-guard` CI check which fails any PR whose plan would destroy/replace
+  a live resource.
 
 Until GOL-385 closes, changes here are applied `-target`'d to the specific
 resources being changed, and any plan that proposes replacing
@@ -143,11 +150,17 @@ a box whose boot is unproven (GOL-385) — take it in a chosen window:
   check in Healthchecks first, period 1d / grace 6h). It defaults to `""`, which
   keeps `plan` working but leaves the backup **unmonitored** - and an
   unmonitored backup is not a backup.
-- `prevent_destroy` is set on the stateful resources (both volumes, the Managed
-  PG cluster, both backups buckets, the reserved IP). A `terraform destroy` will
+- `prevent_destroy` is set on the irreplaceable data objects: both volumes, the
+  Managed PG cluster **and the `odoo` ERP database inside it** (GOL-391 — the
+  database itself, not just the cluster shell, holds every product/order/customer
+  row), both backups buckets, and the reserved IP. A `terraform destroy` will
   fail loudly on them **by design**. To genuinely remove one, delete its
   `lifecycle` block in a reviewed commit first - that deliberate speed bump is
-  the feature.
+  the feature. The replaceable Track 2 resources (the Odoo droplet, the four App
+  Platform apps, DNS, firewalls) intentionally have **no** `prevent_destroy` so
+  legitimate rebuilds are not blocked; they are protected instead by the
+  `prod-plan-guard` CI check below, which fails any PR whose plan would
+  destroy/replace them.
 - Reuses Track 1's SSH keys + the hub-zone Origin CA cert (its
   `*.gatheringatthegrove.com` SAN covers `odoo.`)
 
