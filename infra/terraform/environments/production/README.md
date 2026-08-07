@@ -1,24 +1,33 @@
 # environments/production
 
 ADR-007 Phase 6 production environment. Track 1 (blogs droplet) is live.
-Track 2 (Managed PG + Odoo droplet, this scaffold) is authored but its **apply
-is gated** on the QA L3 soak sign-off (~2026-07-21+) and the @CEO final go
-(GOL-105). App Platform (the fourth piece) is a GOL-105 child issue.
+Track 2 (Managed PG + Odoo droplet + four App Platform apps) is **also LIVE** as
+of late July 2026 — it was stood up via `-target`'d applies and now exists in
+prod state (serial 23). The "apply gated on GOL-105" language that used to be
+here is dead: GOL-105 was cancelled 2026-07-08 and the tier launched anyway.
+GOL-391 tracks the now-inverted concern — blast-radius / drift protection for the
+LIVE tier — and its mechanism is a pending CEO + Founding Engineer decision.
 
 ## ⚠️ Do not run a bare `terraform apply` here (GOL-385)
 
 A full-environment `apply` against current `main` is **not** a routine operation.
-The last verified plan (clean `main`, prod state serial 6) was
-`15 to add, 5 to change, 2 to destroy`, and it included:
+The plan this environment was scaffolded against (clean `main`, prod state serial
+6) was `15 to add, 5 to change, 2 to destroy`. Prod has since advanced to serial
+23 and Track 2 was applied, so the shape has changed — but bare apply is still a
+stop-and-escalate for the inverse reason:
 
 - `digitalocean_droplet.blogs must be replaced` — this droplet is **live**, serving
   all four brand blogs. Blog *content* survives (`digitalocean_volume.blogs_data`
   carries `prevent_destroy`), but a replace is a public outage, and until GOL-382
   lands a reserved IP the droplet comes back on a **new IP** that DNS must chase.
-- **All of Track 2** — Managed PG, the Odoo droplet, and the four App Platform
-  apps (~$78/mo). Nothing in the configuration stops an apply from standing the
-  whole tier up: the "gate" is **prose in this README, not a constraint in code**.
-  Worse, the gate it cites is **stale** — see below.
+- **All of Track 2 is now LIVE** — Managed PG (the ERP database), the Odoo droplet
+  + filestore, the Odoo DNS record + firewalls, and the four App Platform apps.
+  A bare apply against `main` no longer *launches* them; the danger is the
+  opposite — drift-driven **destroy/replace** of live revenue infra. `count`-gating
+  them off (the original GOL-391 plan) would itself propose destroying the tier,
+  so it is not the fix; `prevent_destroy` on the stateful resources (PG cluster,
+  both volumes, both backups buckets, reserved IPs) is currently the backstop.
+  GOL-391 (CEO + Founding Engineer) owns the durable mechanism.
 
 Until GOL-385 closes, changes here are applied `-target`'d to the specific
 resources being changed, and any plan that proposes replacing
@@ -101,7 +110,18 @@ same address instead of moving DNS. The replace itself is still an unscheduled o
 a box whose boot is unproven (GOL-385) — take it in a chosen window:
 [`docs/RUNBOOK-blogs-reserved-ip-cutover.md`](../../../../docs/RUNBOOK-blogs-reserved-ip-cutover.md).
 
-## What lives here (Track 2 - GOL-105, apply gated)
+## What lives here (Track 2 - APPLIED / LIVE)
+
+> ⚠️ **Status update (GOL-391, 2026-08-06): Track 2 is APPLIED and LIVE in
+> prod.** The "apply gated" framing below is historical. The Managed PG cluster,
+> the Odoo droplet + filestore, the Odoo DNS record + firewalls, and all four App
+> Platform apps exist in prod state (serial 23; `terraform state list` confirms
+> them). They were stood up via `-target`'d applies after this environment was
+> scaffolded. **The live current risk is the inverse of the original one: a bare
+> apply now proposes to DESTROY/REPLACE this tier, not launch it** — so `count`
+> gating it off (GOL-391 option 1) is no longer free and is NOT the fix. The
+> blast-radius isolation mechanism is under GOL-391 board review (CEO + Founding
+> Engineer). Do not re-gate or destroy these resources without that decision.
 
 - Managed Postgres cluster (basic tier, db-s-1vcpu-2gb, daily backups + 7d
   PITR, private VPC) + Odoo DB/user - see postgres.tf
@@ -131,7 +151,7 @@ a box whose boot is unproven (GOL-385) — take it in a chosen window:
 - Reuses Track 1's SSH keys + the hub-zone Origin CA cert (its
   `*.gatheringatthegrove.com` SAN covers `odoo.`)
 
-## What lives here (Track 2 step 3 - GOL-116, apply gated)
+## What lives here (Track 2 step 3 - GOL-116, App Platform apps LIVE)
 
 - App Platform apps: `grove-hub-prod` + 3 tenants (goldberry/ggg/nursery),
   pro tier (`apps-d-1vcpu-0.5gb`, ~$12/mo each, ADR-007 D6) - see apps.tf
@@ -146,21 +166,29 @@ a box whose boot is unproven (GOL-385) — take it in a chosen window:
   `*.ondigitalocean.app` ingress and the apexes keep serving Ghost. See the
   "Apex cutover" block at the bottom of apps.tf.
 
-> ⚠️ **The GOL-105 gate below is STALE. GOL-105 was cancelled 2026-07-08.**
+> ⚠️ **The GOL-105 "apply gate" is DEAD, and Track 2 has since gone LIVE.**
 >
-> Track 2 is authored but **unowned**: no prod Odoo droplet and no prod Managed
-> PG exist, and the issue that was going to apply them is closed. So the text
-> below describes a sign-off that nobody is scheduled to perform, guarding an
-> apply nobody is scheduled to run — while the resources sit unconditioned in
-> the root module, in every plan. Do not cite this paragraph as an active gate
-> (GOL-391 tracks making the gate real, or deleting the scaffold).
+> Two layers of staleness, both corrected here (GOL-391):
+> 1. GOL-105 (the soak sign-off that was to gate the apply) was cancelled
+>    2026-07-08. There is no scheduled soak sign-off.
+> 2. Track 2 was **applied anyway** (via `-target`'d applies) and is now LIVE:
+>    the prod Managed PG cluster, the Odoo droplet + filestore, and all four App
+>    Platform apps exist in prod state (serial 23). The earlier claim in this
+>    file that "no prod Odoo droplet and no prod Managed PG exist" was wrong and
+>    has been removed — acting on it could have caused real damage.
+>
+> **Net:** there is nothing left to "gate the launch of" — it launched. The
+> historical soak criteria below are retained only for context. The open GOL-391
+> question is now blast-radius / drift protection for the LIVE tier (does every
+> live Track 2 resource have an appropriate destroy/replace guard, and should
+> Track 2 move to its own state), not preventing an accidental launch. That
+> mechanism decision is owned by the CEO + Founding Engineer.
 
-**Soak sign-off (GOL-105 — cancelled; retained for historical context) was to be
-green before `terraform apply`:** Managed PG
+**Historical soak criteria (GOL-105 — cancelled; never performed; context
+only):** Managed PG
 perf + Odoo pool acceptable; App Platform TLS auto-renew clean; GHCR autodeploys
 reliable; durable filestore + droplet-replace test validated (GOL-93); three
-alert paths green; no unresolved incidents across the window. Then @-mention the
-CEO here for the final go.
+alert paths green; no unresolved incidents across the window.
 
 Still pending (GOL-116): resolve apex-cutover decisions #1/#2, add the
 `domain{}` blocks + Cloudflare apex→ingress records, and coordinate the

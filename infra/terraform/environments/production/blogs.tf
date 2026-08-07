@@ -220,6 +220,13 @@ resource "digitalocean_droplet" "blogs" {
   # `terraform apply -replace=digitalocean_droplet.blogs`, which re-renders the
   # current template on create regardless of ignore_changes. Reversible: delete
   # this block to restore the pending replace.
+  #
+  # NOTE (GOL-1192 / GOL-385 acceptance #2): this mask HIDES the user_data drift,
+  # it does not RECONCILE it. The one plaintext input that makes this droplet
+  # non-reproducible from code is var.healthchecks_ping_url (default "" here, but
+  # the live droplet was applied with an operator-local value). Codify it in 1P
+  # before the Phase-2 replace or the rebuilt droplet is itself a snowflake — see
+  # docs/RUNBOOK-blogs-user_data-reproducibility.md.
   lifecycle {
     ignore_changes = [user_data, monitoring]
   }
