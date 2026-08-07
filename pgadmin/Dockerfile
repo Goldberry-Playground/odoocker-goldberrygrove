@@ -81,7 +81,7 @@ ARG PGADMIN_VENV_SITE_PACKAGES=/venv/lib/python3.14/site-packages
 RUN rm -rf "${PGADMIN_VENV_SITE_PACKAGES}/urllib3" \
            "${PGADMIN_VENV_SITE_PACKAGES}/urllib3-2.6.3.dist-info" \
            "${PGADMIN_VENV_SITE_PACKAGES}/cryptography" \
-           "${PGADMIN_VENV_SITE_PACKAGES}/cryptography-47.0.0.dist-info" \
+           ${PGADMIN_VENV_SITE_PACKAGES}/cryptography-*.dist-info \
            "${PGADMIN_VENV_SITE_PACKAGES}/jwt" \
            "${PGADMIN_VENV_SITE_PACKAGES}/pyjwt-2.12.1.dist-info" \
            "${PGADMIN_VENV_SITE_PACKAGES}/socketio" \
