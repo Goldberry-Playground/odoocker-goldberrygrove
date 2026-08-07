@@ -234,7 +234,12 @@ variable "ghost_smtp" {
   # sources this .env in bash, so spaces/<> would break `set -euo pipefail`.
   # Ghost falls back to the publication title as the sender display name.
   default = {
-    hub       = { user = "", pass = "", from = "noreply@mg.gatheringatthegrove.com" }
+    # hub sends from `send.`, NOT `mg.` — mg.gatheringatthegrove.com is
+    # registered to a Mailgun account we do not control and carries live DNS
+    # (see scripts note 9 in mailgun-domains.sh). Verified 2026-08-07: the
+    # Mailgun account holds send.gatheringatthegrove.com (active) and has no
+    # mg.gatheringatthegrove.com. Using `mg.` here silently fails to deliver.
+    hub       = { user = "", pass = "", from = "noreply@send.gatheringatthegrove.com" }
     goldberry = { user = "", pass = "", from = "noreply@mg.goldberrygrove.farm" }
     ggg       = { user = "", pass = "", from = "noreply@mg.woodworkingeorge.com" }
     nursery   = { user = "", pass = "", from = "noreply@mg.atthegrovenursery.com" }
