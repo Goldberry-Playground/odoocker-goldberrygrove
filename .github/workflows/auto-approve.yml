@@ -21,10 +21,23 @@
 #   CI == every required check green. Auto-merge still independently waits for
 #   ALL required checks before it actually merges.
 #
+# Human-maintainer path (GOL-1195):
+#   The repo owner's OWN PRs hit the same wall from the other side: the ruleset
+#   requires 1 approving review, GitHub blocks approving your own PR, and (until
+#   now) this workflow skipped all human authors -> the owner's PRs dead-ended
+#   with no way to satisfy the gate ("I can't even submit my review if I want
+#   to"). We now clear the review gate for a small allowlist of trusted human
+#   maintainers by approving as github-actions[bot] (a distinct identity), but
+#   we deliberately DO NOT enable auto-merge for them -> the human keeps full
+#   control over WHEN their PR merges. CI + required checks still gate.
+#
 # Guardrails:
-#   - Never auto-approves human or external PRs (author must be the agent App
-#     bot) -> human review is preserved for human PRs.
+#   - Auto-approves only (a) the agent App bot's PRs and (b) an explicit
+#     human-maintainer allowlist (MAINTAINERS). All other human/external PRs
+#     still keep the normal human-review requirement.
 #   - Never approves unless CI passed -> not a blanket rubber-stamp.
+#   - Agent PRs get approve + auto-merge; maintainer PRs get approve ONLY
+#     (no auto-merge) so the human decides when to merge.
 #   - Runs from the base-branch definition (workflow_run), so a PR cannot
 #     modify this file to approve itself.
 name: Auto-approve verified agent PRs
@@ -55,24 +68,44 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Trusted human maintainers whose own PRs may auto-clear the review
+          # gate (space-separated logins). The repo owner cannot self-approve on
+          # GitHub, so without this their PRs dead-end. Keep this list minimal.
+          MAINTAINERS="EngineeringMoonBear"
+
           AUTHOR=$(gh pr view "$PR" --repo "$REPO" --json author -q '.author.login')
           # App bot logins appear as "app/agenticos-developer" via gh and
-          # "agenticos-developer" via some APIs; accept both, reject all else.
+          # "agenticos-developer" via some APIs; accept both.
+          KIND=""
           case "$AUTHOR" in
-            app/agenticos-developer|agenticos-developer) ;;
-            *)
-              echo "PR #$PR author '$AUTHOR' is not the agent App bot; skipping (human/external PRs keep human review)."
-              exit 0 ;;
+            app/agenticos-developer|agenticos-developer) KIND="agent" ;;
           esac
+          if [ -z "$KIND" ]; then
+            for m in $MAINTAINERS; do
+              if [ "$AUTHOR" = "$m" ] || [ "$AUTHOR" = "app/$m" ]; then KIND="maintainer"; break; fi
+            done
+          fi
+          if [ -z "$KIND" ]; then
+            echo "PR #$PR author '$AUTHOR' is not the agent App bot or a listed maintainer; skipping (human/external PRs keep human review)."
+            exit 0
+          fi
+          echo "PR #$PR author '$AUTHOR' classified as: $KIND"
 
           # Don't stack duplicate approvals on re-runs.
           ALREADY=$(gh api "repos/$REPO/pulls/$PR/reviews" \
             -q '[.[] | select(.user.login=="github-actions[bot]" and .state=="APPROVED")] | length')
           if [ "${ALREADY:-0}" -gt 0 ]; then
-            echo "PR #$PR already approved by github-actions[bot]; ensuring auto-merge is on."
+            echo "PR #$PR already approved by github-actions[bot]."
           else
             gh pr review "$PR" --repo "$REPO" --approve --body \
-              "Auto-approved by github-actions[bot]: CI (which runs all required status checks) passed. This identity is distinct from the PR-author App, so it satisfies branch protection's review requirement. Functional required status checks still gate the actual merge. (GOL-308, port of GOL-122)"
+              "Auto-approved by github-actions[bot]: CI (which runs all required status checks) passed. This identity is distinct from the PR author, so it satisfies branch protection's review requirement. Functional required status checks still gate the actual merge. (GOL-308 / GOL-1195)"
+          fi
+
+          # Maintainer PRs: approve ONLY. The human decides when to merge, so we
+          # do not enable auto-merge or direct-merge on their behalf.
+          if [ "$KIND" = "maintainer" ]; then
+            echo "PR #$PR is a maintainer PR: review gate cleared; leaving merge to the author."
+            exit 0
           fi
 
           # Turn on auto-merge so GitHub merges once ALL required checks are green.
