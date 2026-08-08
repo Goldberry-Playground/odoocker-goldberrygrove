@@ -46,9 +46,15 @@ resource "cloudflare_ruleset" "blog_apex_redirect" {
   for_each = toset(["hub", "goldberry"])
 
   zone_id = data.cloudflare_zone.brand[each.key].id
-  name    = "apex content-asset redirect (301, post-launch)"
-  kind    = "zone"
-  phase   = "http_request_dynamic_redirect"
+  # `name` is ForceNew on cloudflare_ruleset (provider ~>4.40): editing it would
+  # REPLACE these two already-applied (disabled) live rulesets, tripping
+  # prod-plan-guard. The functional narrowing below (expression/status/description)
+  # all applies IN-PLACE, so the name is deliberately frozen to its live value —
+  # stale label, zero blast radius. Rename deferred to the next legitimate replace
+  # (e.g. the GOL-1284 post-path map). See GOL-1283 review.
+  name  = "blog apex redirects (302, pre-launch)"
+  kind  = "zone"
+  phase = "http_request_dynamic_redirect"
 
   rules {
     enabled     = var.blog_apex_redirects_enabled
