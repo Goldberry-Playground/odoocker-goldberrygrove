@@ -93,10 +93,25 @@ resource "cloudflare_ruleset" "app_host_override" {
 
 ## Execution — one change window, four apexes
 
-**Recommended order:** flip the **hub (`gatheringatthegrove.com`) first** as the
-canary (highest-traffic + fastest to eyeball), verify green, then the remaining
-three. Each apex is independently reversible; do not batch the DNS edits so
-faster.
+**Recommended order (revised, GOL-1282):** canary with a **currently-522 apex —
+`atthegrovenursery.com` (nursery)** — **first**, not the flagship hub.
+
+Rationale: ggg + nursery apexes today return **`522`** (no working origin), so
+flipping one to a working App Platform storefront is **zero-regret** — a failed
+attempt changes nothing a user sees, while a green result exercises the full,
+novel **DNS-repoint + Host-override Origin Rule** mechanic (the `403`-fail-closed
+risk) live before we touch a flagship. Sequence:
+
+1. **nursery** (522 today) — canary the Origin-Rule mechanic. No redirect rule to
+   narrow (Step 3 N/A for nursery).
+2. **hub** (`gatheringatthegrove.com`) — flagship, highest-traffic; de-risked by
+   the canary. Has the redirect rule (Step 3 applies).
+3. **goldberry** (`goldberrygrove.farm`) — has the redirect rule (Step 3 applies).
+4. **ggg** (`woodworkingeorge.com`, 522 today).
+
+Each apex is independently reversible; do not batch the DNS edits to go faster.
+> Note: Step 3's `redirects.tf` flag covers hub **and** goldberry in one state —
+> enable it only once **both** their DNS repoints (steps 2 + 3 above) are green.
 
 ### Step 0 — pre-flight (Ada + Terra, top of window)
 - [ ] Re-read all four `*_default_ingress` hosts; confirm they match the table.
@@ -122,9 +137,37 @@ reserved IP survive. **Do the snapshot + backup restore-check first.** ggg +
 nursery are already headless; hub + goldberry are the ones actually flipping off
 their apex.
 
-### Step 3 — enable CF Redirect Rules apex → `blog.*` (Terra)
-Bump the pre-launch apex redirect rules from **302 → 301** so the old apex blog
-URLs permanently redirect to `blog.*`. (302 is the current pre-launch policy.)
+### Step 3 — narrow the apex redirect to `/content/*` only, then enable (Terra)
+
+> ⚠️ **DO NOT "bump 302 → 301" on the blanket rule.** The pre-launch rule matches
+> `(http.host eq <apex>)` — i.e. **every** path, including `/`. It fires in the
+> `http_request_dynamic_redirect` phase, which runs **before** origin selection,
+> so while it is enabled the apex DNS repoint (Step 1) does **nothing** — the app
+> is never reached. Bumping it to 301 would make that shadowing **permanent and
+> browser-cached**, poisoning the flagship apex. Fixed in **GOL-1282**.
+
+The blanket rule is already **replaced** in `redirects.tf` by a narrow, permanent
+`apex/content/* → blog.<apex>/content/*` **301** (embedded Ghost assets only;
+`/content/` is never a storefront route). Everything else — the apex root and all
+storefront routes — falls through to origin selection and reaches the App
+Platform app. Applies to **hub + goldberry** only (ggg + nursery never had a rule).
+
+Execute, per apex, **after** Step 1 (DNS repoint) is verified for that apex and
+Step 2 (blog.* serving Ghost) is done:
+
+```bash
+op run --env-file=.env.op -- terraform apply -var=blog_apex_redirects_enabled=true
+```
+
+- `redirects.tf`'s `cloudflare_ruleset.blog_apex_redirect` covers both hub and
+  goldberry in one state; the flag flips both. Enable it only once **both** their
+  apex DNS repoints (Step 1) are green, so neither apex root is shadowed by a
+  stale-DNS + enabled-rule overlap.
+- **Legacy blog post-paths** (`apex/<slug>` → `blog.<apex>/<slug>`) are **not**
+  redirected: post slugs are indistinguishable from storefront routes at the CF
+  edge, so they need an explicit slug allow-list. Deferred to **GOL-1284**; old
+  post links **404 on the apex** until it ships (accepted at launch — the blog
+  lived at the apex for only the ~1-month EOM-July QA window).
 
 ### Step 4 — purge Cloudflare cache (Terra, per zone)
 Purge Everything for each of the four zones after its apex is cut over and
