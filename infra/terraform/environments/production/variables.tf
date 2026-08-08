@@ -298,6 +298,17 @@ variable "blog_apex_redirects_enabled" {
   default     = false
 }
 
+variable "apex_cutover_live_keys" {
+  description = "Per-apex switch for the App Platform Host-override Origin Rule (apex-cutover.tf). Each tenant key (hub/goldberry/ggg/nursery) listed here gets its http_request_origin Host-rewrite rule CREATED. Default [] (empty) ⇒ no rule, no CF API call ⇒ merge is inert. This is deliberately per-apex, NOT a single bool: the rule fires for every request to <apex> regardless of DNS, so enabling it for an apex still pointed at Ghost breaks that apex. Add a key ONLY in lockstep with flipping that apex's DNS to the proxied CNAME (canary order: [\"hub\"] → [\"hub\",\"goldberry\"] → …). Requires the CF token to carry Origin/Config Rules Edit on the brand zones (see apex-cutover.tf token-scope note). See docs/RUNBOOK-apex-launch-cutover.md."
+  type        = set(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for k in var.apex_cutover_live_keys : contains(["hub", "goldberry", "ggg", "nursery"], k)])
+    error_message = "apex_cutover_live_keys may only contain tenant keys: hub, goldberry, ggg, nursery."
+  }
+}
+
 # --- Grove assets (ADR-009 amendment 2026-08-02, GOL-1122) -------------------
 # ADR-009 states the hub "already holds" these in its deploy env. It did not:
 # verified 2026-08-03 via `doctl apps spec get d5fa7795-...` that none of the
