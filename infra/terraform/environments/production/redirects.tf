@@ -1,48 +1,64 @@
-# -- Blog apex 302 redirects (EOM-July QA phase) ---------------------------------
+# -- Apex → blog.* content-asset redirect (POST-LAUNCH, narrow 301) --------------
 #
-# goldberrygrove.farm and gatheringatthegrove.com currently serve Ghost at the
-# APEX. Once the blogs droplet's Ghost `url` flips to blog.* (cloud-init change
-# in this same PR), the apexes must 302 to blog.* so existing readers and
-# content-embedded asset URLs keep resolving.
+# Post-cutover (GOL-287 / GOL-1279 / GOL-1282), the hub + goldberry apexes are
+# served by their App Platform Next.js storefronts (proxied CNAME →
+# *.ondigitalocean.app + a Host-override Origin Rule). The apex ROOT and every
+# storefront route MUST reach that origin, so this rule is deliberately NARROW:
+# it 301-redirects ONLY Ghost's embedded-asset path `/content/*` (images / media
+# / files baked into historical post HTML) to blog.<apex>, and lets every other
+# path fall through to origin selection.
 #
-# 302, deliberately NOT 301: the apexes' permanent home is the headless App
-# Platform frontends (late-August cutover). Browsers cache 301s aggressively —
-# a 301 here would strand July visitors on blog.* after the cutover. At the
-# prod cutover these rules are REPLACED by: apex DNS → App Platform, a 301 map
-# for legacy post paths, and a narrow permanent apex/content/* → blog.*/content/*
-# asset rule (tracked in the cutover runbook).
+# This REPLACES the pre-launch blanket rule
+#   (http.host eq <apex>) -> 302  https://blog.<apex><path>
+# which matched EVERY path — including `/` (the storefront homepage). Because the
+# http_request_dynamic_redirect phase runs BEFORE origin selection, that blanket
+# rule shadows the app entirely: pointing apex DNS at App Platform does nothing
+# while it is enabled. The old runbook Step 3 ("bump 302 → 301") would have made
+# that shadowing PERMANENT and browser-cached — poisoning the flagship apex. The
+# correct fix is to narrow the rule, not bump its status code. See
+# docs/RUNBOOK-apex-launch-cutover.md Step 3.
 #
-# Rules are created DISABLED (var.blog_apex_redirects_enabled = false): blog.*
-# vhosts 404 until the droplet-replace apply completes, so enabling is a
-# SEPARATE, deliberate second apply after blog.* verifies healthy:
+# `/content/` is unambiguously Ghost (never a storefront route), so it is safe to
+# redirect. `/assets/`, `/public/`, and bare post slugs are NOT included: theme
+# assets collide with Next.js static paths, and legacy post slugs (apex/<slug>)
+# are indistinguishable from storefront routes at the edge — a post-path 301 map
+# would need an explicit slug allow-list and is deferred to GOL-1284 (old post
+# links 404 on the apex until it ships; accepted at launch).
+#
+# 301 (permanent) is correct now: this is the final headless topology, not a
+# temporary QA state, and `/content/*` will only ever live on blog.<apex>.
+#
+# `var.blog_apex_redirects_enabled` gates the rule so Terra enables it in the
+# cutover window (per-zone), not on merge. blog.<apex> must be serving Ghost
+# (blogs-droplet url-flip, Step 2) before enabling, else these targets 404.
 #   op run --env-file=.env.op -- terraform apply -var=blog_apex_redirects_enabled=true
 #
 # NOTE (one-time token update): the account CF token needs the
-# "Dynamic URL Redirects: Edit" zone permission added for these two zones —
-# the current scope (DNS + Zone read + Zone Settings + SSL) predates rulesets
-# and will 403 on this resource until updated.
+# "Dynamic URL Redirects: Edit" zone permission for these two zones — the current
+# scope (DNS + Zone read + Zone Settings + SSL) predates rulesets and 403s here
+# until updated.
 #
-# This ruleset owns the ENTIRE http_request_dynamic_redirect phase for each
-# zone: any hand-created dashboard redirect rules in that phase would be
-# removed on apply. That is intended — redirects live here, not in the UI.
+# This ruleset owns the ENTIRE http_request_dynamic_redirect phase for each zone:
+# any hand-created dashboard redirect rules in that phase are removed on apply.
+# That is intended — redirects live here, not in the UI.
 
 resource "cloudflare_ruleset" "blog_apex_redirect" {
   for_each = toset(["hub", "goldberry"])
 
   zone_id = data.cloudflare_zone.brand[each.key].id
-  name    = "blog apex redirects (302, pre-launch)"
+  name    = "apex content-asset redirect (301, post-launch)"
   kind    = "zone"
   phase   = "http_request_dynamic_redirect"
 
   rules {
     enabled     = var.blog_apex_redirects_enabled
-    description = "302 ${local.tenants[each.key]}/* -> blog.${local.tenants[each.key]}/* until headless cutover"
-    expression  = "(http.host eq \"${local.tenants[each.key]}\")"
+    description = "301 ${local.tenants[each.key]}/content/* -> blog.${local.tenants[each.key]}/content/* (embedded Ghost assets only; apex root reaches the app)"
+    expression  = "(http.host eq \"${local.tenants[each.key]}\" and starts_with(http.request.uri.path, \"/content/\"))"
     action      = "redirect"
 
     action_parameters {
       from_value {
-        status_code = 302
+        status_code = 301
         target_url {
           expression = "concat(\"https://blog.${local.tenants[each.key]}\", http.request.uri.path)"
         }

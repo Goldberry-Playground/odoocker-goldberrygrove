@@ -293,7 +293,7 @@ variable "uptime_check_targets" {
 }
 
 variable "blog_apex_redirects_enabled" {
-  description = "Enable the apex→blog.* 302 redirect rules (redirects.tf). Default false: blog.* vhosts 404 until the blogs-droplet url-flip apply completes. Flip with -var=blog_apex_redirects_enabled=true in a second apply AFTER blog.* verifies healthy. Removed entirely at the prod headless cutover (replaced by 301 map — see cutover runbook)."
+  description = "Enable the narrow apex/content/* → blog.<apex>/content/* 301 asset redirect (redirects.tf). Default false: blog.* vhosts 404 until the blogs-droplet url-flip apply completes, and the rule must be OFF until each apex is cut over. Flip with -var=blog_apex_redirects_enabled=true in the cutover window AFTER blog.* verifies healthy (see docs/RUNBOOK-apex-launch-cutover.md Step 3). This is a NARROW /content/* rule only — the apex root and storefront routes must reach the App Platform origin, so it must never match `/`."
   type        = bool
   default     = false
 }
