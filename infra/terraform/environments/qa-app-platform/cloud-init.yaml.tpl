@@ -140,6 +140,13 @@ write_files:
       SMTP_PASSWORD=${smtp_password}
       EMAIL_FROM="${email_from}"
       FROM_FILTER=${from_filter}
+      # Shippo fulfillment (GOL-988). SHIPPO_API_KEY: outbound label purchase
+      # (sale_order.py raises UserError when empty). GROVE_SHIPPO_WEBHOOK_TOKEN:
+      # inbound tracking-webhook auth (controllers/main.py compares; empty =>
+      # fail-closed). Consumed via the compose environment: block, same
+      # --env-file path as stripe_test_*.
+      SHIPPO_API_KEY=${shippo_api_key}
+      GROVE_SHIPPO_WEBHOOK_TOKEN=${grove_shippo_webhook_token}
 
   # Compose YAML - base64-encoded so cloud-init's YAML parser never sees
   # its content (avoids the embedded-block-scalar parse failures we hit

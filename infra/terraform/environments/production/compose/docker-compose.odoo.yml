@@ -81,6 +81,12 @@ services:
       # until CFO mints the live keys AND the board greenlights a rebuild.
       stripe_test_secret_key: ${stripe_test_secret_key:-}
       stripe_test_webhook_secret: ${stripe_test_webhook_secret:-}
+      # Shippo fulfillment (GOL-988). Outbound label purchase reads
+      # SHIPPO_API_KEY (sale_order.py, UserError when empty); inbound tracking
+      # webhook compares GROVE_SHIPPO_WEBHOOK_TOKEN (controllers/main.py,
+      # fail-closed when empty). Same --env-file source as stripe_test_*.
+      SHIPPO_API_KEY: ${SHIPPO_API_KEY:-}
+      GROVE_SHIPPO_WEBHOOK_TOKEN: ${GROVE_SHIPPO_WEBHOOK_TOKEN:-}
     # GOL-746: gate the Odoo start on git-sync's FIRST clone. depends_on
     # (service_started) only guarantees the sidecar CONTAINER started, not
     # that /workspace/current is populated. On the 2026-07-22 droplet replace

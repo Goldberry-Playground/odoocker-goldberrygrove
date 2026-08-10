@@ -427,6 +427,11 @@ resource "digitalocean_droplet" "odoo" {
     email_from    = var.email_from
     from_filter   = var.from_filter
 
+    # Shippo fulfillment (GOL-988 shipping-notification leg). Both default-empty
+    # => label purchase raises UserError and the webhook fails closed.
+    shippo_api_key             = var.shippo_api_key
+    grove_shippo_webhook_token = var.grove_shippo_webhook_token
+
     # base64-encode embedded files (ADR-005 PR-B pattern — bypasses cloud-init
     # YAML parser entirely for content with awkward characters).
     compose_yml_b64   = base64encode(file("${path.module}/compose/docker-compose.qa.yml"))

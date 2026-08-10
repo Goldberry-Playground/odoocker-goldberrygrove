@@ -442,3 +442,17 @@ variable "from_filter" {
   type        = string
   default     = "mg.gatheringatthegrove.com"
 }
+
+variable "shippo_api_key" {
+  description = "Shippo TEST API key for QA label purchase + rate quotes. grove_headless (models/sale_order.py) reads os.environ SHIPPO_API_KEY — raises UserError if unset, so the empty default keeps plan/apply working and label purchase inert until wired. 1P: op://Grove QA/Shippo Key/password (via TF_VAR_shippo_api_key in .env.op). Feeds cloud-init user_data — changing it REPLACES the QA odoo droplet."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "grove_shippo_webhook_token" {
+  description = "Shared token authenticating Shippo's inbound tracking webhooks (grove_headless controllers/main.py reads os.environ GROVE_SHIPPO_WEBHOOK_TOKEN and compares). Empty default = webhook auth fails closed (no unauthenticated status updates). 1P: op://Grove QA/Shippo Key/webhook_token. The same value must be embedded in the webhook URL registered with Shippo. Feeds user_data — changing it REPLACES the QA odoo droplet."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
