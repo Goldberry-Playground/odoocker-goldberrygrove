@@ -71,6 +71,8 @@ QA_CLEANUP_ENV_OP=scripts/qa-test-data-cleanup.env.op \
 Do this **before** the freeze so the frozen snapshot is already clean and the
 `promote-db.sh` manifest counts reflect real data only.
 
+> **Note:** The cleanup only removes records at RFC-reserved test domains (`*.invalid`, `example.com`…). Any test orders created with real business-domain emails (e.g. `josh@goldberrygrove.farm`, `e2e@goldberrygrove.farm`) are **not** removed by this script — they look like real customer records to the selector. Inspect the WV-nexus tax gate output (§6 gate 3) for such orders and manually cancel/correct them before the freeze if needed (see §9 — rehearsal found S01562 NC and S01600 TX with non-zero tax applied against WV-only nexus).
+
 ---
 
 ## 2. Capture the source integrity baseline (BEFORE the freeze)
@@ -153,6 +155,13 @@ scripts/promote-db.sh restore \
 ```
 
 A breached invariant exits non-zero → **do not proceed**; every asset would 500.
+
+> **DO managed-PG note (schema ownership):** On DigitalOcean managed Postgres, new databases have the `public` schema owned by `doadmin`. The `odoo` user cannot create tables in it. After `doctl databases db create <cluster_id> <db_name>`, grant schema ownership via the DO API or a `doadmin` psql session (credentials via `doctl databases connection <cluster_id>`):
+> ```bash
+> PGPASSWORD=<doadmin_pass> psql -h <host> -p <port> -U doadmin -d <new_db> \
+>   -c 'GRANT ALL ON SCHEMA public TO odoo; ALTER SCHEMA public OWNER TO odoo;'
+> ```
+> Then load the dump with the `odoo` user as usual. Without this grant the dump load errors with `permission denied for schema public`. (Confirmed in rehearsal 2026-08-12.)
 
 ### 5b. Idempotent reconfig — rewrite env-specific config, then ASSERT
 

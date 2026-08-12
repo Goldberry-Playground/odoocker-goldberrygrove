@@ -118,14 +118,24 @@ def sequence_next_number(client, code: str) -> int | None:
 def gate_sequence_continuity(client, model: str, seq_code: str, name_field: str,
                              domain: list, label: str) -> dict:
     """A sequence gate: next-number must exceed the highest existing record's
-    trailing number, else the next issued record collides with a promoted one."""
+    trailing number, else the next issued record collides with a promoted one.
+
+    When there are no records AND no sequence (e.g. invoices pre-launch), the
+    gate is skipped — there is nothing to collide with. A missing sequence with
+    existing records is still a hard FAIL.
+    """
     names = [r[name_field] for r in
              client.call(model, "search_read", [domain], {"fields": [name_field]})]
     highest = max_trailing_number(names)
     nxt = sequence_next_number(client, seq_code)
     if nxt is None:
+        if not names:
+            # No records, no sequence — nothing to check; skip.
+            return {"label": label, "ok": True, "skipped": True,
+                    "detail": f"no {model} records and ir.sequence code={seq_code!r} not found — skip (pre-launch)",
+                    "highest_existing": 0, "records": 0}
         return {"label": label, "ok": False,
-                "detail": f"ir.sequence code={seq_code!r} not found — cannot verify continuity",
+                "detail": f"ir.sequence code={seq_code!r} not found but {len(names)} records exist — cannot verify continuity",
                 "highest_existing": highest, "records": len(names)}
     ok = nxt > highest
     return {"label": label, "ok": ok,

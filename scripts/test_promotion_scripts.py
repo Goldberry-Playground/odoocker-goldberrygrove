@@ -239,7 +239,13 @@ def test_gates_sequence():
 
     missing = FakeOdoo({"sale.order": {1: {"name": "S00001"}}, "ir.sequence": {}})
     r3 = gates.gate_sequence_continuity(missing, "sale.order", "sale.order", "name", [], "orders")
-    check("missing sequence FAILS", not r3["ok"])
+    check("missing sequence with records FAILS", not r3["ok"])
+
+    # pre-launch: no records AND no sequence → SKIP (not FAIL)
+    prelaunck = FakeOdoo({"account.move": {}, "ir.sequence": {}})
+    r4 = gates.gate_sequence_continuity(prelaunck, "account.move", "account.move.out_invoice", "name",
+                                        [["move_type", "=", "out_invoice"], ["state", "=", "posted"]], "invoices")
+    check("no records + no sequence = SKIP (pre-launch)", r4.get("skipped") and r4["ok"])
 
 
 def test_gates_wv_tax():
