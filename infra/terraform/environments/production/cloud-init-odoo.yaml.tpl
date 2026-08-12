@@ -105,6 +105,12 @@ write_files:
       # the board greenlights a prod-checkout rebuild (see .env.op + GOL-973).
       stripe_test_secret_key=${stripe_test_secret_key}
       stripe_test_webhook_secret=${stripe_test_webhook_secret}
+      # Shippo fulfillment (GOL-988). SHIPPO_API_KEY: outbound label purchase
+      # (sale_order.py, UserError when empty). GROVE_SHIPPO_WEBHOOK_TOKEN:
+      # inbound tracking-webhook auth (controllers/main.py, fail-closed when
+      # empty). Same --env-file -> compose environment: path as stripe_test_*.
+      SHIPPO_API_KEY=${shippo_api_key}
+      GROVE_SHIPPO_WEBHOOK_TOKEN=${grove_shippo_webhook_token}
 
   # Compose YAML - base64 so cloud-init's YAML parser never sees its content.
   - path: /etc/grove/docker-compose.yml

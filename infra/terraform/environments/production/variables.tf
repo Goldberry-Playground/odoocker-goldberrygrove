@@ -349,3 +349,17 @@ variable "stripe_test_webhook_secret" {
   sensitive   = true
   default     = ""
 }
+
+variable "shippo_api_key" {
+  description = "Shippo LIVE API key for prod label purchase + rate quotes (grove_headless models/sale_order.py reads os.environ SHIPPO_API_KEY; UserError when empty, so the empty default keeps plan/apply working and fulfillment inert). 1P: op://Grove Prod/Shippo Prod Key/password. Feeds cloud-init user_data => activating requires a droplet REPLACE — rides the board-approved GOL-484 go-live rebuild, not a standalone apply."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "grove_shippo_webhook_token" {
+  description = "Shared token authenticating Shippo's inbound tracking webhooks in prod (controllers/main.py compares os.environ GROVE_SHIPPO_WEBHOOK_TOKEN; empty => fail-closed). 1P: op://Grove Prod/Shippo Prod Key/webhook_token — DISTINCT from the QA token so revoking one stage never breaks the other. The same value must be embedded in the prod webhook URL registered with Shippo. user_data input — same replace semantics as shippo_api_key."
+  type        = string
+  sensitive   = true
+  default     = ""
+}

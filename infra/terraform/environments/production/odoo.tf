@@ -161,6 +161,12 @@ resource "digitalocean_droplet" "odoo" {
     stripe_test_secret_key     = var.stripe_test_secret_key
     stripe_test_webhook_secret = var.stripe_test_webhook_secret
 
+    # Shippo fulfillment (GOL-988). Default-empty => label purchase raises
+    # UserError and the tracking webhook fails closed. Activation rides the
+    # board-gated GOL-484 rebuild (user_data input).
+    shippo_api_key             = var.shippo_api_key
+    grove_shippo_webhook_token = var.grove_shippo_webhook_token
+
     # Managed PG connection params (private VPC network). odoorc.sh substitutes
     # these into /etc/odoo/odoo.conf at container start.
     pg_host     = digitalocean_database_cluster.pg.private_host
