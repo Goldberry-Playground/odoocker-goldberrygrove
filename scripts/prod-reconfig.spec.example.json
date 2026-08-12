@@ -1,0 +1,86 @@
+{
+  "_comment": [
+    "Declarative desired-state for scripts/prod-reconfig.py (GOL-1329).",
+    "COMMITTED — holds ${ENV_VAR} REFERENCES, never secret values. Resolve with",
+    "`op run --env-file=scripts/prod-reconfig.env.op -- python3 scripts/prod-reconfig.py …`.",
+    "FINALISE THIS during the scratch rehearsal: run `--report` against the restored",
+    "scratch DB first, then confirm the exact field names below match the live schema",
+    "(payment.provider.code / .state, ir.mail_server field names, which crons the freeze",
+    "disabled). The values here are the DEFAULTS for the Grove prod launch; adjust only",
+    "with evidence from --report."
+  ],
+
+  "config_parameters": {
+    "web.base.url": "${PROD_WEB_BASE_URL}",
+    "web.base.url.freeze": "True",
+    "report.url": "${PROD_WEB_BASE_URL}"
+  },
+
+  "record_writes": [
+    {
+      "label": "re-enable crons disabled by the freeze",
+      "model": "ir.cron",
+      "domain": [["active", "=", false]],
+      "values": {"active": true}
+    },
+    {
+      "label": "stripe provider → live/enabled",
+      "model": "payment.provider",
+      "domain": [["code", "=", "stripe"]],
+      "values": {"state": "enabled"}
+    },
+    {
+      "label": "prod outgoing mail server (Mailgun)",
+      "model": "ir.mail_server",
+      "domain": [["smtp_host", "=like", "%mailgun%"]],
+      "values": {
+        "smtp_host": "${PROD_SMTP_HOST}",
+        "smtp_port": "${PROD_SMTP_PORT}",
+        "smtp_user": "${PROD_SMTP_USER}",
+        "smtp_pass": "${PROD_SMTP_PASSWORD}",
+        "smtp_encryption": "starttls"
+      }
+    }
+  ],
+
+  "assertions": [
+    {
+      "label": "base url is prod (not QA)",
+      "model": "ir.config_parameter",
+      "domain": [["key", "=", "web.base.url"]],
+      "field": "value",
+      "expect": "${PROD_WEB_BASE_URL}"
+    },
+    {
+      "label": "base url is frozen",
+      "model": "ir.config_parameter",
+      "domain": [["key", "=", "web.base.url.freeze"]],
+      "field": "value",
+      "expect": "True"
+    },
+    {
+      "label": "no cron left disabled",
+      "model": "ir.cron",
+      "domain": [["active", "=", false]],
+      "count_expect": 0
+    },
+    {
+      "label": "at least one enabled Stripe provider",
+      "model": "payment.provider",
+      "domain": [["code", "=", "stripe"], ["state", "=", "enabled"]],
+      "min_count": 1
+    },
+    {
+      "label": "no Stripe provider left in test state",
+      "model": "payment.provider",
+      "domain": [["code", "=", "stripe"], ["state", "=", "test"]],
+      "count_expect": 0
+    },
+    {
+      "label": "no config parameter still points at the QA host",
+      "model": "ir.config_parameter",
+      "domain": [["value", "=like", "%qa.gatheringatthegrove.com%"]],
+      "count_expect": 0
+    }
+  ]
+}
