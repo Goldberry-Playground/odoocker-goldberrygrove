@@ -26,20 +26,52 @@
 # flip, never ahead of it. `var.apex_cutover_live_keys` is the per-apex switch:
 # add a key only after (or together with) flipping that apex's DNS to the CNAME.
 #
+# --- VALIDATION APEX: ggg goes first (GOL-1390) --------------------------------
+# ggg (woodworkingeorge.com — SINGLE-g; this is the codified apex in
+# main.tf local.tenants, NOT the double-g "woodworkinggeorge.com" that some
+# runbook prose typo'd) is the canary/validation apex for this procedure: lowest
+# revenue exposure, and it is ALREADY exhibiting the exact failure this rule
+# fixes (apex connection-timeout / www 525 — an out-of-band DNS flip to the app
+# with no Host-override rule). Prove the corrected sequence on ggg before the
+# hub/goldberry/nursery flips.
+#
 # --- WINDOW SEQUENCE, per apex (runbook Step 1) --------------------------------
 #   1. Flip apex DNS A→blogs-IP  ⟶  proxied CNAME → <app>.ondigitalocean.app
 #      (manual CF edit — instantly reversible; the one-way-door's reversible half).
+#      (For ggg the DNS may already be on the CNAME; if so this step is a no-op
+#       confirm, and the apex is down ONLY for lack of steps 2-3.)
 #   2. Confirm zone SSL/TLS = Full (strict).
-#   3. Enable this rule for that apex:
+#   3. Enable this rule for that apex, IN-WINDOW transient override via -var:
 #        op run --env-file=.env.op -- terraform apply \
 #          -target='cloudflare_ruleset.apex_host_override' \
-#          -var='apex_cutover_live_keys=["hub"]'          # then ["hub","goldberry"], …
+#          -var='apex_cutover_live_keys=["ggg"]'      # canary; then add hub, goldberry, …
 #   4. Verify (Ada): curl -sSI https://<apex>/ → 200 + x-do-orig-status:200 + brand <title>.
+#   5. MANDATORY CONVERGENCE (do NOT skip — finding #1, review 2026-08-12):
+#      commit the verified key into the COMMITTED default of
+#      var.apex_cutover_live_keys (variables.tf) and open a PR. The -var in
+#      step 3 is an ephemeral in-window override ONLY. If the committed default
+#      is not advanced to match reality, the very next var-less `terraform apply`
+#      — and prod-plan-guard.yml, which plans with the committed default and NO
+#      -var — will PLAN DESTRUCTION of this live rule → the flipped apex 403s
+#      fail-closed and the guard goes permanently red. The committed default is
+#      the source of truth; -var only bridges the seconds between step 3 and the
+#      merge of step 5.
 # There is a seconds-long 403 gap between step 1 and step 3 (DNS says app, no
-# Host override yet). That is expected and covered by DNS-revert rollback.
+# Host override yet). That is expected and covered by the rollback below.
 #
-# ROLLBACK (per apex): revert that apex's DNS record to A→blogs-IP (instant), and
-# drop its key from apex_cutover_live_keys on the next apply. Independent per apex.
+# --- ROLLBACK (per apex) — TWO MANDATORY STEPS, IN ORDER -----------------------
+# Reverting DNS ALONE DOES NOT ROLL BACK (finding #2, review 2026-08-12): this
+# rule fires on `http.host eq <apex>` at the http_request_origin phase
+# INDEPENDENT of DNS, so while the key is still live Cloudflare keeps rewriting
+# Host/SNI → <app>.ondigitalocean.app even against the reverted Ghost origin
+# (vhost/TLS mismatch under Full-strict) → the apex STAYS DOWN. So:
+#   R1. DESTROY this apex's rule first — drop its key and targeted-apply:
+#         op run --env-file=.env.op -- terraform apply \
+#           -target='cloudflare_ruleset.apex_host_override' \
+#           -var='apex_cutover_live_keys=[<remaining live keys, this apex removed>]'
+#       (and land the matching committed-default revert per step 5 above).
+#   R2. THEN revert that apex's DNS record CNAME→A→blogs-IP (CF-proxied, ~instant).
+# Independent per apex. Skipping R1 = the apex cannot be restored by DNS alone.
 #
 # --- TOKEN SCOPE PREREQ (blocks the apply, not the merge) ----------------------
 # Origin Rules live in the http_request_origin ruleset phase. The account CF
