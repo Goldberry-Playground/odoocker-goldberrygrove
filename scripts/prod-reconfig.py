@@ -188,10 +188,24 @@ def apply_record_writes(client, writes: list) -> list[dict]:
         model, domain, values = w["model"], w["domain"], w["values"]
         label = w.get("label", model)
         ids = client.call(model, "search", [domain])
+        created = 0
         if ids:
             client.call(model, "write", [ids, values])
-        _log(f"  record_write[{label}] {model} matched {len(ids)} row(s) ← {values}")
-        results.append({"label": label, "model": model, "matched": len(ids), "values": values})
+        elif w.get("create_if_missing"):
+            # A repoint-write matches nothing on a *bare-bootstrapped* prod DB
+            # (vs a QA-promotion restore that already carries the row). Without
+            # this branch such a row is silently never provisioned — exactly how
+            # prod Odoo launched with NO ir.mail_server (GOL-1183). `create_values`
+            # supplies fields a plain repoint omits but create() requires
+            # (e.g. ir.mail_server.name), merged over `values`.
+            create_vals = {**values, **w.get("create_values", {})}
+            new_id = client.call(model, "create", [create_vals])
+            ids = [new_id]
+            created = 1
+        verb = "created" if created else "matched"
+        _log(f"  record_write[{label}] {model} {verb} {len(ids)} row(s) ← {values}")
+        results.append({"label": label, "model": model, "matched": len(ids),
+                        "created": created, "values": values})
     return results
 
 

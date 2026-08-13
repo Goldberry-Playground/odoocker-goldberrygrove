@@ -33,6 +33,12 @@
       "label": "prod outgoing mail server (Mailgun)",
       "model": "ir.mail_server",
       "domain": [["smtp_host", "=like", "%mailgun%"]],
+      "create_if_missing": true,
+      "create_values": {
+        "name": "Mailgun (hub) — transactional",
+        "from_filter": "send.gatheringatthegrove.com",
+        "active": true
+      },
       "values": {
         "smtp_host": "${PROD_SMTP_HOST}",
         "smtp_port": "${PROD_SMTP_PORT}",
