@@ -82,7 +82,14 @@ jobs:
           esac
           if [ -z "$KIND" ]; then
             for m in $MAINTAINERS; do
-              if [ "$AUTHOR" = "$m" ] || [ "$AUTHOR" = "app/$m" ]; then KIND="maintainer"; break; fi
+              # Match a bare login ONLY. We intentionally reject the "app/$m"
+              # form: real human maintainers always appear as bare logins, never
+              # "app/<login>". A GitHub App whose slug happens to equal a
+              # maintainer login (e.g. "app/EngineeringMoonBear") must NOT be
+              # trusted as a human maintainer — the agent App is matched
+              # separately above, and any other App should hit the human-review
+              # path, not this allowlist. (GOL-1372 / GOL-1322)
+              if [ "$AUTHOR" = "$m" ]; then KIND="maintainer"; break; fi
             done
           fi
           if [ -z "$KIND" ]; then
