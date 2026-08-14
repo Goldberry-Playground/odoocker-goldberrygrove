@@ -137,6 +137,55 @@ reserved IP survive. **Do the snapshot + backup restore-check first.** ggg +
 nursery are already headless; hub + goldberry are the ones actually flipping off
 their apex.
 
+### Step 2b — flip the blog.* Caddy headless-demote flag (Terra, SAME replace as Step 2)
+
+The blog.* Caddy vhosts (blogs droplet, `compose/Caddyfile-blogs.tpl`) proxy the
+reader-facing Ghost site today. Post-cutover they must be **headless**: pass
+through only `/ghost` + `/ghost/*` (admin + Admin/Content API), `/content/*`
+(images), `/members/*`, and **301** every other path to the brand's React blog
+route on the apex. This is gated on **`var.blog_headless_demote_enabled`**
+(default `false`, blogs.tf → GOL-1530).
+
+> ⚠️ **This flag feeds `user_data`, so it activates ONLY on a droplet REPLACE — the
+> SAME replace Step 2 already schedules.** Do **not** spend a standalone replace on
+> it. Set it in the same apply as the Step-2 Ghost url-flip:
+>
+> ```bash
+> op run --env-file=.env.op -- terraform apply \
+>   -replace=digitalocean_droplet.blogs \
+>   -var=blog_headless_demote_enabled=true
+> ```
+>
+> (Or commit the default flip to `true` in the cutover-window PR — GOL-1471-style —
+> and run the plain `-replace` apply. Either way it rides Step 2's single replace.)
+
+> ⚠️ **Ordering — do NOT flip before the apex DNS repoint (Step 1) is green for the
+> flagged brand.** The apex side (redirects.tf `/content/*` 301, Step 3) plus this
+> blog 301 must not both be live while the apex still resolves to Ghost, or readers
+> loop: apex 302 → blog 301 → apex. Safe order per brand: Step 1 (apex → App
+> Platform) → Step 2 + 2b (blogs replace, canonical `blog.*` + headless) → Step 3
+> (narrow apex `/content/*` 301). hub → `/journal/{slug}`; goldberry →
+> `/blog/{slug}`; ggg + nursery → apex root (no per-slug map — GOL-1113/GOL-1284).
+
+Post-activation verify (in the window, per brand):
+```bash
+# Reader path 301s to the matching React route (NOT Ghost HTML)
+curl -sSI https://blog.goldberrygrove.farm/some-post | grep -iE 'HTTP/|location'
+#   want: 301 + location: https://goldberrygrove.farm/blog/some-post
+curl -sSI https://blog.gatheringatthegrove.com/some-post | grep -iE 'HTTP/|location'
+#   want: 301 + location: https://gatheringatthegrove.com/journal/some-post
+# Ghost admin still reachable (passthrough)
+curl -sSI https://blog.goldberrygrove.farm/ghost/ | grep -i 'HTTP/'   # 200/302 from Ghost, NOT 301-to-apex
+# Embedded images still serve (Content API surface unaffected)
+curl -sSI https://blog.goldberrygrove.farm/content/images/ | grep -i 'HTTP/'
+```
+Also confirm the storefront `/blog` (and hub `/journal`) pages still render — they
+read Ghost via the **Content API** (`/ghost/api/content/*`, in the passthrough
+allowlist), so the demote does not touch them.
+
+**Rollback:** re-apply with `-var=blog_headless_demote_enabled=false` (default) on
+the next replace, OR revert the committed flip — reverses to full passthrough.
+
 ### Step 3 — narrow the apex redirect to `/content/*` only, then enable (Terra)
 
 > ⚠️ **DO NOT "bump 302 → 301" on the blanket rule.** The pre-launch rule matches
@@ -228,6 +277,9 @@ three.
 ## References
 - GOL-287 (this cutover) · GOL-116 (approved plan) · GOL-285 (recipe) ·
   GOL-286 / GOL-824 (ingress URLs) · GOL-104 (soak) · GOL-817 (rollout umbrella)
+- GOL-1528 / GOL-1530 (blog.* Caddy headless-demote flag — Step 2b) ·
+  GOL-1113 / GOL-1284 (deferred per-slug maps for nursery / apex post-paths)
 - `infra/terraform/environments/production/blogs.tf` (`ghost_urls` canonical `blog.*`)
+- `infra/terraform/environments/production/compose/Caddyfile-blogs.tpl` (blog.* vhosts; `var.blog_headless_demote_enabled`)
 - `docs/RUNBOOK-blogs-reserved-ip-cutover.md` (Phase 2 = the Ghost-flip apply)
 - `infra/terraform/environments/cloudflare-policy/` (Origin Rules / redirect style)
