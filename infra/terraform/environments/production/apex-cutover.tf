@@ -83,47 +83,44 @@
 # account admin. Until then this resource stays gated off (empty for_each = no
 # API call), so merging is inert.
 
-locals {
-  # Full ingress URL per tenant, read from live app state (NOT hardcoded): the
-  # DO-assigned "-bpyrs"/"-efc9e" suffix changes if an app is recreated, so
-  # deriving keeps the Host target correct across rebuilds. Shape:
-  # "https://grove-hub-prod-bpyrs.ondigitalocean.app".
-  apex_app_live_url = merge(
-    { hub = digitalocean_app.hub.live_url },
-    { for k, app in digitalocean_app.tenant : k => app.live_url },
-  )
-
-  # Bare host for the Host header (strip scheme + any trailing slash).
-  apex_ingress_host = {
-    for k, url in local.apex_app_live_url :
-    k => trimsuffix(replace(replace(url, "https://", ""), "http://", ""), "/")
-  }
-}
-
-resource "cloudflare_ruleset" "apex_host_override" {
-  # Per-apex gate: only apexes listed in apex_cutover_live_keys get a rule, so it
-  # is created in lockstep with that apex's DNS flip (see header). Empty default
-  # ⇒ zero resources ⇒ no CF API call ⇒ merge is inert / needs no token bump.
-  for_each = {
-    for k, apex in local.tenants : k => apex
-    if contains(var.apex_cutover_live_keys, k)
-  }
-
-  zone_id = data.cloudflare_zone.brand[each.key].id
-  name    = "App Platform host override"
-  kind    = "zone"
-  phase   = "http_request_origin"
-
-  rules {
-    action = "route"
-    action_parameters {
-      host_header = local.apex_ingress_host[each.key]
-    }
-    # Apex only. www.<apex> is a separate follow-up: it must not be host-
-    # overridden here unless its DNS is also flipped to the app, or it would
-    # 403 the same way an early apex rule breaks Ghost.
-    expression  = "(http.host eq \"${each.value}\")"
-    description = "Rewrite Host → App Platform ingress (${local.apex_ingress_host[each.key]}) so DO edge routes; else 403. GOL-116/GOL-285/GOL-287/GOL-1279."
-    enabled     = true
-  }
-}
+# --- SUPERSEDED 2026-08-14 (GOL-1390): mechanism was NOT viable on Free zones --
+# The Cloudflare Origin "Set Host Header" override (http_request_origin route
+# action) that used to live here is an ENTERPRISE-ONLY entitlement. Applying it
+# on the brand zones (all "Free Website" plan) fails hard:
+#     Error: error creating ruleset App Platform host override
+#            not entitled to use the HostHeader override
+# So the resource is removed (it was never in state — the create errored before
+# any object was recorded, so there is nothing to destroy).
+#
+# The apex cutover is instead achieved the free-plan-safe way, proven live on ggg
+# 2026-08-14: register the brand apex as a custom DOMAIN on the tenant's App
+# Platform app (apps.tf `dynamic "domain"`, same var.apex_cutover_live_keys gate).
+# Once registered, DO issues a public cert for the apex (SAN=<apex>) and its
+# Cloudflare-fronted edge routes by SNI — so the CF-proxied apex CNAME →
+# *.ondigitalocean.app resolves and serves 200 with NO Host-header rewrite and NO
+# token/plan upgrade. Verified: `curl -sSI https://woodworkingeorge.com/` → 200 +
+# x-do-orig-status:200 + brand <title>.
+#
+# --- CUTOVER SEQUENCE, per apex (the DNS + app-domain legs) --------------------
+#   1. Add the apex key to var.apex_cutover_live_keys and
+#      `terraform apply -target='digitalocean_app.tenant["<key>"]'` — registers
+#      the domain on the app (in-place; no rebuild). Wait for the app domain to
+#      reach phase=ACTIVE ("domain <apex> ready").
+#   2. Flip apex DNS: proxied A→parking  ⟶  proxied CNAME → <app>.ondigitalocean-
+#      .app (manual CF edit — instantly reversible; the one-way-door's reversible
+#      half). Zone SSL can stay Full; DO's edge presents a valid apex cert so
+#      Full(strict) is also safe for the apex, but flip strict only after
+#      confirming every other proxied origin in the zone (e.g. blog.*) has a
+#      trusted cert — SSL mode is zone-wide.
+#   3. Verify: curl -sSI https://<apex>/ → 200 + x-do-orig-status:200 + brand
+#      <title>. (First cold hit may 522 while the edge warms; steady state 200.)
+#   4. CONVERGENCE: commit the verified key into the committed default of
+#      var.apex_cutover_live_keys (variables.tf) — prod-plan-guard plans against
+#      that default, so it must equal the set of apexes actually live.
+#
+# --- ROLLBACK (per apex) -------------------------------------------------------
+# Reverting DNS alone is sufficient here (unlike the old Host-override rule, the
+# domain{} block is inert for traffic that no longer resolves to the app):
+#   R1. Revert that apex's DNS record CNAME → A → parking/Ghost (CF-proxied, ~instant).
+#   R2. Optionally drop the apex key + `terraform apply` to de-register the domain
+#       on the app (cosmetic; leaving it registered does not break the reverted apex).
