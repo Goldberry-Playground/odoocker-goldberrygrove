@@ -242,7 +242,25 @@ resource "digitalocean_app" "tenant" {
       rule = "DOMAIN_FAILED"
     }
 
-    # domain{} intentionally omitted — see "Apex cutover" below.
+    # Apex cutover (GOL-1390): per-apex custom-domain registration, gated by the
+    # SAME per-apex switch as the DNS flip (var.apex_cutover_live_keys). Adding
+    # the brand apex to the app's domain list is what makes DO's App Platform
+    # edge ROUTE that Host instead of 403ing it fail-closed — the free-plan-safe
+    # replacement for the Cloudflare Origin "Host Header override" rule, which is
+    # Enterprise-only entitlement ("not entitled to use the HostHeader override"
+    # on the Free brand zones). CF proxies the apex CNAME → *.ondigitalocean.app
+    # ingress, so CF connects with SNI = the ondigitalocean.app host (valid wild-
+    # card cert, Full-strict-safe) and forwards Host = <apex>; DO routes by that
+    # Host once it is registered here. type=PRIMARY, zone omitted (DNS lives in
+    # Cloudflare, not DO-managed). Enable a key ONLY in lockstep with flipping
+    # that apex's DNS to the proxied CNAME (canary: ggg → hub/goldberry/nursery).
+    dynamic "domain" {
+      for_each = contains(var.apex_cutover_live_keys, each.key) ? [1] : []
+      content {
+        name = local.tenants[each.key]
+        type = "PRIMARY"
+      }
+    }
   }
 }
 
