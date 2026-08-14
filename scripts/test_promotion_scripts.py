@@ -251,6 +251,20 @@ def test_reconfig_create_if_missing():
     check("still exactly one row (idempotent, no duplicate)",
           fake.call("ir.mail_server", "search_count", [[]]) == 1)
 
+    # without create_if_missing a bare-DB write stays a silent no-op — the exact
+    # GOL-1183 failure mode, locked in so the flag can't be "simplified" away.
+    bare = FakeOdoo({"ir.mail_server": {}})
+    no_create = [{
+        "label": "mail server", "model": "ir.mail_server",
+        "domain": [["smtp_host", "=", "smtp.mailgun.org"]],
+        "values": {"smtp_host": "smtp.mailgun.org", "smtp_port": 587},
+    }]
+    r3 = reconfig.apply_record_writes(bare, no_create)
+    check("no create_if_missing → no-op (created==0, matched==0)",
+          r3[0]["created"] == 0 and r3[0]["matched"] == 0, r3[0])
+    check("no row provisioned without the flag",
+          bare.call("ir.mail_server", "search_count", [[]]) == 0)
+
 
 # ── promotion-integrity-gates ─────────────────────────────────────────────────
 

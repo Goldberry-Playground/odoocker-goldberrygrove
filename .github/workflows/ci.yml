@@ -159,6 +159,24 @@ jobs:
             echo "No Python files in custom-addons/, skipping"
           fi
 
+  # GOL-1434: run the QA→prod promotion tooling unit suite (stdlib-only, no
+  # network, no real Odoo — an in-memory FakeOdoo). Locks in the GOL-1183
+  # create_if_missing regression (prod launched with no ir.mail_server because
+  # a repoint-write matched nothing) and the reconfig/gate/reseed-guard props.
+  promotion-script-tests:
+    name: Promotion script tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Setup Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Run promotion tooling tests
+        run: python3 scripts/test_promotion_scripts.py
+
   validate-compose:
     name: Validate Docker Compose (Grove)
     runs-on: ubuntu-latest
