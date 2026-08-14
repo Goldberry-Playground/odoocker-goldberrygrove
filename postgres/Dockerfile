@@ -9,7 +9,8 @@ ARG GOSU_VERSION=1.19
 # binary into the final image clears every gosu-related CVE in one move.
 # Keep pinned to a Go patch release carrying the latest stdlib fixes:
 # 1.26.4 was flagged HIGH by CVE-2026-39822 (fixed in Go 1.26.5).
-FROM golang:1.26.5-bookworm AS gosu-builder
+# 1.26.5 was flagged HIGH by CVE-2026-46600 + CVE-2026-39821 (fixed in Go 1.26.6).
+FROM golang:1.26.6-bookworm AS gosu-builder
 ARG GOSU_VERSION
 RUN set -eux; \
     git clone --depth 1 --branch "${GOSU_VERSION}" \
