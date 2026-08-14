@@ -115,16 +115,16 @@ class FakeOdoo:
             for rid in ids:
                 self.records[model][rid].update(values)
             return True
-        if method == "unlink":
-            for rid in args[0]:
-                self.records.get(model, {}).pop(rid, None)
-            return True
-        if method == "create":  # create(vals) → new id (args[0] is the vals dict)
+        if method == "create":
             vals = args[0]
             rows = self.records.setdefault(model, {})
             new_id = (max(rows) + 1) if rows else 1
             rows[new_id] = dict(vals)
             return new_id
+        if method == "unlink":
+            for rid in args[0]:
+                self.records.get(model, {}).pop(rid, None)
+            return True
         if method == "set_param":  # ir.config_parameter.set_param(key, value)
             key, value = args[0], args[1]
             rows = self.records.setdefault("ir.config_parameter", {})
@@ -221,42 +221,49 @@ def test_reconfig_apply_and_assert():
 
 
 def test_reconfig_create_if_missing():
-    print("prod-reconfig: create_if_missing (GOL-1183 regression)")
-    # A bare-bootstrapped prod DB (vs a QA-promotion restore) has NO ir.mail_server
-    # row, so the repoint-only write matched nothing and silently never provisioned
-    # the Mailgun server — that is exactly how prod launched with zero mail servers.
-    # create_if_missing must CREATE the row instead of no-op'ing.
-    write = {
-        "label": "prod outgoing mail server (Mailgun)",
-        "model": "ir.mail_server",
-        "domain": [["smtp_host", "=like", "%mailgun%"]],
-        "create_if_missing": True,
-        "create_values": {"name": "Mailgun (hub)", "from_filter": "send.example.com", "active": True},
-        # smtp_host must satisfy the domain so re-apply matches (no duplicate).
-        "values": {"smtp_host": "smtp.mailgun.org", "smtp_port": "587", "smtp_user": "postmaster@x"},
-    }
+    print("prod-reconfig: create_if_missing provisions a missing row (GOL-1183)")
+    # A bare-bootstrapped prod DB has NO ir.mail_server row (unlike a QA-promotion
+    # restore, which carries one). A plain repoint-write matches nothing there —
+    # exactly how prod launched with no mail server (GOL-1183). create_if_missing
+    # must provision it; a re-apply must then match and NOT duplicate.
     fake = FakeOdoo({"ir.mail_server": {}})
+    writes = [{
+        "label": "mail server", "model": "ir.mail_server",
+        "domain": [["smtp_host", "=", "smtp.mailgun.org"]],
+        "values": {"smtp_host": "smtp.mailgun.org", "smtp_port": 587},
+        "create_if_missing": True,
+        "create_values": {"name": "Mailgun (prod)"},  # required-on-create, omitted by a repoint
+    }]
 
-    res = reconfig.apply_record_writes(fake, [write])
-    check("bare DB → row created (created==1)", res[0]["created"] == 1, res[0])
-    check("exactly one ir.mail_server row present", len(fake.records["ir.mail_server"]) == 1)
-    row = next(iter(fake.records["ir.mail_server"].values()))
-    check("created row carries repoint values", row.get("smtp_host") == "smtp.mailgun.org")
-    check("created row carries create-only fields", row.get("name") == "Mailgun (hub)")
+    r1 = reconfig.apply_record_writes(fake, writes)
+    check("bare DB apply → created==1", r1[0]["created"] == 1, f"created={r1[0]['created']}")
+    check("exactly one ir.mail_server row now present",
+          fake.call("ir.mail_server", "search_count", [[]]) == 1)
+    row = fake.call("ir.mail_server", "search_read", [[]],
+                    {"fields": ["name", "smtp_host", "smtp_port"]})[0]
+    check("created row merges create_values over values",
+          row["name"] == "Mailgun (prod)" and row["smtp_host"] == "smtp.mailgun.org"
+          and row["smtp_port"] == 587, f"row={row}")
 
-    # re-apply is idempotent: the row now matches the domain → write path, and NO
-    # second row is created (the exact duplicate-on-rerun regression this locks in).
-    res2 = reconfig.apply_record_writes(fake, [write])
-    check("re-apply → matched, created==0", res2[0]["created"] == 0 and res2[0]["matched"] == 1, res2)
-    check("no duplicate row on re-apply", len(fake.records["ir.mail_server"]) == 1)
+    # re-apply: the row now matches the domain → write path, no second create
+    r2 = reconfig.apply_record_writes(fake, writes)
+    check("re-apply → created==0 (matched existing)", r2[0]["created"] == 0, f"created={r2[0]['created']}")
+    check("still exactly one row (idempotent, no duplicate)",
+          fake.call("ir.mail_server", "search_count", [[]]) == 1)
 
-    # without create_if_missing a bare-DB write stays a silent no-op (the bug).
+    # without create_if_missing a bare-DB write stays a silent no-op — the exact
+    # GOL-1183 failure mode, locked in so the flag can't be "simplified" away.
     bare = FakeOdoo({"ir.mail_server": {}})
-    no_create = dict(write); no_create.pop("create_if_missing"); no_create.pop("create_values")
-    res3 = reconfig.apply_record_writes(bare, [no_create])
+    no_create = [{
+        "label": "mail server", "model": "ir.mail_server",
+        "domain": [["smtp_host", "=", "smtp.mailgun.org"]],
+        "values": {"smtp_host": "smtp.mailgun.org", "smtp_port": 587},
+    }]
+    r3 = reconfig.apply_record_writes(bare, no_create)
     check("no create_if_missing → no-op (created==0, matched==0)",
-          res3[0]["created"] == 0 and res3[0]["matched"] == 0)
-    check("no row provisioned without the flag", len(bare.records["ir.mail_server"]) == 0)
+          r3[0]["created"] == 0 and r3[0]["matched"] == 0, r3[0])
+    check("no row provisioned without the flag",
+          bare.call("ir.mail_server", "search_count", [[]]) == 0)
 
 
 # ── promotion-integrity-gates ─────────────────────────────────────────────────
