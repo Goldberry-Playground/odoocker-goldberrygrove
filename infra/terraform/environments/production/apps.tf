@@ -144,7 +144,20 @@ resource "digitalocean_app" "hub" {
       rule = "DOMAIN_FAILED"
     }
 
-    # domain{} intentionally omitted — see "Apex cutover" at the bottom.
+    # Apex cutover (GOL-1390 / GOL-1279 finding #1) — the hub is a SEPARATE
+    # resource from digitalocean_app.tenant, so the tenant for_each's domain
+    # block never covers it. Without this block, adding "hub" to
+    # var.apex_cutover_live_keys is a SILENT NO-OP → gatheringatthegrove.com
+    # would 403 fail-closed after its apex DNS flip (DO won't route a Host it
+    # hasn't registered). Same per-apex gate + PRIMARY/zone-omitted pattern as
+    # the tenant block above; local.tenants["hub"] = gatheringatthegrove.com.
+    dynamic "domain" {
+      for_each = contains(var.apex_cutover_live_keys, "hub") ? [1] : []
+      content {
+        name = local.tenants["hub"]
+        type = "PRIMARY"
+      }
+    }
   }
 }
 
