@@ -298,6 +298,12 @@ variable "blog_apex_redirects_enabled" {
   default     = false
 }
 
+variable "blog_headless_demote_enabled" {
+  description = "Demote the blog.* Caddy vhosts on the blogs droplet to headless (blogs.tf → compose/Caddyfile-blogs.tpl). Default false: blog.* keeps proxying the reader-facing Ghost site exactly as today, so this variable is a NO-OP until flipped. When true, each blog.* vhost passes through ONLY the headless surface (/ghost/*, /content/*, /members/*) and 301-redirects every other path to the brand's React blog route on the apex (hub → /journal/{slug}, goldberry → /blog/{slug}, ggg+nursery → apex root). This is the blog.* mirror of var.blog_apex_redirects_enabled (the apex /content/* side). It MUST NOT flip before the apex DNS repoint completes, or readers loop (apex 302 → blog 301 → apex). Feeds cloud-init user_data, so activating requires the board-gated GOL-1279 droplet REPLACE — flip it in the SAME window as the Ghost url-flip (docs/RUNBOOK-apex-launch-cutover.md Step 2b), never a standalone apply."
+  type        = bool
+  default     = false
+}
+
 # --- Grove assets (ADR-009 amendment 2026-08-02, GOL-1122) -------------------
 # ADR-009 states the hub "already holds" these in its deploy env. It did not:
 # verified 2026-08-03 via `doctl apps spec get d5fa7795-...` that none of the

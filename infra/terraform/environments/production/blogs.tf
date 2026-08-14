@@ -173,8 +173,13 @@ resource "digitalocean_droplet" "blogs" {
     }
 
     compose_yml_b64 = base64encode(file("${path.module}/compose/docker-compose.blogs.yml"))
-    caddyfile_b64   = base64encode(file("${path.module}/compose/Caddyfile-blogs.tpl"))
-    mysql_init_b64  = base64encode(file("${path.module}/compose/mysql-init.sql.tpl"))
+    # Caddyfile is now a templatefile (was file()): the blog.* headless-demote is
+    # flag-gated on var.blog_headless_demote_enabled (default false = byte-identical
+    # passthrough). Activating rides the GOL-1279 replace window (GOL-1530).
+    caddyfile_b64 = base64encode(templatefile("${path.module}/compose/Caddyfile-blogs.tpl", {
+      blog_headless_demote_enabled = var.blog_headless_demote_enabled
+    }))
+    mysql_init_b64 = base64encode(file("${path.module}/compose/mysql-init.sql.tpl"))
 
     spaces_access_id      = digitalocean_spaces_key.blogs_backup.access_key
     spaces_secret_key     = digitalocean_spaces_key.blogs_backup.secret_key
