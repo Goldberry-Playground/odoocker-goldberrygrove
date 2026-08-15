@@ -298,6 +298,12 @@ variable "blog_apex_redirects_enabled" {
   default     = false
 }
 
+variable "blog_headless_demote_enabled" {
+  description = "Demote the blog.* Caddy vhosts on the blogs droplet to headless (blogs.tf → compose/Caddyfile-blogs.tpl). Default false: blog.* keeps proxying the reader-facing Ghost site exactly as today, so this variable is a NO-OP until flipped. When true, each blog.* vhost passes through ONLY the headless surface (/ghost/*, /content/*, /members/*) and 301-redirects every other path to the brand's React blog route on the apex (hub → /journal/{slug}, goldberry → /blog/{slug}, ggg+nursery → apex root). This is the blog.* mirror of var.blog_apex_redirects_enabled (the apex /content/* side). It MUST NOT flip before the apex DNS repoint completes, or readers loop (apex 302 → blog 301 → apex). Feeds cloud-init user_data, so activating requires the board-gated GOL-1279 droplet REPLACE — flip it in the SAME window as the Ghost url-flip (docs/RUNBOOK-apex-launch-cutover.md Step 2b), never a standalone apply."
+  type        = bool
+  default     = false
+}
+
 variable "apex_cutover_live_keys" {
   description = "Per-apex switch for the App Platform Host-override Origin Rule (apex-cutover.tf). Each tenant key (hub/goldberry/ggg/nursery) listed here gets its http_request_origin Host-rewrite rule CREATED. Default [] (empty) ⇒ no rule, no CF API call ⇒ merge is inert. This is deliberately per-apex, NOT a single bool: the rule fires for every request to <apex> regardless of DNS, so enabling it for an apex still pointed at Ghost breaks that apex. Add a key ONLY in lockstep with flipping that apex's DNS to the proxied CNAME (canary order for GOL-1279/GOL-1390: [\"ggg\"] validation apex → then hub/goldberry/nursery). CONVERGENCE INVARIANT (finding #1, review 2026-08-12): this committed default is the SOURCE OF TRUTH and MUST equal the set of apexes currently live on the rule. Advance it (in a committed PR) immediately after each apex verifies — do NOT rely on the in-window `-var` override alone. prod-plan-guard.yml and every var-less `terraform apply` plan against THIS default; if it lags reality they plan DESTRUCTION of the live rule → flipped apex 403s and the guard goes permanently red. Requires the CF token to carry Origin/Config Rules Edit on the brand zones (see apex-cutover.tf token-scope note). See docs/RUNBOOK-apex-launch-cutover.md."
   type        = set(string)
