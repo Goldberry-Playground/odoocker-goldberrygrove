@@ -293,9 +293,9 @@ variable "uptime_check_targets" {
 }
 
 variable "blog_apex_redirects_enabled" {
-  description = "Enable the narrow apex/content/* → blog.<apex>/content/* 301 asset redirect (redirects.tf). Default false: blog.* vhosts 404 until the blogs-droplet url-flip apply completes, and the rule must be OFF until each apex is cut over. Flip with -var=blog_apex_redirects_enabled=true in the cutover window AFTER blog.* verifies healthy (see docs/RUNBOOK-apex-launch-cutover.md Step 3). This is a NARROW /content/* rule only — the apex root and storefront routes must reach the App Platform origin, so it must never match `/`."
+  description = "Enable the narrow apex/content/* → blog.<apex>/content/* 301 asset redirect (redirects.tf). Default true POST-CUTOVER (GOL-1545, applied 2026-08-14): both hub + goldberry apexes serve App Platform and blog.* is healthy, so the /content/* asset redirect is permanently on. Pre-cutover this was default false and gated ON with -var=blog_apex_redirects_enabled=true (see docs/RUNBOOK-apex-launch-cutover.md Step 3) so it could not shadow an un-cutover apex; that gate is now spent. Flipping the default codifies the live state so a bare apply cannot silently DISABLE the redirect. This is a NARROW /content/* rule only — the apex root and storefront routes must reach the App Platform origin, so it must never match `/`."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "blog_headless_demote_enabled" {
