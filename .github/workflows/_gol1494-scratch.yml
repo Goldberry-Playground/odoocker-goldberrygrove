@@ -1,0 +1,8 @@
+name: gol1494-guard-verify (scratch — delete)
+on:
+  workflow_dispatch:
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "scratch PR to live-verify GOL-1478 SHA-bind protected-paths-guard; not for merge"
