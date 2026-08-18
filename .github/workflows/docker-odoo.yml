@@ -34,6 +34,10 @@ on:
       - ".env.example"
       - ".github/workflows/docker-odoo.yml"
       - ".dockerignore"
+      # .trivyignore feeds the Trivy gate below; edits to it must re-run this
+      # workflow so a suppression change (add or removal) is validated on the
+      # same commit rather than silently deferred to the next odoo/** change.
+      - ".trivyignore"
   push:
     branches: [main]
     paths:
@@ -41,6 +45,7 @@ on:
       - ".env.example"
       - ".github/workflows/docker-odoo.yml"
       - ".dockerignore"
+      - ".trivyignore"
 
 concurrency:
   group: docker-odoo-${{ github.ref }}
