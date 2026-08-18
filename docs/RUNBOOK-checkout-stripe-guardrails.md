@@ -108,6 +108,25 @@ mint a dedicated backend key (`sk_test_`/live equivalent, or a restricted key
 scoped to session + webhook operations), store it as its own 1Password item, and
 wire it to `stripe_test_secret_key` in the prod env's `.env.op`.
 
+**Prod arming is codified in `infra/terraform/environments/production/.env.op`**
+(GOL-973 block). Two hard gates before the key is wired:
+
+1. **Own item, own vault.** The live key is minted + vaulted in **`Grove Prod`**
+   (same vault as the Shippo LIVE key), NOT the `Goldberry Grove - Admin` infra
+   vault, and NEVER a storefront item.
+2. **Scope-verify before wiring.** Stripe's dashboard restricted-key presets are
+   over-broad (they hand out customer/charge/balance reads). Prove the minted key
+   is checkout-only *before* it touches `.env.op`:
+   ```
+   op run -- python3 qa-tools/check_stripe_key_scopes.py \
+     --op-ref 'op://Grove Prod/stripe-checkout-backend-prod/secret_key'
+   ```
+   The tool is behavioral (Stripe exposes no grant list): it probes live
+   endpoints read-only and requires Checkout-Sessions **write** present + every
+   forbidden capability **403-denied**. Only `VERDICT: PASS` clears the key to be
+   wired; `FAIL` (over-broad or missing scope) => re-mint a narrower key. The key
+   is never passed on argv and never printed — only a masked fingerprint.
+
 ---
 
 ## 5. Post-change smoke test (run after any checkout apply)
@@ -136,7 +155,9 @@ live in Admin `Grove Infra` → `odoo_api_keys_tf_json`.
 ## 6. Related
 
 - `.env.op` and `variables.tf` in `infra/terraform/environments/qa-app-platform/`
-  carry inline pointers back to this runbook.
+  and `.../production/` carry inline pointers back to this runbook.
+- `qa-tools/check_stripe_key_scopes.py` — the scope-verify gate tool (§4). Used
+  for both QA and prod keys; run before wiring any restricted key.
 - ADR-007 — droplet-replace model (reserved IP + durable filestore volume).
 - GOL-890 — thin-proxy checkout architecture (why one env is the SPOF).
 - GOL-956 — DO edge rewrites app 5xx to an opaque browser 504.
