@@ -24,7 +24,7 @@ RUN apk update && apk upgrade --no-cache && \
 # the patched range with --target into the venv site-packages. Trivy reads
 # .dist-info METADATA files, so leftover old metadata = continued findings.
 #
-# Eight packages currently need this. As upstream pgadmin updates these,
+# Nine packages currently need this. As upstream pgadmin updates these,
 # the corresponding block here can shrink (or whole RUN can be deleted).
 #
 #   - urllib3 2.6.3 → 2.7.0+
@@ -74,6 +74,14 @@ RUN apk update && apk upgrade --no-cache && \
 #     parsing), fixed in 0.32.0. Package dir on disk is `httplib2/`,
 #     dist-info is `httplib2-0.31.2.dist-info`.
 #
+#   - sqlparse 0.5.5 → 0.6.0+  (added 2026-08-18, GOL-1640)
+#     CVE-2026-54284 + CVE-2026-59893 + CVE-2026-71491 (all HIGH, ReDoS /
+#     DoS in SQL statement parsing), all fixed in 0.6.0. sqlparse is
+#     pgAdmin's SQL formatter dependency; it only ever formats SQL the
+#     operator types into pgAdmin's own query tool, but the finding is a
+#     required-check red so we upgrade rather than suppress. Package dir on
+#     disk is `sqlparse/`, dist-info is `sqlparse-0.5.5.dist-info`.
+#
 # The venv was created with --without-pip and --system-site-packages, so
 # we install via the system pip targeting the venv's site-packages
 # directory directly.
@@ -94,7 +102,9 @@ RUN rm -rf "${PGADMIN_VENV_SITE_PACKAGES}/urllib3" \
            "${PGADMIN_VENV_SITE_PACKAGES}/pyasn1" \
            "${PGADMIN_VENV_SITE_PACKAGES}/pyasn1-0.6.3.dist-info" \
            "${PGADMIN_VENV_SITE_PACKAGES}/httplib2" \
-           "${PGADMIN_VENV_SITE_PACKAGES}/httplib2-0.31.2.dist-info" && \
+           "${PGADMIN_VENV_SITE_PACKAGES}/httplib2-0.31.2.dist-info" \
+           "${PGADMIN_VENV_SITE_PACKAGES}/sqlparse" \
+           "${PGADMIN_VENV_SITE_PACKAGES}/sqlparse-0.5.5.dist-info" && \
     /usr/local/bin/pip3 install \
         --no-cache-dir \
         --target="${PGADMIN_VENV_SITE_PACKAGES}" \
@@ -106,7 +116,8 @@ RUN rm -rf "${PGADMIN_VENV_SITE_PACKAGES}/urllib3" \
         'python-engineio>=4.13.2,<5.0' \
         'pillow>=12.3.0,<13.0' \
         'pyasn1>=0.6.4,<0.7' \
-        'httplib2>=0.32.0,<0.33'
+        'httplib2>=0.32.0,<0.33' \
+        'sqlparse>=0.6.0,<0.7'
 
 # Check if the private key exists, copy it and set permissions if it does
 RUN if [ -f ./pgadmin/private_key ]; then \
