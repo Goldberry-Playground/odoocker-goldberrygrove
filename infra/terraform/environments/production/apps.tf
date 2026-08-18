@@ -274,6 +274,24 @@ resource "digitalocean_app" "tenant" {
         type = "PRIMARY"
       }
     }
+
+    # nursery reconcile (GOL-1545 item #4): the nursery app was registered
+    # out-of-band with a www ALIAS (www.atthegrovenursery.com) in ADDITION to its
+    # apex PRIMARY. No other tenant carries a www ALIAS on the app itself (their
+    # www is handled at the Cloudflare edge — see redirects.tf), so this ALIAS is
+    # stamped ONLY for the nursery app and ONLY once nursery is in the live set.
+    # Codifying it makes the committed spec match live exactly (PRIMARY
+    # atthegrovenursery.com + ALIAS www.atthegrovenursery.com) so a converged
+    # plan shows no domain drift; without it, plan would compute a spurious
+    # removal of the live www ALIAS (harmless only because DO provider ~>2.93
+    # does not delete absent domains — do not rely on that).
+    dynamic "domain" {
+      for_each = (each.key == "nursery" && contains(var.apex_cutover_live_keys, "nursery")) ? [1] : []
+      content {
+        name = "www.${local.tenants["nursery"]}"
+        type = "ALIAS"
+      }
+    }
   }
 }
 
