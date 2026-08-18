@@ -124,12 +124,12 @@ write_files:
       # GOL-995). odoo.conf's SMTP group reads SMTP_SERVER/PORT/SSL/USER/
       # PASSWORD + EMAIL_FROM/FROM_FILTER; entrypoint.sh + odoorc.sh substitute
       # them into /etc/odoo/odoo.conf. Non-secret defaults are the hub Mailgun
-      # sending domain (mg.gatheringatthegrove.com). SMTP_PASSWORD is the ONLY
-      # secret and stays empty until the CI/TF apply op account can read the
-      # grove-qa 1P vault (same GOL-696 blocker as the Stripe keys above) AND
-      # mg.gatheringatthegrove.com is Mailgun DNS-verified (GOL-244). Empty
-      # password => SMTP auth can't succeed => sending stays inert (nothing
-      # auto-sends in QA until Ada places a test order), zero regression.
+      # sending domain (send.gatheringatthegrove.com — NOT mg.*, which is an
+      # unmanaged account; see variables.tf). SMTP_PASSWORD is the ONLY secret
+      # and stays empty until supplied via TF_VAR_smtp_password from 1Password
+      # (`Mailgun | Goldberry Grove` → smtp_password_hub). Empty password =>
+      # SMTP auth can't succeed => sending stays inert (nothing auto-sends in
+      # QA until Ada places a test order), zero regression.
       # EMAIL_FROM is double-quoted: this .env is `.`-sourced by the runcmd
       # steps below, and a bare `Name <addr>` would break `source` on the `<`
       # redirection metachar; odoorc.sh strips one quote layer for odoo.conf.
