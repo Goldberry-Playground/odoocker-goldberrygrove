@@ -14,11 +14,12 @@
 #   TF_VAR_grove_brand_pr_token        = op://Goldberry Grove - Admin/Grove Infra/grove_brand_pr_token
 #
 # Mailgun SMTP transactional email (GOL-248/GOL-995). Only the password is a
-# secret; server/port/ssl/user/from default to the hub sending domain in
-# variables.tf. The password VALUE lives in the `grove-qa` vault (like the
-# Stripe test keys), so it needs the grove-qa-read op account (GOL-696) AND
-# mg.gatheringatthegrove.com Mailgun-verified (GOL-244) before it delivers:
-#   TF_VAR_smtp_password = op://grove-qa/Mailgun QA SMTP/password
+# secret; server/port/ssl/user/from default to the hub sending domain
+# (send.gatheringatthegrove.com — NOT mg.*) in variables.tf. The password VALUE
+# lives in 1Password `Goldberry Grove - Admin` → `Mailgun | Goldberry Grove` →
+# smtp_password_hub; the op service account can read it at apply time:
+#   TF_VAR_smtp_password="$(op item get 'Mailgun | Goldberry Grove' \
+#     --vault 'Goldberry Grove - Admin' --fields smtp_password_hub --reveal)"
 #
 # This file documents the non-sensitive vars an operator might want to
 # override (defaults work for the canonical setup):

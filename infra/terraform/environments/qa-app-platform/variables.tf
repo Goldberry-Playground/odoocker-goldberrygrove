@@ -392,14 +392,22 @@ variable "stripe_test_webhook_secret" {
 # EMAIL_FROM/FROM_FILTER); entrypoint.sh + odoorc.sh substitute them into the
 # SMTP group of /etc/odoo/odoo.conf. Only smtp_password is a real secret — the
 # server/port/ssl/user/from defaults are the hub Mailgun sending domain
-# (mg.gatheringatthegrove.com) per docs/RUNBOOK-mailgun-transactional-email.md.
+# `send.gatheringatthegrove.com` per docs/RUNBOOK-mailgun-transactional-email.md.
 #
-# BLOCKED live delivery (mirrors the Stripe GOL-696 blocker above): the
-# password VALUE lives in the `grove-qa` 1Password vault, which the current
-# deploy-time `op` account cannot read; and mg.gatheringatthegrove.com must be
-# Mailgun DNS-verified (SPF/DKIM — GOL-244) before mail actually sends. The
-# empty password default keeps plan/apply working and SMTP auth inert (zero
-# regression) until both clear.
+# ⚠ NOT `mg.gatheringatthegrove.com` — that hostname has live DNS on our zone
+# but belongs to an UNKNOWN/unmanaged Mailgun account (the Mailgun API returns
+# 404 for it under our account). The hub was provisioned as `send.*`; the
+# GOL-517 provisioning note in the RUNBOOK is authoritative. Do not "fix" these
+# back to `mg.*`.
+#
+# Sending domain + credential are LIVE (GOL-995, verified 2026-08-18):
+# `send.gatheringatthegrove.com` state=active with SPF+DKIM valid, and SMTP
+# login `transactional@send.gatheringatthegrove.com` authenticates on
+# smtp.mailgun.org:587 (STARTTLS). smtp_password VALUE lives in 1Password
+# `Goldberry Grove - Admin` → `Mailgun | Goldberry Grove` → `smtp_password_hub`
+# (op service account can read it at apply time). Empty default keeps
+# plan/apply working and SMTP auth inert (zero regression) until injected via
+# TF_VAR_smtp_password at the wiring apply.
 variable "smtp_server" {
   description = "Mailgun SMTP relay host for Odoo transactional email. Injected into /etc/grove/.env as SMTP_SERVER. Default is the Mailgun US endpoint; switch to smtp.eu.mailgun.org for an EU account."
   type        = string
@@ -419,13 +427,13 @@ variable "smtp_ssl" {
 }
 
 variable "smtp_user" {
-  description = "Mailgun SMTP login (postmaster@mg.<sending-domain>). Injected as SMTP_USER. Default = hub sending domain per RUNBOOK-mailgun-transactional-email.md."
+  description = "Mailgun SMTP login for the hub sending domain. Injected as SMTP_USER. Default is the credential stored in 1Password (`Mailgun | Goldberry Grove` → smtp_login_hub) and validated live on smtp.mailgun.org:587."
   type        = string
-  default     = "postmaster@mg.gatheringatthegrove.com"
+  default     = "transactional@send.gatheringatthegrove.com"
 }
 
 variable "smtp_password" {
-  description = "Mailgun SMTP password for smtp_user. Injected as SMTP_PASSWORD. VALUE is an item in the `grove-qa` 1Password vault; read via TF_VAR_smtp_password once the CI/TF apply op account can read grove-qa (GOL-696) AND the Mailgun sending domain is DNS-verified (GOL-244). Empty default keeps apply/plan working and SMTP auth inert (zero regression) until provisioned."
+  description = "Mailgun SMTP password for smtp_user. Injected as SMTP_PASSWORD. VALUE is in 1Password `Goldberry Grove - Admin` → `Mailgun | Goldberry Grove` → smtp_password_hub; supply via TF_VAR_smtp_password at the wiring apply. Empty default keeps apply/plan working and SMTP auth inert (zero regression) until provisioned."
   type        = string
   sensitive   = true
   default     = ""
@@ -434,13 +442,13 @@ variable "smtp_password" {
 variable "email_from" {
   description = "Odoo email_from — display-name + address on the hub Mailgun sending domain. Injected as EMAIL_FROM (double-quoted in the .env because it is shell-`source`d and contains spaces + `<>`; odoorc.sh strips one quote layer for odoo.conf). Mailgun rejects a From outside the authenticated domain, so all QA order/shipping mail sends from the hub sending domain (per-brand From is a GOL-248 follow-up)."
   type        = string
-  default     = "Gathering at the Grove <orders@mg.gatheringatthegrove.com>"
+  default     = "Gathering at the Grove <orders@send.gatheringatthegrove.com>"
 }
 
 variable "from_filter" {
   description = "Odoo from_filter (FROM_FILTER) — the authenticated Mailgun sending domain Odoo is allowed to send From."
   type        = string
-  default     = "mg.gatheringatthegrove.com"
+  default     = "send.gatheringatthegrove.com"
 }
 
 variable "shippo_api_key" {

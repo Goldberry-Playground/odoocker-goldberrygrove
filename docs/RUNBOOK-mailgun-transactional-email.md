@@ -69,10 +69,14 @@ reputation dip cannot break magic links or receipts.
   hub domain was provisioned as `send.*`, not `mg.*`. The `ghost_smtp.from`/`user`
   values absorb this (both are within the authenticated `send.` domain), so **no
   config change is needed**; do not "fix" it to `mg.*`.
-- A uniform `grove-tx@<domain>` SMTP credential exists on all 4 domains, password
-  reset + **validated live via SMTP AUTH on smtp.mailgun.org:587** (2026-08-05).
-  The assembled `ghost_smtp` JSON must be placed by an admin into
-  `Grove Infra/ghost_smtp_tf_json` (op service account is read-only on the vault).
+- A uniform `transactional@<domain>` SMTP credential exists on all 4 domains,
+  password reset + **validated live via SMTP AUTH on smtp.mailgun.org:587**
+  (hub re-verified 2026-08-18 for GOL-995). Per-domain login/password are in
+  1Password `Goldberry Grove - Admin` → `Mailgun | Goldberry Grove` as
+  `smtp_login_{hub,goldberry,ggg,nursery}` / `smtp_password_{...}` (hub =
+  `transactional@send.gatheringatthegrove.com`). The assembled `ghost_smtp`
+  JSON must be placed by an admin into `Grove Infra/ghost_smtp_tf_json` (op
+  service account is read-only on the vault).
 
 **The step-2 `terraform apply` below is NOT a `.env` refresh in the current
 state — it is a full droplet REPLACE.** `grove-prod-blogs` has a pending replace
