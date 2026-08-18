@@ -152,15 +152,25 @@ variable "app_instance_size_slug" {
 }
 
 variable "hub_image_tag" {
-  description = "Tag of the grove-hub image on GHCR (ghcr.io/goldberry-playground/grove-hub:<tag>) that App Platform pulls. 'latest' tracks grove-sites CI; pin to a SHA to lock a reproducible prod release. Same pattern as var.odoo_image_tag."
+  description = "Tag of the grove-hub image on GHCR (ghcr.io/goldberry-playground/grove-hub:<tag>) that App Platform pulls. GOL-1304 Option-A ruling (ratified 2026-08-12, launch-gate Aug 20): prod pins a 40-char grove-sites commit SHA -- it NEVER tracks a moving 'latest'. Same reproducible-release rationale + validation as var.custom_modules_ref: a 'latest' retag from grove-sites CI must not silently ship to prod (and with GHCR-sourced apps deploy_on_push never even fires -- GOL-1607 -- so an unpinned 'latest' is BOTH un-gated and unobservable). Bumping this is a reviewed infra PR whose deploy step is an explicit `doctl apps create-deployment` (grove-sites do-app-redeploy primitive, PR #547). Current pin b84d7678: the grove-sites main HEAD that prod pulled on the 2026-08-17 15:44Z redeploy (GOL-1607); GHCR `latest` still resolves to this same digest across all four images, so pinning to it is a verified no-op deploy (GOL-1650 recon)."
   type        = string
-  default     = "latest"
+  default     = "b84d767815bdbd922fd42287109083303c62487b"
+
+  validation {
+    condition     = can(regex("^[0-9a-f]{40}$", var.hub_image_tag))
+    error_message = "hub_image_tag must be a full 40-char lowercase hex grove-sites commit SHA -- 'latest'/branch names are rejected so prod can never track a moving GHCR tag (GOL-1304 Option-A)."
+  }
 }
 
 variable "tenant_image_tag" {
-  description = "Tag of the grove-goldberry / grove-ggg / grove-nursery images on GHCR that the tenant App Platform apps pull. One shared tag because grove-sites CI publishes all four images from the same commit -- pinning tenants to different tags would deploy skewed monorepo states."
+  description = "Tag of the grove-goldberry / grove-ggg / grove-nursery images on GHCR that the tenant App Platform apps pull. One shared tag because grove-sites CI publishes all four images from the same commit -- pinning tenants to different tags would deploy skewed monorepo states. GOL-1304 Option-A: a pinned 40-char SHA, same rationale + validation as var.hub_image_tag / var.custom_modules_ref. Current pin b84d7678 == the same commit as var.hub_image_tag (verified: GHCR `latest` for grove-goldberry/grove-ggg/grove-nursery all resolve to this SHA's digest today, GOL-1650) so applying the pin is a no-op deploy."
   type        = string
-  default     = "latest"
+  default     = "b84d767815bdbd922fd42287109083303c62487b"
+
+  validation {
+    condition     = can(regex("^[0-9a-f]{40}$", var.tenant_image_tag))
+    error_message = "tenant_image_tag must be a full 40-char lowercase hex grove-sites commit SHA -- 'latest'/branch names are rejected so prod can never track a moving GHCR tag (GOL-1304 Option-A)."
+  }
 }
 
 variable "grove_revalidate_secret" {
