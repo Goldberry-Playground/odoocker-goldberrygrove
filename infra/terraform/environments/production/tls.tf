@@ -33,13 +33,16 @@
 #   nursery (atthegrovenursery.com) — STRICT
 #     ONLY blog.* is proxied (CF Origin CA). apex/www/email.mg are grey-cloud
 #     (DNS-only) ⇒ SSL mode irrelevant to them.
-#   ggg (woodworkingeorge.com) — FULL (blocked)
-#     www.woodworkingeorge.com → parkingpage.namecheap.com is proxied and has NO
-#     valid origin cert (525 on Full today). Under strict it stays broken (526).
-#     Resolve www first (drop the record, or a CF edge redirect www→apex that
-#     fires before origin-pull), then flip ggg→strict here. Tracked as GOL-1551
-#     follow-up. apex→App Platform (GTS) + blog→CF Origin CA are already
-#     strict-safe; www is the only blocker.
+#   ggg (woodworkingeorge.com) — STRICT (2026-08-18, GOL-1551 tail)
+#     apex→App Platform (GTS) + blog→CF Origin CA are strict-safe. The lone
+#     blocker was www.woodworkingeorge.com → parkingpage.namecheap.com (proxied,
+#     no strict-valid origin cert, 525 even on Full). RESOLVED by a CF edge
+#     redirect www→apex (cloudflare_ruleset.www_apex_redirect in redirects.tf):
+#     the http_request_dynamic_redirect phase fires BEFORE origin-pull, so the
+#     parking-page origin is never contacted and its (missing) cert is moot.
+#     Live-flipped + verified 2026-08-18: apex 200, www 301→apex (path+query
+#     preserved), blog 301 — no 526. email.mg proxied — same edge-gap no-op as
+#     the other zones.
 
 variable "zone_ssl_mode" {
   description = "Per-brand-zone Cloudflare origin-facing SSL/TLS mode. 'strict' = Full(strict) (CF validates the origin cert is trusted); 'full' = Full (encrypted but unvalidated). Set a zone to 'strict' ONLY after confirming EVERY proxied origin in it presents a strict-valid cert (public CA or CF Origin CA) — see the GOL-1551 audit in tls.tf. Reversible in seconds. This committed default is the SOURCE OF TRUTH: prod-plan-guard and every var-less apply plan against it, so it MUST equal the zones' live modes."
@@ -49,7 +52,7 @@ variable "zone_ssl_mode" {
     hub       = "strict" # GOL-1551: all proxied origins verified strict-safe + live-flipped 2026-08-16
     goldberry = "strict" # GOL-1551: store(Shopify GTS)/blog(Origin CA)/apex(App Platform) verified
     nursery   = "strict" # GOL-1551: only blog.* proxied (CF Origin CA); rest grey-cloud
-    ggg       = "full"   # GOL-1551: blocked — www.* namecheap parking page has no strict-valid origin cert
+    ggg       = "strict" # GOL-1551: www.* unblocked via edge redirect (redirects.tf); apex(App Platform)/blog(Origin CA) verified + live-flipped 2026-08-18
   }
 
   validation {

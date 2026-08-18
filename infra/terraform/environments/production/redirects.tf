@@ -73,3 +73,54 @@ resource "cloudflare_ruleset" "blog_apex_redirect" {
     }
   }
 }
+
+# -- www.woodworkingeorge.com → apex canonical redirect (GOL-1551 tail) ----------
+#
+# The ggg zone's lone Full(strict) blocker was www.woodworkingeorge.com, a
+# proxied CNAME → parkingpage.namecheap.com with NO strict-valid origin cert
+# (525 even on Full — the parking origin never completed a CF→origin handshake).
+#
+# Rather than drop the record (NXDOMAIN for www) or accept a permanent 526, we
+# 301 www → the canonical apex at the CF edge. The http_request_dynamic_redirect
+# phase runs BEFORE origin selection/pull, so CF answers the redirect itself and
+# never contacts the parking origin — its (missing/invalid) cert becomes moot,
+# which is exactly what unblocks ggg → Full(strict) (see tls.tf). Path + query
+# are preserved (www.../collections/all?x=1 → apex/collections/all?x=1).
+#
+# ggg is NOT in cloudflare_ruleset.blog_apex_redirect (hub/goldberry only), so
+# this is a separate resource owning ggg's dynamic_redirect phase entrypoint.
+# Same phase-ownership caveat applies: this ruleset owns the ENTIRE
+# http_request_dynamic_redirect phase for the ggg zone — any hand-created
+# dashboard rule in that phase is removed on apply (intended).
+#
+# Live-created via the CF API + flipped ggg→strict on 2026-08-18 (verified: apex
+# 200, www 301→apex, blog 301, no 526); this codifies the source of truth. The
+# `name` must match the live ruleset exactly ("www apex canonical redirect") —
+# `name` is ForceNew on cloudflare_ruleset (provider ~>4.40), and this resource
+# is not yet in prod state (see the reconcile note in the GOL-1551 PR). On the
+# reconcile apply it must be `terraform import`ed, not re-created (a second
+# dynamic_redirect entrypoint would conflict).
+resource "cloudflare_ruleset" "www_apex_redirect" {
+  zone_id = data.cloudflare_zone.brand["ggg"].id
+
+  name  = "www apex canonical redirect"
+  kind  = "zone"
+  phase = "http_request_dynamic_redirect"
+
+  rules {
+    enabled     = true
+    description = "301 www.${local.tenants["ggg"]} -> ${local.tenants["ggg"]} (canonical apex; fires at edge before origin-pull, unblocks Full(strict)) [GOL-1551]"
+    expression  = "(http.host eq \"www.${local.tenants["ggg"]}\")"
+    action      = "redirect"
+
+    action_parameters {
+      from_value {
+        status_code = 301
+        target_url {
+          expression = "concat(\"https://${local.tenants["ggg"]}\", http.request.uri.path)"
+        }
+        preserve_query_string = true
+      }
+    }
+  }
+}
