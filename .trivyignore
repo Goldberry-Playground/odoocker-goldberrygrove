@@ -22,3 +22,23 @@
 # expiry; drop this entry once a newer odoo:19 base ships postcss ≥ 8.5.18.
 # Tracked: GOL-934.
 GHSA-r28c-9q8g-f849 exp:2026-09-15
+# CVE-2026-73646 is the CVE alias of the same postcss advisory
+# (GHSA-r28c-9q8g-f849). Trivy's DB now keys the finding under this CVE ID,
+# so the GHSA line above no longer matches — same package, path, mitigation,
+# and fix path (postcss 8.5.14 → 8.5.18 via an upstream odoo:19 rebuild).
+# Tracked: GOL-934 / GOL-1644.
+CVE-2026-73646 exp:2026-11-15
+
+# nanoid DoS via infinite loop in random-ID generation (CVE-2026-67213,
+# fixed 3.3.18/5.1.6) and in custom-alphabet generation (CVE-2026-67214,
+# fixed 3.3.16/5.1.16). nanoid 3.3.12 is postcss's transitive dependency,
+# bundled in the same upstream `odoo:19` base image at
+#   /usr/local/lib/node_modules/rtlcss/node_modules/nanoid
+# Same reachability argument as the postcss entries above: rtlcss only
+# generates IDs for Odoo's own trusted bundled asset CSS at build/asset-
+# generation time, never on attacker-controlled input, so the DoS loop is
+# not reachable in our deployment. Not our dependency — cannot bump without
+# an upstream odoo:19 rebuild that revs rtlcss's nanoid. Drop once a newer
+# odoo:19 base ships nanoid ≥ 3.3.18. Tracked: GOL-934 / GOL-1644.
+CVE-2026-67213 exp:2026-11-15
+CVE-2026-67214 exp:2026-11-15
