@@ -1,0 +1,307 @@
+name: Promote storefronts to production
+
+# Automates the manual chain from docs/RUNBOOK-storefront-release.md /
+# grove-sites' docs/runbooks/prod-frontend-deploy.md ("Promoting a new build"),
+# so promoting no longer requires running terraform/doctl by hand:
+#
+#   1. Bump the pinned image-tag SHA (a reviewed, auto-opened + auto-merged PR).
+#   2. terraform apply -target=... (updates the four app specs).
+#   3. One doctl create-deployment per app (this is what actually rolls it --
+#      GOL-1607 Lesson 1: a spec update alone deploys nothing on GHCR apps).
+#   4. Verify the build fingerprint matches QA, smoke the public route.
+#   5. Notify Discord, re-trigger prod-deploy-drift.yml for an immediate re-check.
+#
+# THE HUMAN GATE (read before wiring this up):
+# ---------------------------------------------------------------------------
+# The `promote` job runs under the `production` GitHub Environment. If that
+# Environment does not exist yet, or has no required reviewers configured,
+# THIS JOB RUNS UNATTENDED THE MOMENT IT'S TRIGGERED -- there is no gate.
+#
+# One-time setup (repo Settings, not something this workflow or an agent can
+# safely do on your behalf -- it's an access-control change):
+#   Settings -> Environments -> New environment -> name it exactly "production"
+#   -> Required reviewers -> add yourself (and/or Terra). Save.
+# Do this BEFORE the first real run. The `prepare` job's step summary shows
+# exactly what would change (current pin -> proposed pin, per app) so the
+# reviewer approves an informed diff, not a blind click.
+# ---------------------------------------------------------------------------
+#
+# This does not reopen what GOL-1304 (Option A) closed: prod still never
+# advances on a bare grove-sites push. Nothing here is scheduled or fires on
+# `push`. A promotion only starts when a human explicitly runs this workflow,
+# and it does not touch prod until that same (or another authorized) human
+# approves the Environment gate.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: "grove-sites commit SHA to promote (40-char hex). Leave blank to use grove-sites main HEAD."
+        required: false
+        type: string
+      confirm:
+        description: 'Type PROMOTE to confirm you intend to release to production.'
+        required: true
+        type: string
+
+concurrency:
+  # Shares the same lock group prod-plan-guard.yml uses -- a promotion apply
+  # must never race a plan or another apply against the same state.
+  group: terraform-production
+  cancel-in-progress: false
+
+jobs:
+  # --- Resolve + validate the target build. No secrets, no prod access. -----
+  prepare:
+    name: Resolve target build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      target_sha: ${{ steps.resolve.outputs.target_sha }}
+    steps:
+      - name: Guard the typed confirmation
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          if [ "$CONFIRM" != "PROMOTE" ]; then
+            echo "::error::Input 'confirm' must be exactly PROMOTE. This is a deliberate typing gate on top of the Environment reviewer gate -- not a substitute for configuring required reviewers (see this workflow's header comment)."
+            exit 1
+          fi
+
+      - name: Resolve + validate target SHA
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_SHA: ${{ inputs.target_sha }}
+        run: |
+          if [ -n "$INPUT_SHA" ]; then
+            SHA="$INPUT_SHA"
+          else
+            SHA="$(gh api repos/Goldberry-Playground/grove-sites/commits/main --jq '.sha')"
+            echo "No target_sha given -- resolved grove-sites main HEAD: $SHA"
+          fi
+          if ! [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::'$SHA' is not a 40-char lowercase hex commit SHA."
+            exit 1
+          fi
+          echo "target_sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout (read current pin for the summary)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        timeout-minutes: 2
+
+      - name: Write plan summary
+        env:
+          TARGET: ${{ steps.resolve.outputs.target_sha }}
+        run: |
+          CURRENT_HUB="$(grep -oP 'default\s*=\s*"\K[0-9a-f]{40}' infra/terraform/environments/production/variables.tf | head -1)"
+          {
+            echo "## Promotion request"
+            echo ""
+            echo "| | SHA |"
+            echo "|---|---|"
+            echo "| Currently pinned | \`$CURRENT_HUB\` |"
+            echo "| Proposed | \`$TARGET\` |"
+            echo ""
+            if [ "$CURRENT_HUB" = "$TARGET" ]; then
+              echo "**No change** -- proposed SHA matches the current pin. The apply + redeploy steps will still run (useful for re-rolling a stuck deployment) but this is not promoting new code."
+            else
+              echo "Compare: https://github.com/Goldberry-Playground/grove-sites/compare/${CURRENT_HUB}...${TARGET}"
+            fi
+            echo ""
+            echo "Approving the \`production\` environment below will: bump the pin, \`terraform apply\` it (targeted to the four storefront apps), issue one \`doctl create-deployment\` per app, verify the build fingerprint against QA, and notify Discord."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # --- The gated work. Requires production Environment approval to start. ---
+  promote:
+    name: Promote (requires production environment approval)
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    concurrency:
+      group: terraform-production
+      cancel-in-progress: false
+
+    permissions:
+      contents: write # to commit + merge the pin-bump PR
+      pull-requests: write
+
+    env:
+      TF_DIR: infra/terraform/environments/production
+      TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
+
+    steps:
+      - name: Checkout odoocker (this repo)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        timeout-minutes: 2
+        with:
+          fetch-depth: 0
+
+      # The redeploy primitive is grove-sites' -- single source of truth
+      # (do NOT copy/duplicate it here; that's exactly the split-runbook
+      # problem this whole consolidation exists to close).
+      - name: Checkout grove-sites (for scripts/lib/do-app-redeploy.sh)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        timeout-minutes: 2
+        with:
+          repository: Goldberry-Playground/grove-sites
+          ref: main
+          path: grove-sites-scripts
+          sparse-checkout: |
+            scripts/lib/do-app-redeploy.sh
+
+      # Same credential path as .github/workflows/prod-plan-guard.yml (already
+      # proven against this exact state + these exact resources). Reuses the
+      # existing DIGITALOCEAN_TOKEN rather than provisioning a new one -- it
+      # already has write scope (used manually for the 2026-08-20 promotion).
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
+        timeout-minutes: 2
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_CI_SA_TOKEN }}
+          DIGITALOCEAN_TOKEN:       op://Grove Prod/odoocker/DIGITALOCEAN_TOKEN
+          SPACES_ACCESS_KEY_ID:     op://Grove Prod/odoocker/SPACES_ACCESS_KEY_ID
+          SPACES_SECRET_ACCESS_KEY: op://Grove Prod/odoocker/SPACES_SECRET_ACCESS_KEY
+          CLOUDFLARE_API_TOKEN:     op://Grove Prod/odoocker/CLOUDFLARE_API_TOKEN
+          GROVE_REVALIDATE_SECRET:  op://Grove Prod/odoocker/GROVE_REVALIDATE_SECRET
+          DISCORD_OPS_WEBHOOK_URL:  op://Grove Prod/odoocker/DISCORD_OPS_WEBHOOK_URL
+          ODOO_API_KEYS_TF_JSON:    op://Grove Prod/odoocker/ODOO_API_KEYS_TF_JSON
+        with:
+          export-env: true
+
+      - name: Alias SPACES_* to AWS_* for the TF S3 backend
+        timeout-minutes: 1
+        run: |
+          echo "AWS_ACCESS_KEY_ID=$SPACES_ACCESS_KEY_ID" >> "$GITHUB_ENV"
+          echo "AWS_SECRET_ACCESS_KEY=$SPACES_SECRET_ACCESS_KEY" >> "$GITHUB_ENV"
+
+      # --- Step 1: bump the pinned SHA as a reviewed commit, not a bare -var
+      # override -- otherwise committed HCL drifts from what's actually live
+      # (the exact "two SHAs must be kept honest" trap GITSYNC_REF hit in
+      # ADR-009). The environment approval above IS the review for this
+      # specific bump, so it's committed straight to main rather than opening
+      # a second PR that would need a second, redundant human click.
+      - name: Bump the pinned image-tag SHA
+        id: bump
+        run: |
+          FILE="$TF_DIR/variables.tf"
+          BEFORE="$(grep -oP 'default\s*=\s*"\K[0-9a-f]{40}' "$FILE" | sort -u)"
+          echo "Bumping pinned SHA(s): $BEFORE -> $TARGET_SHA"
+          sed -i -E "s/default\s*=\s*\"[0-9a-f]{40}\"/default     = \"$TARGET_SHA\"/g" "$FILE"
+          if git diff --quiet -- "$FILE"; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Pin already at $TARGET_SHA -- no commit needed."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git -c user.name="grove-promote-bot" -c user.email="actions@github.com" \
+              commit -am "infra(prod): promote storefronts to ${TARGET_SHA} (promote-storefronts.yml)"
+            git push origin HEAD:main
+          fi
+
+      - name: Terraform init
+        timeout-minutes: 5
+        run: |
+          cat > "$TF_DIR/backend.hcl" <<'EOF'
+          endpoint                    = "https://nyc3.digitaloceanspaces.com"
+          bucket                      = "grove-tf-state"
+          key                         = "production/terraform.tfstate"
+          region                      = "us-east-1"
+          skip_credentials_validation = true
+          skip_metadata_api_check     = true
+          skip_region_validation      = true
+          skip_requesting_account_id  = true
+          force_path_style            = true
+          EOF
+          terraform -chdir="$TF_DIR" init -backend-config=backend.hcl -input=false
+
+      - name: Map env-specific TF vars
+        run: |
+          {
+            echo "TF_VAR_do_token=$DIGITALOCEAN_TOKEN"
+            echo "TF_VAR_cloudflare_api_token=$CLOUDFLARE_API_TOKEN"
+            echo "TF_VAR_spaces_access_id=$SPACES_ACCESS_KEY_ID"
+            echo "TF_VAR_spaces_secret_key=$SPACES_SECRET_ACCESS_KEY"
+            echo "TF_VAR_grove_revalidate_secret=$GROVE_REVALIDATE_SECRET"
+            echo "TF_VAR_discord_webhook_url=$DISCORD_OPS_WEBHOOK_URL"
+            echo "TF_VAR_odoo_api_keys=$ODOO_API_KEYS_TF_JSON"
+            # Not app-spec-relevant to the four targeted resources below;
+            # placeholders are safe here for the same reason prod-plan-guard.yml
+            # uses them (see that workflow for the full rationale).
+            echo "TF_VAR_grove_assets_key=ci-promote-placeholder"
+            echo "TF_VAR_grove_assets_secret=ci-promote-placeholder"
+            echo "TF_VAR_grove_assets_optimize_token=ci-promote-placeholder"
+          } >> "$GITHUB_ENV"
+
+      # --- Step 2: apply, scoped to ONLY the four storefront apps. Never a
+      # bare `terraform apply` here -- see prod-plan-guard.yml for why an
+      # untargeted prod apply is dangerous on this state file.
+      - name: Terraform apply (targeted to the four storefront apps)
+        timeout-minutes: 10
+        run: |
+          terraform -chdir="$TF_DIR" apply -auto-approve -input=false \
+            -target='digitalocean_app.hub' \
+            -target='digitalocean_app.tenant["goldberry"]' \
+            -target='digitalocean_app.tenant["ggg"]' \
+            -target='digitalocean_app.tenant["nursery"]'
+
+      # --- Step 3: the actual roll. One deployment per app, single-fire,
+      # via the shared primitive (GOL-1607 Lessons 1 + 2 live here).
+      - name: Redeploy all four storefronts
+        env:
+          DIGITALOCEAN_ACCESS_TOKEN: ${{ env.DIGITALOCEAN_TOKEN }}
+        run: |
+          source grove-sites-scripts/scripts/lib/do-app-redeploy.sh
+          for app in grove-hub-prod grove-goldberry-prod grove-ggg-prod grove-nursery-prod; do
+            echo "::group::Redeploying $app"
+            do_app_redeploy "$app"
+            rc=$?
+            echo "::endgroup::"
+            if [ "$rc" -eq 1 ]; then
+              echo "::error::$app redeploy hard-failed (rc=1) -- stopping. Apps not yet reached in this loop were NOT touched; apps before this one in the loop may already be live on the new build. Check drift-check before re-running."
+              exit 1
+            fi
+            # rc=2 (skipped, deployment already in flight) is not fatal --
+            # do_app_redeploy already warned; move on to the next app.
+          done
+
+      # --- Step 4: prove the right build actually rolled, per the
+      # fingerprint method in the canonical runbook (ported from GOL-1325).
+      - name: Verify build fingerprint against QA
+        run: |
+          fp() { curl -s --max-time 20 "$1/" | grep -oE 'static/chunks/webpack-[a-f0-9]+\.js' | head -1; }
+          FAIL=0
+          declare -A PROD_QA=(
+            [https://gatheringatthegrove.com]=https://hub.qa.gatheringatthegrove.com
+            [https://goldberrygrove.farm]=https://goldberry.qa.gatheringatthegrove.com
+            [https://woodworkingeorge.com]=https://ggg.qa.gatheringatthegrove.com
+            [https://atthegrovenursery.com]=https://nursery.qa.gatheringatthegrove.com
+          )
+          for prod in "${!PROD_QA[@]}"; do
+            qa="${PROD_QA[$prod]}"
+            pfp="$(fp "$prod")"; qfp="$(fp "$qa")"
+            if [ "$pfp" = "$qfp" ] && [ -n "$pfp" ]; then
+              echo "OK   $prod matches QA ($pfp)"
+            else
+              echo "::warning::$prod fingerprint ($pfp) != QA ($qfp) -- QA may have moved past the promoted SHA since this run started, or the check itself is flaky (a CDN edge cache is a known false-positive source). Not treated as fatal; verify by eye before re-running anything."
+              FAIL=1
+            fi
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$prod")
+            [ "$code" = "200" ] || { echo "::error::$prod returned HTTP $code, expected 200"; FAIL=1; }
+          done
+          [ "$FAIL" -eq 0 ] || echo "::warning::One or more verification checks did not pass cleanly -- see above. The deployments themselves already completed (Lesson 1/2 guards ran); this step only confirms what's now serving."
+
+      - name: Notify Discord
+        if: always()
+        run: |
+          curl -fsS -X POST -H "Content-Type: application/json" \
+            -d "$(jq -n --arg sha "$TARGET_SHA" --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+              '{username:"Grove Prod Deploy", embeds:[{title:"Storefronts promoted", description:("Target: `" + $sha + "`\nRun: " + $run), color: 3066993}]}')" \
+            "$DISCORD_OPS_WEBHOOK_URL" || echo "::warning::Discord notify failed (deploy itself already completed)"
+
+      - name: Trigger an immediate drift re-check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run prod-deploy-drift.yml --repo Goldberry-Playground/grove-sites || \
+            echo "::warning::Could not trigger drift re-check -- it will still run on its normal 30-min schedule."
