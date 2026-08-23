@@ -4,12 +4,17 @@ name: Promote storefronts to production
 # grove-sites' docs/runbooks/prod-frontend-deploy.md ("Promoting a new build"),
 # so promoting no longer requires running terraform/doctl by hand:
 #
-#   1. Bump the pinned image-tag SHA (a reviewed, auto-opened + auto-merged PR).
+#   1. Bump the pinned image-tag SHA in the working tree (the targeted apply
+#      below reads it) and stage the same edit as a reconcile PR -- NOT a direct
+#      push to main (main-branch-protection rejects the bot push, and the
+#      terraform prod dir is a protected-paths-guard glob needing SHA-bound
+#      human review). The PR is auto-OPENED but human-MERGED through the guard.
 #   2. terraform apply -target=... (updates the four app specs).
 #   3. One doctl create-deployment per app (this is what actually rolls it --
 #      GOL-1607 Lesson 1: a spec update alone deploys nothing on GHCR apps).
 #   4. Verify the build fingerprint matches QA, smoke the public route.
-#   5. Notify Discord, re-trigger prod-deploy-drift.yml for an immediate re-check.
+#   5. Notify Discord (incl. the reconcile-PR link). Until that PR merges, main
+#      is intentionally behind live and prod-deploy-drift.yml flags the gap.
 #
 # THE HUMAN GATE (read before wiring this up):
 # ---------------------------------------------------------------------------
@@ -94,7 +99,12 @@ jobs:
         env:
           TARGET: ${{ steps.resolve.outputs.target_sha }}
         run: |
-          CURRENT_HUB="$(grep -oP 'default\s*=\s*"\K[0-9a-f]{40}' infra/terraform/environments/production/variables.tf | head -1)"
+          # Read the default INSIDE the `variable "hub_image_tag"` block only.
+          # A bare `grep ... | head -1` returns the FIRST 40-hex default in file
+          # order, which is `custom_modules_ref` (the grove-odoo-modules git-sync
+          # pin, a different repo) -- the human would approve against the wrong
+          # "currently pinned" SHA (GOL-1708 finding 1).
+          CURRENT_HUB="$(awk '/^variable "hub_image_tag" \{/{f=1} f&&/default[[:space:]]*=/{match($0,/[0-9a-f]{40}/);print substr($0,RSTART,RLENGTH);exit}' infra/terraform/environments/production/variables.tf)"
           {
             echo "## Promotion request"
             echo ""
@@ -109,7 +119,7 @@ jobs:
               echo "Compare: https://github.com/Goldberry-Playground/grove-sites/compare/${CURRENT_HUB}...${TARGET}"
             fi
             echo ""
-            echo "Approving the \`production\` environment below will: bump the pin, \`terraform apply\` it (targeted to the four storefront apps), issue one \`doctl create-deployment\` per app, verify the build fingerprint against QA, and notify Discord."
+            echo "Approving the \`production\` environment below will: bump the pin in the working tree + \`terraform apply\` it (targeted to the four storefront apps), issue one \`doctl create-deployment\` per app, verify the build fingerprint against QA, notify Discord, and open a reconcile PR to bring committed \`main\` up to the promoted SHA (merge it to un-drift main)."
           } >> "$GITHUB_STEP_SUMMARY"
 
   # --- The gated work. Requires production Environment approval to start. ---
@@ -119,13 +129,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production
-    concurrency:
-      group: terraform-production
-      cancel-in-progress: false
+    # No job-level concurrency here: the workflow-level `concurrency` block
+    # already serializes the whole run on the terraform-production group, so a
+    # same-group job-level block would be redundant (GOL-1708 minor).
 
     permissions:
-      contents: write # to commit + merge the pin-bump PR
-      pull-requests: write
+      contents: write      # push the reconcile branch (a feature branch, not protected main)
+      pull-requests: write # open the reconcile PR
 
     env:
       TF_DIR: infra/terraform/environments/production
@@ -176,28 +186,52 @@ jobs:
           echo "AWS_ACCESS_KEY_ID=$SPACES_ACCESS_KEY_ID" >> "$GITHUB_ENV"
           echo "AWS_SECRET_ACCESS_KEY=$SPACES_SECRET_ACCESS_KEY" >> "$GITHUB_ENV"
 
-      # --- Step 1: bump the pinned SHA as a reviewed commit, not a bare -var
-      # override -- otherwise committed HCL drifts from what's actually live
-      # (the exact "two SHAs must be kept honest" trap GITSYNC_REF hit in
-      # ADR-009). The environment approval above IS the review for this
-      # specific bump, so it's committed straight to main rather than opening
-      # a second PR that would need a second, redundant human click.
-      - name: Bump the pinned image-tag SHA
+      # --- Step 1: bump the pinned SHA in the WORKING TREE (so the targeted
+      # apply below reads it, keeping committed HCL as the source of truth for
+      # the apply -- not a bare, unreconciled `-var` override, the ADR-009
+      # GITSYNC_REF drift trap) and stage the identical edit on a branch for a
+      # reconcile PR. We do NOT push to main directly: the main-branch-protection
+      # ruleset rejects a github-actions[bot] push (bypass is admin-only), and
+      # infra/terraform/environments/production/** is a protected-paths-guard
+      # glob that requires a SHA-bound *human* review -- a direct push would
+      # either hard-fail or punch the exact governance hole GOL-1478 closes
+      # (GOL-1708 finding 2). The Environment approval gates the DEPLOY; the
+      # reconcile PR (opened only after the roll succeeds, below) brings
+      # committed HCL back in line with what's now live and is reviewed through
+      # the normal guard.
+      - name: Bump the pinned image-tag SHA (working tree + reconcile branch)
         id: bump
         run: |
           FILE="$TF_DIR/variables.tf"
-          BEFORE="$(grep -oP 'default\s*=\s*"\K[0-9a-f]{40}' "$FILE" | sort -u)"
-          echo "Bumping pinned SHA(s): $BEFORE -> $TARGET_SHA"
-          sed -i -E "s/default\s*=\s*\"[0-9a-f]{40}\"/default     = \"$TARGET_SHA\"/g" "$FILE"
+          # Anchor the replace to the hub_image_tag / tenant_image_tag blocks
+          # ONLY. A bare `s/default = "40hex"/.../g` (unanchored) also rewrites
+          # custom_modules_ref -- the grove-odoo-modules git-sync pin, a
+          # DIFFERENT repo -- silently repointing prod's Odoo modules to a
+          # grove-sites SHA that git-sync can't resolve (GOL-1708 finding 1).
+          for v in hub_image_tag tenant_image_tag; do
+            sed -i -E "/^variable \"$v\" \{/,/^\}/ s|^([[:space:]]*default[[:space:]]*=[[:space:]]*\")[0-9a-f]{40}(\")|\1${TARGET_SHA}\2|" "$FILE"
+          done
           if git diff --quiet -- "$FILE"; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "Pin already at $TARGET_SHA -- no commit needed."
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-            git -c user.name="grove-promote-bot" -c user.email="actions@github.com" \
-              commit -am "infra(prod): promote storefronts to ${TARGET_SHA} (promote-storefronts.yml)"
-            git push origin HEAD:main
+            echo "Pin already at $TARGET_SHA -- nothing to reconcile."
+            exit 0
           fi
+          # Belt-and-suspenders: the anchored sed must never touch
+          # custom_modules_ref. Abort loudly if a changed line mentions it.
+          if git diff -- "$FILE" | grep -E '^[+-]' | grep -q 'custom_modules_ref'; then
+            echo "::error::pin-bump touched custom_modules_ref -- aborting before any deploy (GOL-1708 finding 1 guard)."
+            exit 1
+          fi
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          BRANCH="promote-pin-${TARGET_SHA:0:12}-${GITHUB_RUN_ID}"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          # Carry the working-tree edit onto a branch and commit it there. HEAD
+          # moves to the branch but the file stays edited, so the apply below
+          # still reads the new pin. The branch is pushed + PR'd only after the
+          # roll succeeds (see 'Open reconcile PR').
+          git -c user.name="grove-promote-bot" -c user.email="actions@github.com" checkout -b "$BRANCH"
+          git -c user.name="grove-promote-bot" -c user.email="actions@github.com" \
+            commit -am "infra(prod): promote storefronts to ${TARGET_SHA} (promote-storefronts.yml)"
 
       - name: Terraform init
         timeout-minutes: 5
@@ -254,8 +288,13 @@ jobs:
           source grove-sites-scripts/scripts/lib/do-app-redeploy.sh
           for app in grove-hub-prod grove-goldberry-prod grove-ggg-prod grove-nursery-prod; do
             echo "::group::Redeploying $app"
-            do_app_redeploy "$app"
-            rc=$?
+            # Sourcing do-app-redeploy.sh left `set -e` active, so a bare
+            # `do_app_redeploy "$app"` returning non-zero would abort the step
+            # BEFORE `rc=$?` runs -- making the rc=2 (in-flight skip) branch
+            # below dead code and turning a benign skip into a whole-roll
+            # failure (GOL-1708 finding 3). Capture rc without tripping -e.
+            rc=0
+            do_app_redeploy "$app" || rc=$?
             echo "::endgroup::"
             if [ "$rc" -eq 1 ]; then
               echo "::error::$app redeploy hard-failed (rc=1) -- stopping. Apps not yet reached in this loop were NOT touched; apps before this one in the loop may already be live on the new build. Check drift-check before re-running."
@@ -264,6 +303,33 @@ jobs:
             # rc=2 (skipped, deployment already in flight) is not fatal --
             # do_app_redeploy already warned; move on to the next app.
           done
+
+      # --- Step 3b: reconcile committed HCL. The roll above has already put
+      # live prod on $TARGET_SHA, so committed variables.tf MUST catch up. We
+      # can't push to protected main directly (finding 2), so open a PR from the
+      # branch staged in the bump step. It's reviewed + merged through the normal
+      # SHA-bound protected-paths-guard. Until it merges, main is intentionally
+      # behind live and prod-deploy-drift.yml flags the gap -- that's the nudge.
+      - name: Open reconcile PR (bring committed pin up to what's now live)
+        if: steps.bump.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.bump.outputs.branch }}
+        run: |
+          git push origin "HEAD:$BRANCH"
+          RUN_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          # Build the body with printf (single-quoted format => backticks are
+          # literal, \n produces real newlines) so no raw multi-line string has
+          # to sit in this YAML block scalar.
+          BODY="$(printf 'Auto-opened by promote-storefronts.yml after rolling the four prod storefronts to `%s` (run: %s).\n\n**Live prod is already on this SHA.** This PR only reconciles committed HCL (`hub_image_tag` + `tenant_image_tag`) so `main` matches what is serving. Until it merges, `main` is intentionally behind live and prod-deploy-drift.yml will flag the gap. Review + merge through the normal protected-paths-guard (SHA-bound human approval).' "$TARGET_SHA" "$RUN_URL")"
+          PR_URL="$(gh pr create --base main --head "$BRANCH" \
+            --title "infra(prod): reconcile storefront pin to ${TARGET_SHA}" \
+            --body "$BODY")" || {
+            echo "::error::Roll SUCCEEDED (prod is on ${TARGET_SHA}) but opening the reconcile PR FAILED. Committed HCL is now BEHIND live -- open a PR bumping hub_image_tag + tenant_image_tag in ${TF_DIR}/variables.tf to ${TARGET_SHA} by hand, or main will drift back on the next full apply."
+            exit 1
+          }
+          echo "RECONCILE_PR_URL=$PR_URL" >> "$GITHUB_ENV"
+          echo "Reconcile PR opened: $PR_URL"
 
       # --- Step 4: prove the right build actually rolled, per the
       # fingerprint method in the canonical runbook (ported from GOL-1325).
@@ -295,13 +361,21 @@ jobs:
         if: always()
         run: |
           curl -fsS -X POST -H "Content-Type: application/json" \
-            -d "$(jq -n --arg sha "$TARGET_SHA" --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-              '{username:"Grove Prod Deploy", embeds:[{title:"Storefronts promoted", description:("Target: `" + $sha + "`\nRun: " + $run), color: 3066993}]}')" \
+            -d "$(jq -n --arg sha "$TARGET_SHA" \
+              --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+              --arg pr "${RECONCILE_PR_URL:-(none -- pin already matched, nothing to reconcile)}" \
+              '{username:"Grove Prod Deploy", embeds:[{title:"Storefronts promoted", description:("Target: `" + $sha + "`\nRun: " + $run + "\nReconcile PR (merge to un-drift main): " + $pr), color: 3066993}]}')" \
             "$DISCORD_OPS_WEBHOOK_URL" || echo "::warning::Discord notify failed (deploy itself already completed)"
 
-      - name: Trigger an immediate drift re-check
+      # Best-effort only: secrets.GITHUB_TOKEN is scoped to THIS repo and cannot
+      # dispatch a workflow in grove-sites, so this cross-repo call warns + no-ops
+      # unless a cross-repo PAT/App token is later wired in. Kept (guarded) purely
+      # as an intent marker; prod-deploy-drift.yml runs on its own 30-min schedule
+      # regardless, which is what actually catches the reconcile gap (GOL-1708
+      # minor). Drop this step if the no-op warning is noise.
+      - name: Trigger an immediate drift re-check (best-effort, cross-repo)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh workflow run prod-deploy-drift.yml --repo Goldberry-Playground/grove-sites || \
-            echo "::warning::Could not trigger drift re-check -- it will still run on its normal 30-min schedule."
+            echo "::warning::Cross-repo drift re-check could not be dispatched (expected: GITHUB_TOKEN is this-repo-scoped) -- it will still run on its normal 30-min schedule."
