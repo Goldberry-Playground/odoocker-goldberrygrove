@@ -152,15 +152,25 @@ variable "app_instance_size_slug" {
 }
 
 variable "hub_image_tag" {
-  description = "Tag of the grove-hub image on GHCR (ghcr.io/goldberry-playground/grove-hub:<tag>) that App Platform pulls. 'latest' tracks grove-sites CI; pin to a SHA to lock a reproducible prod release. Same pattern as var.odoo_image_tag."
+  description = "Tag of the grove-hub image on GHCR (ghcr.io/goldberry-playground/grove-hub:<tag>) that App Platform pulls. GOL-1304 Option-A ruling (ratified 2026-08-12, launch-gate Aug 20): prod pins a 40-char grove-sites commit SHA -- it NEVER tracks a moving 'latest'. Same reproducible-release rationale + validation as var.custom_modules_ref: a 'latest' retag from grove-sites CI must not silently ship to prod (and with GHCR-sourced apps deploy_on_push never even fires -- GOL-1607 -- so an unpinned 'latest' is BOTH un-gated and unobservable). Bumping this is a reviewed infra PR whose deploy step is an explicit `doctl apps create-deployment` (grove-sites do-app-redeploy primitive, PR #547). Current pin b84d7678: the grove-sites main HEAD that prod pulled on the 2026-08-17 15:44Z redeploy (GOL-1607); GHCR `latest` still resolves to this same digest across all four images, so pinning to it is a verified no-op deploy (GOL-1650 recon)."
   type        = string
-  default     = "latest"
+  default     = "b84d767815bdbd922fd42287109083303c62487b"
+
+  validation {
+    condition     = can(regex("^[0-9a-f]{40}$", var.hub_image_tag))
+    error_message = "hub_image_tag must be a full 40-char lowercase hex grove-sites commit SHA -- 'latest'/branch names are rejected so prod can never track a moving GHCR tag (GOL-1304 Option-A)."
+  }
 }
 
 variable "tenant_image_tag" {
-  description = "Tag of the grove-goldberry / grove-ggg / grove-nursery images on GHCR that the tenant App Platform apps pull. One shared tag because grove-sites CI publishes all four images from the same commit -- pinning tenants to different tags would deploy skewed monorepo states."
+  description = "Tag of the grove-goldberry / grove-ggg / grove-nursery images on GHCR that the tenant App Platform apps pull. One shared tag because grove-sites CI publishes all four images from the same commit -- pinning tenants to different tags would deploy skewed monorepo states. GOL-1304 Option-A: a pinned 40-char SHA, same rationale + validation as var.hub_image_tag / var.custom_modules_ref. Current pin b84d7678 == the same commit as var.hub_image_tag (verified: GHCR `latest` for grove-goldberry/grove-ggg/grove-nursery all resolve to this SHA's digest today, GOL-1650) so applying the pin is a no-op deploy."
   type        = string
-  default     = "latest"
+  default     = "b84d767815bdbd922fd42287109083303c62487b"
+
+  validation {
+    condition     = can(regex("^[0-9a-f]{40}$", var.tenant_image_tag))
+    error_message = "tenant_image_tag must be a full 40-char lowercase hex grove-sites commit SHA -- 'latest'/branch names are rejected so prod can never track a moving GHCR tag (GOL-1304 Option-A)."
+  }
 }
 
 variable "grove_revalidate_secret" {
@@ -307,7 +317,7 @@ variable "blog_headless_demote_enabled" {
 variable "apex_cutover_live_keys" {
   description = "Per-apex switch for the App Platform Host-override Origin Rule (apex-cutover.tf). Each tenant key (hub/goldberry/ggg/nursery) listed here gets its http_request_origin Host-rewrite rule CREATED. Default [] (empty) ⇒ no rule, no CF API call ⇒ merge is inert. This is deliberately per-apex, NOT a single bool: the rule fires for every request to <apex> regardless of DNS, so enabling it for an apex still pointed at Ghost breaks that apex. Add a key ONLY in lockstep with flipping that apex's DNS to the proxied CNAME (canary order for GOL-1279/GOL-1390: [\"ggg\"] validation apex → then hub/goldberry/nursery). CONVERGENCE INVARIANT (finding #1, review 2026-08-12): this committed default is the SOURCE OF TRUTH and MUST equal the set of apexes currently live on the rule. Advance it (in a committed PR) immediately after each apex verifies — do NOT rely on the in-window `-var` override alone. prod-plan-guard.yml and every var-less `terraform apply` plan against THIS default; if it lags reality they plan DESTRUCTION of the live rule → flipped apex 403s and the guard goes permanently red. Requires the CF token to carry Origin/Config Rules Edit on the brand zones (see apex-cutover.tf token-scope note). See docs/RUNBOOK-apex-launch-cutover.md."
   type        = set(string)
-  default     = ["ggg", "hub", "goldberry"] # GOL-1279/GOL-1390: ggg + hub/gatheringatthegrove.com + goldberry/goldberrygrove.farm all cut over to App Platform 2026-08-14 (each verified 200 + x-do-orig-status:200 + x-do-app-origin, apex root reaches the app). (nursery apex is ALSO live but was registered out-of-band — apex PRIMARY + www ALIAS not in terraform state; reconcile into state separately, see GOL-1279 follow-up, before adding its key here.)
+  default     = ["ggg", "hub", "goldberry", "nursery"] # GOL-1279/GOL-1390: ggg + hub/gatheringatthegrove.com + goldberry/goldberrygrove.farm cut over to App Platform 2026-08-14. GOL-1545 item #4 (2026-08-18): nursery/atthegrovenursery.com reconciled into state — it was registered out-of-band with apex PRIMARY + www ALIAS; both are now codified on digitalocean_app.tenant["nursery"] (apps.tf: PRIMARY via this key, www ALIAS via the nursery-only domain block), so this key is safe to include. All four verified live (200 + x-do-orig-status:200 + x-do-app-origin, apex root reaches the app). CONVERGENCE INVARIANT: this committed default MUST equal the set of apexes live on the App Platform domain registration; do not let it lag reality or a var-less apply plans DESTRUCTION of the live domain(s).
 
   validation {
     condition     = alltrue([for k in var.apex_cutover_live_keys : contains(["hub", "goldberry", "ggg", "nursery"], k)])

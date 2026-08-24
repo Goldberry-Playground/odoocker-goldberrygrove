@@ -5,11 +5,19 @@
 # goldberry, ggg, nursery) is its own digitalocean_app so a broken deploy in
 # one tenant can't cascade to the others (App Platform concurrency is per-app).
 #
-# Image source: GHCR (grove-sites CI publishes on push to main). `deploy_on_push`
-# redeploys on tag rotation, so a `latest` retag from grove-sites CI triggers a
-# rollout — no rebuild inside App Platform. To freeze prod during an incident,
-# pin var.hub_image_tag / var.tenant_image_tag to a SHA (deploy_on_push still
-# fires only when THAT tag's digest moves, which a pinned SHA never does).
+# Image source: GHCR (grove-sites CI publishes on push to main). GOL-1304
+# Option-A ruling (launch-gate Aug 20): prod runs PINNED SHA releases, not a
+# continuously-tracked `latest`, so deploy_on_push is DISABLED here and
+# var.hub_image_tag / var.tenant_image_tag hold a 40-char grove-sites commit SHA
+# (default b84d7678, the currently-serving build — GOL-1650). Two reasons the
+# pin is the honest model: (1) deploy_on_push is a DOCR-only trigger and never
+# fires for GHCR-sourced apps anyway (GOL-1607), so leaving it "enabled" against
+# a `latest` tag was both un-gated AND unobservable; (2) a prod rollout must be a
+# reviewed infra PR (bump the SHA here) whose deploy step is an explicit
+# `doctl apps create-deployment` via the grove-sites do-app-redeploy primitive
+# (PR #547) — not an implicit CI side effect. The grove-sites drift alarm (#547)
+# pages when a prod app's serving digest != the digest this pinned SHA resolves
+# to on GHCR.
 #
 # Backend wiring vs QA:
 #   - GROVE_ODOO_URL / ODOO_URL  → https://odoo.gatheringatthegrove.com  (the
@@ -61,8 +69,11 @@ resource "digitalocean_app" "hub" {
         registry      = "goldberry-playground"
         repository    = "grove-hub"
         tag           = var.hub_image_tag
+        # GOL-1304 Option-A: prod ships pinned SHA releases via reviewed infra
+        # PRs, so no auto-redeploy on tag rotation. (Moot for GHCR anyway --
+        # deploy_on_push is DOCR-only and never fires here, GOL-1607.)
         deploy_on_push {
-          enabled = true
+          enabled = false
         }
       }
 
@@ -193,8 +204,11 @@ resource "digitalocean_app" "tenant" {
         registry      = "goldberry-playground"
         repository    = each.value.image
         tag           = var.tenant_image_tag
+        # GOL-1304 Option-A: pinned SHA releases via reviewed infra PRs, no
+        # auto-redeploy on tag rotation (deploy_on_push is DOCR-only anyway,
+        # GOL-1607).
         deploy_on_push {
-          enabled = true
+          enabled = false
         }
       }
 
@@ -272,6 +286,24 @@ resource "digitalocean_app" "tenant" {
       content {
         name = local.tenants[each.key]
         type = "PRIMARY"
+      }
+    }
+
+    # nursery reconcile (GOL-1545 item #4): the nursery app was registered
+    # out-of-band with a www ALIAS (www.atthegrovenursery.com) in ADDITION to its
+    # apex PRIMARY. No other tenant carries a www ALIAS on the app itself (their
+    # www is handled at the Cloudflare edge — see redirects.tf), so this ALIAS is
+    # stamped ONLY for the nursery app and ONLY once nursery is in the live set.
+    # Codifying it makes the committed spec match live exactly (PRIMARY
+    # atthegrovenursery.com + ALIAS www.atthegrovenursery.com) so a converged
+    # plan shows no domain drift; without it, plan would compute a spurious
+    # removal of the live www ALIAS (harmless only because DO provider ~>2.93
+    # does not delete absent domains — do not rely on that).
+    dynamic "domain" {
+      for_each = (each.key == "nursery" && contains(var.apex_cutover_live_keys, "nursery")) ? [1] : []
+      content {
+        name = "www.${local.tenants["nursery"]}"
+        type = "ALIAS"
       }
     }
   }
