@@ -15,8 +15,10 @@
 > actual deploy mechanism, the two hard lessons, and the verification method, go
 > to the canonical doc above — its reusable script is grove-sites'
 > `scripts/lib/do-app-redeploy.sh`, wrapping a single-fire `doctl apps
-> create-deployment`. (There is **no** `promote-storefronts.yml` workflow yet;
-> automating the roll behind a `production` gate is tracked by GOL-1600.)
+> create-deployment`. That roll is now also automated in *this* repo as
+> `.github/workflows/promote-storefronts.yml` (bump-pin -> targeted apply ->
+> per-app `create-deployment` -> fingerprint verify -> notify), gated on the
+> GitHub `production` environment — the GOL-1600 gap closed.
 
 ## Why this appendix exists
 
@@ -25,8 +27,8 @@ compose stack** (SSH → `git checkout <tag>` → `docker compose pull/up`). The
 **not** roll the four revenue storefronts, which run as DigitalOcean App
 Platform apps pulling GHCR images. Cutting a `vX.Y.Z` tag updates Odoo and
 leaves the storefronts untouched — that's the gap the canonical doc's
-"Promoting a new build" section closes (a manual, single-fire `doctl apps
-create-deployment`; no automated workflow yet — GOL-1600).
+"Promoting a new build" section closes — either by hand (single-fire `doctl
+apps create-deployment`) or via this repo's `promote-storefronts.yml`.
 
 ## The one step that's genuinely odoocker-specific: bumping the pin
 
@@ -41,7 +43,8 @@ reviewed PR in *this* repo:
    review → `terraform apply`.
 3. Go to grove-sites' canonical runbook (`scripts/lib/do-app-redeploy.sh`) for
    step 3 onward — the actual single-fire `doctl apps create-deployment` roll,
-   verification, and notify.
+   verification, and notify. Or run `promote-storefronts.yml` (this repo),
+   which performs steps 1-3 as one `production`-gated run.
 
 **A green `terraform apply` here is not evidence of a deploy** (Lesson 1 in the
 canonical doc) — step 3 is not optional.
@@ -64,7 +67,8 @@ canonical doc) — step 3 is not optional.
   merged 2026-08-18 but sat un-applied against prod for two days, caught by the
   drift alarm. Applied + redeployed all four apps 2026-08-20 — see the
   canonical doc's Validation record for the full account. That gap is the
-  direct motivation for automating the roll behind a gate (GOL-1600).
+  direct motivation for automating the roll behind a gate (GOL-1600), now
+  implemented as `promote-storefronts.yml`.
 - **2026-08-23 — LIVE PROD no-op release exercise (GOL-1325):** ran the full
   storefront mechanism end-to-end against `grove-ggg-prod` (`30c2a739…`) on
   production, by a non-Josh operator, as a no-op re-roll of the current pinned
@@ -75,6 +79,8 @@ canonical doc) — step 3 is not optional.
   result; the mechanism is proven by the `active_deployment`-id flip + ACTIVE +
   200, not by a hash change. Confirms Option A (#536 / GOL-1650) is *applied*,
   not just merged. Full before/after in the GOL-1325 thread.
-  **Gap flagged:** the storefront roll has no GitHub-Environment `production`
-  approval gate (that gate lives only in the dormant, Odoo-only `release.yml`);
-  today the only control is operator discipline (single-fire + poll) — GOL-1600.
+  **Gap flagged (since closed):** at the time of the exercise the storefront
+  roll had no GitHub-Environment `production` approval gate (that gate lived
+  only in the dormant, Odoo-only `release.yml`), leaving operator discipline
+  (single-fire + poll) as the only control — GOL-1600. `promote-storefronts.yml`
+  now supplies that gate.
