@@ -49,6 +49,9 @@ on:
         required: true
         type: string
 
+permissions:
+  contents: read
+
 concurrency:
   # Shares the same lock group prod-plan-guard.yml uses -- a promotion apply
   # must never race a plan or another apply against the same state.
