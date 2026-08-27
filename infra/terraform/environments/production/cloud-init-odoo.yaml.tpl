@@ -105,6 +105,16 @@ write_files:
       # the board greenlights a prod-checkout rebuild (see .env.op + GOL-973).
       stripe_test_secret_key=${stripe_test_secret_key}
       stripe_test_webhook_secret=${stripe_test_webhook_secret}
+      # Per-tenant Stripe webhook signing secrets (GOL-973 Gap A, mirrors QA
+      # GOL-1016). grove_headless _configured_webhook_secrets() tries EACH
+      # non-empty secret against the Stripe-Signature so all three LLC
+      # storefronts can sign the one prod Odoo endpoint. The legacy single-
+      # tenant stripe_test_webhook_secret above is DELIBERATELY unset in prod
+      # (Josh 2026-08-27): a single fallback can only bind one of three live
+      # accounts. Same --env-file -> compose environment: path as stripe_test_*.
+      stripe_webhook_secret_nursery=${stripe_webhook_secret_nursery}
+      stripe_webhook_secret_ggg=${stripe_webhook_secret_ggg}
+      stripe_webhook_secret_goldberry=${stripe_webhook_secret_goldberry}
       # Shippo fulfillment (GOL-988). SHIPPO_API_KEY: outbound label purchase
       # (sale_order.py, UserError when empty). GROVE_SHIPPO_WEBHOOK_TOKEN:
       # inbound tracking-webhook auth (controllers/main.py, fail-closed when
