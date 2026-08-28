@@ -75,7 +75,10 @@ jobs:
           DIGITALOCEAN_TOKEN:       op://Grove Prod/odoocker/DIGITALOCEAN_TOKEN
           SPACES_ACCESS_KEY_ID:     op://Grove Prod/odoocker/SPACES_ACCESS_KEY_ID
           SPACES_SECRET_ACCESS_KEY: op://Grove Prod/odoocker/SPACES_SECRET_ACCESS_KEY
-          CLOUDFLARE_API_TOKEN:     op://Grove Prod/odoocker/CLOUDFLARE_API_TOKEN
+          # GOL-1770: repointed off the dead `odoocker/CLOUDFLARE_API_TOKEN` field
+          # (expired -> 9109 on zone reads) to the active user-owned token, same
+          # Grove Prod vault. A dead token here would false-alarm the drift check.
+          CLOUDFLARE_API_TOKEN:     op://Grove Prod/Cloudflare API Token/credential
           GROVE_REVALIDATE_SECRET:  op://Grove Prod/odoocker/GROVE_REVALIDATE_SECRET
           DISCORD_OPS_WEBHOOK_URL:  op://Grove Prod/odoocker/DISCORD_OPS_WEBHOOK_URL
           ODOO_API_KEYS_TF_JSON:    op://Grove Prod/odoocker/ODOO_API_KEYS_TF_JSON

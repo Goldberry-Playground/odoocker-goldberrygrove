@@ -148,7 +148,11 @@ jobs:
           DIGITALOCEAN_TOKEN:       op://Grove Prod/odoocker/DIGITALOCEAN_TOKEN
           SPACES_ACCESS_KEY_ID:     op://Grove Prod/odoocker/SPACES_ACCESS_KEY_ID
           SPACES_SECRET_ACCESS_KEY: op://Grove Prod/odoocker/SPACES_SECRET_ACCESS_KEY
-          CLOUDFLARE_API_TOKEN:     op://Grove Prod/odoocker/CLOUDFLARE_API_TOKEN
+          # GOL-1770: repointed off the dead `odoocker/CLOUDFLARE_API_TOKEN` field
+          # (expired -> verify 1000 "Invalid API Token", zones 9109, which failed
+          # this required check on every prod PR) to the active user-owned token.
+          # Same Grove Prod vault, so grove-ci-prod-ro's read grant still covers it.
+          CLOUDFLARE_API_TOKEN:     op://Grove Prod/Cloudflare API Token/credential
           GROVE_REVALIDATE_SECRET:  op://Grove Prod/odoocker/GROVE_REVALIDATE_SECRET
           DISCORD_OPS_WEBHOOK_URL:  op://Grove Prod/odoocker/DISCORD_OPS_WEBHOOK_URL
           ODOO_API_KEYS_TF_JSON:    op://Grove Prod/odoocker/ODOO_API_KEYS_TF_JSON
