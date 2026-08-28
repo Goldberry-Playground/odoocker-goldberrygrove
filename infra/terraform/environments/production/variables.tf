@@ -5,7 +5,7 @@ variable "do_token" {
 }
 
 variable "cloudflare_api_token" {
-  description = "Cloudflare ACCOUNT-scoped API token covering all four brand zones: Zone.DNS edit + Zone.Zone read + Zone Settings edit + SSL and Certificates edit (the latter authorizes cloudflare_origin_ca_certificate; the legacy Origin CA Key is deprecated). 1P ref: op://Grove Prod/Cloudflare API Token/credential (repointed GOL-1770 after the old account_cloudflare_api_token field expired 2026-08-19)."
+  description = "Cloudflare API token covering all four brand zones. Required permission groups (Zone scope, all 4 zones): Zone.DNS edit (cloudflare_record) + Zone.Zone read (data.cloudflare_zone) + Zone.Zone Settings edit (cloudflare_zone_settings_override, tls.tf) + Zone.SSL and Certificates edit (cloudflare_origin_ca_certificate; the legacy Origin CA Key is deprecated) + Zone.Dynamic Redirect edit (cloudflare_ruleset http_request_dynamic_redirect, redirects.tf). NOTE: Zone Settings and Dynamic Redirect are DISTINCT groups from WAF/Transform — a token with everything else still fails plan on tls.tf (9109) and redirects.tf ('request is not authorized') without them. 1P ref: op://Grove Prod/Cloudflare API Token/credential (repointed GOL-1770 after the old account_cloudflare_api_token field expired 2026-08-19)."
   type        = string
   sensitive   = true
 }
