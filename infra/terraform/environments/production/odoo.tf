@@ -177,6 +177,19 @@ resource "digitalocean_droplet" "odoo" {
     shippo_api_key             = var.shippo_api_key
     grove_shippo_webhook_token = var.grove_shippo_webhook_token
 
+    # Mailgun SMTP for Odoo transactional email (GOL-988). odoorc.sh substitutes
+    # these into the SMTP group of /etc/odoo/odoo.conf. Empty smtp_password =>
+    # SMTP auth inert (no send), so this scaffold is a safe no-op until the
+    # verified send.* hub credential is provided (TF_VAR_smtp_password / .env.op)
+    # and a board-gated rebuild/hand-inject activates it (user_data input).
+    smtp_server   = var.smtp_server
+    smtp_port     = var.smtp_port
+    smtp_ssl      = var.smtp_ssl
+    smtp_user     = var.smtp_user
+    smtp_password = var.smtp_password
+    email_from    = var.email_from
+    from_filter   = var.from_filter
+
     # Managed PG connection params (private VPC network). odoorc.sh substitutes
     # these into /etc/odoo/odoo.conf at container start.
     pg_host     = digitalocean_database_cluster.pg.private_host

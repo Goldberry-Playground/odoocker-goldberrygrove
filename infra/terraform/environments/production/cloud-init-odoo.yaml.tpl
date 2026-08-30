@@ -121,6 +121,22 @@ write_files:
       # empty). Same --env-file -> compose environment: path as stripe_test_*.
       SHIPPO_API_KEY=${shippo_api_key}
       GROVE_SHIPPO_WEBHOOK_TOKEN=${grove_shippo_webhook_token}
+      # Mailgun SMTP for Odoo transactional email (GOL-988) — order-confirmation
+      # + shipping-notification send. odoorc.sh substitutes these into the SMTP
+      # group of /etc/odoo/odoo.conf (same image + path QA proved live under
+      # GOL-995). Sending domain is send.gatheringatthegrove.com — NOT mg.* (an
+      # account we do not control). Empty SMTP_PASSWORD => auth can't succeed =>
+      # sending stays inert (zero regression) until the verified send.* hub cred
+      # is provided. EMAIL_FROM is double-quoted: this .env is `.`-sourced by the
+      # runcmd steps below, and a bare `Name <addr>` would break `source` on the
+      # `<` redirection metachar; odoorc.sh strips one quote layer for odoo.conf.
+      SMTP_SERVER=${smtp_server}
+      SMTP_PORT=${smtp_port}
+      SMTP_SSL=${smtp_ssl}
+      SMTP_USER=${smtp_user}
+      SMTP_PASSWORD=${smtp_password}
+      EMAIL_FROM="${email_from}"
+      FROM_FILTER=${from_filter}
 
   # Compose YAML - base64 so cloud-init's YAML parser never sees its content.
   - path: /etc/grove/docker-compose.yml
