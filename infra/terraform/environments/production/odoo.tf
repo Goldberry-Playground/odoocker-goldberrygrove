@@ -161,6 +161,16 @@ resource "digitalocean_droplet" "odoo" {
     stripe_test_secret_key     = var.stripe_test_secret_key
     stripe_test_webhook_secret = var.stripe_test_webhook_secret
 
+    # Per-tenant Stripe webhook signing secrets (GOL-973 Gap A, mirrors QA
+    # GOL-1016). grove_headless tries each non-empty secret against the incoming
+    # Stripe-Signature so all three LLC storefronts sign the one Odoo endpoint.
+    # Legacy stripe_test_webhook_secret above stays unset in prod (Josh
+    # 2026-08-27) — these three are the only configured verifiers. Same
+    # ignore_changes(user_data) gating: scaffold is inert until a board rebuild.
+    stripe_webhook_secret_nursery   = var.stripe_webhook_secret_nursery
+    stripe_webhook_secret_ggg       = var.stripe_webhook_secret_ggg
+    stripe_webhook_secret_goldberry = var.stripe_webhook_secret_goldberry
+
     # Shippo fulfillment (GOL-988). Default-empty => label purchase raises
     # UserError and the tracking webhook fails closed. Activation rides the
     # board-gated GOL-484 rebuild (user_data input).

@@ -371,7 +371,36 @@ variable "stripe_test_secret_key" {
 }
 
 variable "stripe_test_webhook_secret" {
-  description = "Stripe LIVE-mode webhook signing secret (whsec_...) for grove_headless prod webhook verification, from the prod Stripe webhook endpoint registered under GOL-973. Its OWN 1Password field, not shared with any storefront. Injected into /etc/grove/.env as lowercase `stripe_test_webhook_secret`; grove_headless reads it via os.environ. Empty default keeps apply/plan working and webhook verification inert until provisioned + board-greenlit."
+  description = "LEGACY single-tenant webhook signing secret (whsec_...) — DELIBERATELY LEFT UNSET IN PROD (Josh directive 2026-08-27, GOL-973). With three separate live Stripe accounts a single fallback secret can only bind ONE, the exact failure mode Gap A identified. grove_headless `_configured_webhook_secrets()` filters empties before building the verify try-list, so an unset legacy var is simply skipped. Prod verifies exclusively via the three per-tenant `stripe_webhook_secret_{tenant}` vars below. Var retained (empty default) only so the shared cloud-init/compose template still resolves; do NOT wire an op:// ref for it."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+# Per-tenant Stripe webhook signing secrets (GOL-973 Gap A, mirrors QA GOL-1016).
+# grove_headless controllers/main.py `_configured_webhook_secrets()` tries EACH
+# non-empty secret against the incoming Stripe-Signature (GOL-1020) so all three
+# LLC storefronts can sign the ONE prod Odoo endpoint
+# (odoo.gatheringatthegrove.com/grove/api/v1/stripe/webhook). Each resolves from
+# its OWN field on the `op://Grove Prod/stripe` item (registered + vaulted by
+# Josh 2026-08-27; see .env.op). Empty default => that tenant's secret is simply
+# not tried, so this scaffold is inert until a board-gated rebuild activates it.
+variable "stripe_webhook_secret_nursery" {
+  description = "Stripe LIVE webhook signing secret (whsec_...) for the At The Grove Nursery prod Stripe account — the launch revenue path. Its own field `stripe_webhook_secret_nursery` on `op://Grove Prod/stripe`; read via TF_VAR_stripe_webhook_secret_nursery. Injected into /etc/grove/.env lowercase; grove_headless reads it via os.environ. Empty default keeps apply/plan working and this tenant's webhook verification inert until provisioned + board-greenlit."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "stripe_webhook_secret_ggg" {
+  description = "Stripe LIVE webhook signing secret (whsec_...) for the G3 / Woodworking George prod Stripe account. Its own field `stripe_webhook_secret_ggg` on `op://Grove Prod/stripe`; read via TF_VAR_stripe_webhook_secret_ggg. Staged but inert at launch (GGG has nothing sellable yet — Josh 2026-08-27). Empty default keeps apply/plan working until provisioned + board-greenlit."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "stripe_webhook_secret_goldberry" {
+  description = "Stripe LIVE webhook signing secret (whsec_...) for the Goldberry Grove prod Stripe account (stickers). Its own field `stripe_webhook_secret_goldberry` on `op://Grove Prod/stripe`; read via TF_VAR_stripe_webhook_secret_goldberry. Injected into /etc/grove/.env lowercase; grove_headless reads it via os.environ. Empty default keeps apply/plan working until provisioned + board-greenlit."
   type        = string
   sensitive   = true
   default     = ""
