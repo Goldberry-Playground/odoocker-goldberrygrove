@@ -84,7 +84,8 @@ jobs:
             // across all repos and is self-protecting.
             const PROTECTED_GLOBS = [
                 '.github/workflows/**',
-                'infra/terraform/environments/production/**',
+                'infra/terraform/**',
+                'nginx/**',
             ];
 
             const { owner, repo } = context.repo;

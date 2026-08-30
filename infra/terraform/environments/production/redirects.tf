@@ -33,10 +33,15 @@
 # (blogs-droplet url-flip, Step 2) before enabling, else these targets 404.
 #   op run --env-file=.env.op -- terraform apply -var=blog_apex_redirects_enabled=true
 #
-# NOTE (one-time token update): the account CF token needs the
-# "Dynamic URL Redirects: Edit" zone permission for these two zones — the current
-# scope (DNS + Zone read + Zone Settings + SSL) predates rulesets and 403s here
-# until updated.
+# NOTE (token scope): these rulesets need the CF token's zone-scoped redirect
+# permission on these two zones. Cloudflare RENAMED this permission group to
+# "Single Redirect" in the dashboard (it now backs the Single Redirects product,
+# implemented by the same `http_request_dynamic_redirect` phase) — the old
+# "Dynamic URL Redirects" / "Firewall Services" label no longer appears in the
+# zone dropdown, so grant "Single Redirect: Edit" when minting/scoping the token.
+# GRANTED 2026-08-28 (GOL-1770) on all three managed zones; a token missing it
+# fails plan here with "request is not authorized". DNS + Zone read + Zone
+# Settings + SSL alone predate rulesets and 403 on this phase.
 #
 # This ruleset owns the ENTIRE http_request_dynamic_redirect phase for each zone:
 # any hand-created dashboard redirect rules in that phase are removed on apply.

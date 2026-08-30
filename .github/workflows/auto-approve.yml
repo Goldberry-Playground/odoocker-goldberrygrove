@@ -60,6 +60,15 @@ jobs:
       github.event.workflow_run.pull_requests[0] != null
     runs-on: ubuntu-latest
     steps:
+      # GOL-1406-A: base-branch checkout so the Tier-0 carve-out below runs the
+      # base definition of scripts/ci/protected-paths-carveout.mjs, not a
+      # PR-supplied one (a PR cannot edit the carve-out to approve itself).
+      - name: Check out base-branch scripts (protected-paths carve-out)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+
       - name: Approve (as github-actions[bot]) + enable auto-merge
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -97,6 +106,21 @@ jobs:
             exit 0
           fi
           echo "PR #$PR author '$AUTHOR' classified as: $KIND"
+
+          # ── Tier-0 protected-paths carve-out (GOL-1406-A) ──
+          # Defense-in-depth before the protected-paths-guard becomes a REQUIRED
+          # check: never auto-approve an agent/maintainer PR that touches a
+          # protected path — it needs an allowlisted human's SHA-bound review.
+          # Same PROTECTED_GLOBS as protected-paths-guard.yml (both generated
+          # from AgenticOS scripts/ci/gen-protected-paths-guard.py, so they
+          # cannot drift). Fail-closed: if the check cannot run, withhold.
+          PR_FILES=$(gh pr view "$PR" --repo "$REPO" --json files -q '.files[].path')
+          if REASON=$(PR_FILES="$PR_FILES" node scripts/ci/protected-paths-carveout.mjs); then
+            :  # no protected path touched — proceed to approve
+          else
+            echo "PR #$PR not auto-approved: $REASON"
+            exit 0
+          fi
 
           # Don't stack duplicate approvals on re-runs.
           ALREADY=$(gh api "repos/$REPO/pulls/$PR/reviews" \

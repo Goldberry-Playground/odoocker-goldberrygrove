@@ -34,7 +34,8 @@ provider "cloudflare" {
   # (token needs Zone -> SSL and Certificates -> Edit on all four zones).
   # The legacy Origin CA service key is deprecated and stops working
   # 2026-09-30: developers.cloudflare.com/changelog/post/2026-03-19-service-key-authentication-deprecated/
-  # This env feeds the ACCOUNT-scoped token (1P field `account_cloudflare_api_token`).
+  # This env feeds the token at 1P ref `op://Grove Prod/Cloudflare API Token/credential`
+  # (repointed GOL-1770; the old `account_cloudflare_api_token` field expired 2026-08-19).
   api_token = var.cloudflare_api_token
 }
 
