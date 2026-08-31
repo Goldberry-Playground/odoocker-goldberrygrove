@@ -273,6 +273,13 @@ Gates:
    failure. Catches the real defect: a genuine logo (~91.5 KB on `website/1`) that
    shrank to the *"Your Logo"* default or emptied in transit. The served-asset
    check is the §7 asset smoke.
+   > **Measured baseline (GOL-1863, 2026-08-31).** Only Goldberry Grove Farm has a
+   > real logo in any environment: on QA `website(1).logo` = 91,505 B and
+   > `res.company(1).logo` = 707,543 B. GGG and At The Grove Nursery carry Odoo
+   > placeholders on QA *and* prod (8,689 B SVG / 6,078 B / 11,445 B) — under the
+   > baseline rule above they are NOTE-only and never block the promotion. Those two
+   > marks are a **content gap Josh must supply**; they are not recoverable from QA.
+   > Real-logo enforcement is website-1-only, via the §7 smoke.
 6. **price parity vs source** — target product `list_price`s match the §2
    baseline `product_prices` sample (launch audit item 2; catches drift like
    Persimmon $39→$12). SKIPs if the baseline carries no price sample.
@@ -295,13 +302,21 @@ Gates 1–4 are HARD unconditionally. Gates 5–7 need `--baseline` (the census
   photo (`image_1920` count > 0):
 
   ```bash
-  BASE_URL=https://qa.gatheringatthegrove.com \
+  # BASE_URL must be the Odoo host — the storefront apex (gatheringatthegrove.com)
+  # is Next.js and 404s /web/image. Prod Odoo = https://odoo.gatheringatthegrove.com.
+  BASE_URL=https://odoo.qa.gatheringatthegrove.com \
     PRODUCT_TEMPLATE_IDS="1 2 3" \
     scripts/promotion-asset-smoke.sh     # exit 2 → placeholder/missing assets
   ```
 
   Run it against the target (scratch/prod) after restore; pass a few real
   `product.template` ids you expect to have photos.
+  > **Keep `WEBSITE_ID=1` (the default) — do NOT smoke websites 8 or 9, and do
+  > NOT lower `MIN_LOGO_BYTES` (GOL-1863).** The GGG (`8`) and Nursery (`9`) logos
+  > do not exist as real assets anywhere — a real logo lives only on `website(1)`
+  > (QA, 91,505 B). Pointing the smoke at 8/9 asserts an asset that cannot be
+  > promoted and fails the cutover on a content gap, not a promotion defect. Those
+  > marks are Josh's to supply before either brand can pass a served-logo check.
 - Run a **real end-to-end checkout** (add to cart → checkout → payment → order
   confirmation email). On the scratch rehearsal, a Stripe *test* card is fine and
   is the evidence; on prod, do a canary live order and refund it.
