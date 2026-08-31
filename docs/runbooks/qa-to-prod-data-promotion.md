@@ -22,8 +22,20 @@ This runbook composes existing, hardened tooling — it does not replace it:
 | Move DB **with** the filestore, fail-loud on attachment gap | `scripts/promote-db.sh` + `scripts/check-attachment-invariant.sh` | `docs/RUNBOOK-db-promotion-cutover.md` |
 | Strip test data before the freeze | `scripts/qa-test-data-cleanup.sh` | `docs/RUNBOOK-qa-test-data-cleanup.md` |
 | Rewrite env-specific config on the restored DB | `scripts/prod-reconfig.py` | *this doc, §5* |
-| Order/invoice/tax integrity gates | `scripts/promotion-integrity-gates.py` | *this doc, §6* |
+| Order/invoice/tax/branding/price integrity gates | `scripts/promotion-integrity-gates.py` | *this doc, §6* |
+| HTTP storefront asset smoke (logo content-type, product photos) | `scripts/promotion-asset-smoke.sh` | *this doc, §7* |
 | Stop a blind QA re-seed | `scripts/qa-reseed-guard.py` | *this doc, §8* |
+
+> **Config & branding are IN SCOPE of this bundle — there is no separate
+> config-promotion path.** The website logo, `res.company` logo/favicon, and
+> `res.config` branding are DB rows + filestore binaries, so the §4 `pg_dump` +
+> filestore bundle carries them across *by construction*. Prod launched serving
+> the default 8.7 KB *"Your Logo"* placeholder only because it was bootstrapped
+> blank, **not** promoted from QA — this runbook is what fixes that. Two audit
+> checks below make the fix verifiable, not assumed: the §6 *branding-present*
+> gate (binary non-empty in the DB) and the §7 *asset smoke* (the served logo is
+> `image/png` at real size and products serve photos). Cross-source audit:
+> Josh, 2026-08-31 (GOL-1329).
 
 ---
 
@@ -73,20 +85,43 @@ Do this **before** the freeze so the frozen snapshot is already clean and the
 
 > **Note:** The cleanup only removes records at RFC-reserved test domains (`*.invalid`, `example.com`…). Any test orders created with real business-domain emails (e.g. `josh@goldberrygrove.farm`, `e2e@goldberrygrove.farm`) are **not** removed by this script — they look like real customer records to the selector. Inspect the WV-nexus tax gate output (§6 gate 3) for such orders and manually cancel/correct them before the freeze if needed (see §9 — rehearsal found S01562 NC and S01600 TX with non-zero tax applied against WV-only nexus).
 
+### 1b. Exclude QA-only **product** fixtures & placeholders (BEFORE the freeze)
+
+The order-cleanup above does **not** touch products. QA carries product artifacts
+that must **never** be promoted as real, buyable items (audit 2026-08-31):
+
+- the two **`AAA QA E2E`** checkout fixtures (bareroot + potted, $42) seeded for
+  the E2E smoke, and
+- the **~11 `Coming Soon` / `Price TBD`** placeholder products used for
+  merchandising staging.
+
+On QA, before the freeze, **archive or delete** these templates so the frozen
+snapshot is already clean (`Sales → Products`, filter by name, *Archive*; or an
+Odoo-shell `active=False`). The upstream fix is the seed script defaulting to
+live-mode (grove-odoo-modules #85) so they aren't created going forward.
+
+The **§6 QA-fixture-absence gate is the fail-loud backstop**: if any of these
+survive to the target, it FAILS and blocks cutover. Exclusion here + the gate
+there means a placeholder can neither slip through silently nor be sold.
+
 ---
 
 ## 2. Capture the source integrity baseline (BEFORE the freeze)
 
-Record what QA holds so the target can be checked against it (§6, gate 4):
+Record what QA holds so the target can be checked against it (§6, completeness +
+price-parity gates):
 
 ```bash
 op run --env-file=scripts/prod-reconfig.env.op -- \
   python3 scripts/promotion-integrity-gates.py --emit-baseline > /tmp/promo-baseline.json
-cat /tmp/promo-baseline.json    # {sale_orders, confirmed_orders, partners, posted_invoices}
+cat /tmp/promo-baseline.json    # {sale_orders, confirmed_orders, partners,
+                                #  posted_invoices, product_prices:[…]}
 ```
 
-Keep `/tmp/promo-baseline.json` — it is evidence and the input to the
-completeness gate on the target side.
+Keep `/tmp/promo-baseline.json` — it is evidence and the input to both the
+completeness gate **and** the price-parity gate on the target side. The
+`product_prices` sample (up to 300 sellable templates, keyed by `default_code`
+or name) is what catches QA→prod price drift (e.g. Persimmon $39 QA vs $12 prod).
 
 ---
 
@@ -214,20 +249,57 @@ Gates:
    (`account.move`, legally sequential — a collision/gap is an accounting defect).
 3. **WV-nexus tax spot-check** — WV-ship orders carry tax; non-WV don't (Grove has
    nexus in WV only, GOL-1021). Catches tax config that didn't survive the move.
-4. **promotion completeness** — target counts ≥ the §2 source baseline (no rows
+4. **QA-fixture/placeholder absence** *(HARD)* — no `AAA QA E2E` fixtures and no
+   `Coming Soon` / `Price TBD` placeholders present on the target (launch audit
+   item 3; the fail-loud backstop for the §1b pre-freeze exclusion).
+5. **branding binaries present** *(HARD)* — `res.company.logo` and website
+   logo/favicon non-empty on the target (launch audit item 1; catches the default
+   *"Your Logo"* placeholder). The served-asset check is the §7 asset smoke.
+6. **price parity vs source** — target product `list_price`s match the §2
+   baseline `product_prices` sample (launch audit item 2; catches drift like
+   Persimmon $39→$12). SKIPs if the baseline carries no price sample.
+7. **promotion completeness** — target counts ≥ the §2 source baseline (no rows
    lost in transit).
+
+Gates 1–5 are HARD (a failure exits non-zero → do not cut over). Gates 6–7 need
+`--baseline`; without it they SKIP (not fail).
 
 ---
 
-## 7. Smoke checkout + thaw
+## 7. Smoke checkout + asset smoke + thaw
 
 - Bring the target stack up (if not already) and load the storefront.
+- **Asset smoke (launch audit item 4)** — assert the *served* branding + product
+  photos are real, not placeholders. Prod launched serving the default
+  *"Your Logo"* SVG, which passes a naive `200 OK` but fails this: it checks the
+  website logo is `image/png` at real size and that products actually serve a
+  photo (`image_1920` count > 0):
+
+  ```bash
+  BASE_URL=https://qa.gatheringatthegrove.com \
+    PRODUCT_TEMPLATE_IDS="1 2 3" \
+    scripts/promotion-asset-smoke.sh     # exit 2 → placeholder/missing assets
+  ```
+
+  Run it against the target (scratch/prod) after restore; pass a few real
+  `product.template` ids you expect to have photos.
 - Run a **real end-to-end checkout** (add to cart → checkout → payment → order
   confirmation email). On the scratch rehearsal, a Stripe *test* card is fine and
   is the evidence; on prod, do a canary live order and refund it.
 - Confirm attachment/asset serving (no unstyled site — the 2026-07-23 signature).
 - **Thaw**: `docker compose start odoo` on QA (the bundler's `--unfreeze-cmd`
   already did this on exit; confirm it) and post thaw to Discord ops.
+
+### 7b. Launch-day content hygiene (carry-over from the audit)
+
+Two steps that are content, not data, but belong to the same cutover:
+
+- **Un-check `grove_guide_ready`** on any species/product guides Wes has **not**
+  reviewed, so unreviewed guide content doesn't publish on launch.
+- **Phase-6 HMAC key move + QA-key revoke** — move the publish/Stripe webhook
+  HMAC secret to its prod value and revoke the QA key as part of the reconfig
+  (§5b handles the container-env-injected secrets; confirm the QA key is dead
+  after cutover so QA can't sign prod webhooks).
 
 ---
 

@@ -32,13 +32,24 @@ THE GATES
      Sample confirmed orders: every order shipping to WV must carry a non-zero
      tax amount; a sample shipping OUTSIDE WV must carry zero. Catches a tax
      configuration that didn't survive the promotion.
-  4. promotion completeness — compare live order/partner/invoice counts against a
+  4. QA-fixture/placeholder absence — the 'AAA QA E2E' checkout fixtures and the
+     'Coming Soon / Price TBD' placeholders are QA-only and must never reach prod
+     as buyable products. A full DB copy would carry them across — this gate
+     fails loud if any survived the pre-freeze exclusion (GOL-1329 launch audit).
+  5. branding binaries present — res.company.logo and website logo/favicon must
+     be non-empty on the target. Prod launched serving the default 'Your Logo'
+     placeholder; an empty binary means the branding didn't come across.
+  6. price parity vs source — target product list_prices must match the SOURCE
+     baseline sample (--baseline). After a full copy they match by construction;
+     a mismatch means a pricelist/reconfig defect or that the target was never
+     actually promoted (prod $12 vs QA $39, GOL-1329 audit).
+  7. promotion completeness — compare live order/partner/invoice counts against a
      baseline manifest captured on the SOURCE before the freeze (--baseline).
      A post-count LOWER than baseline means rows were lost in transit.
 
-Gates 1–3 are HARD by default (a failure exits non-zero → do not cut over).
-Gate 4 requires --baseline; without it, it is reported as SKIPPED (not failed),
-so the tool is still useful for a standalone integrity read.
+Gates 1–5 are HARD by default (a failure exits non-zero → do not cut over).
+Gates 6–7 require --baseline; without it, they are reported as SKIPPED (not
+failed), so the tool is still useful for a standalone integrity read.
 
 USAGE
 -----
@@ -66,6 +77,16 @@ import sys
 import xmlrpc.client
 
 WV_STATE_CODES = ("WV",)  # West Virginia — Grove's only sales-tax nexus (GOL-1021)
+
+# QA-only product artifacts that must NEVER reach prod (GOL-1329 launch audit
+# item 3). The 'AAA QA E2E' bareroot+potted checkout fixtures and the
+# 'Coming Soon / Price TBD' placeholders are seeded for QA; a full DB copy would
+# otherwise promote them as real, buyable products. Matched case-insensitively
+# on product.template.name (=ilike honours the explicit % anchors).
+# Related: grove-odoo-modules #85 (seed-script live-mode default).
+QA_FIXTURE_NAME_PATTERNS = ("AAA QA E2E%", "Coming Soon%", "%Price TBD%")
+
+PRICE_SAMPLE_LIMIT = 300  # cap the product-price census (parity gate + baseline)
 
 
 def _log(*args: object) -> None:
@@ -216,6 +237,110 @@ def gate_completeness(counts: dict, baseline: dict | None) -> dict:
             "counts": counts, "baseline": baseline}
 
 
+def gate_qa_fixture_absence(client) -> dict:
+    """HARD gate: no QA-only fixture/placeholder products present on the target.
+
+    These are excluded before the freeze (runbook §1); this gate is the fail-loud
+    backstop that refuses cutover if any survived — a full DB copy would promote
+    them as real, buyable products (GOL-1329 launch audit item 3)."""
+    hits: list[str] = []
+    for pat in QA_FIXTURE_NAME_PATTERNS:
+        rows = client.call("product.template", "search_read",
+                           [[["name", "=ilike", pat]]], {"fields": ["name"]})
+        hits.extend(r["name"] for r in rows)
+    ok = not hits
+    detail = f"qa_fixtures_found={len(hits)}"
+    if hits:
+        detail += " :: " + "; ".join(sorted(set(hits))[:8])
+    return {"label": "QA-fixture/placeholder absence", "ok": ok, "detail": detail,
+            "found": sorted(set(hits))}
+
+
+def gate_branding_present(client) -> dict:
+    """HARD gate: company + website branding binaries survived the promotion.
+
+    Prod launched serving the default 8.7 KB 'Your Logo' placeholder (GOL-1329
+    launch audit item 1) because the branding binaries live only in the DB /
+    filestore and there is no separate config-promotion path. An empty
+    res.company.logo or website logo/favicon on the target means the binary did
+    not come across. Binary fields read as base64 (str) or False over XML-RPC;
+    this asserts each is non-empty. (The HTTP content-type/size assertion is a
+    separate storefront smoke — scripts/promotion-asset-smoke.sh.)"""
+    problems: list[str] = []
+    companies = client.call("res.company", "search_read", [[]], {"fields": ["name", "logo"]})
+    for c in companies:
+        if not c.get("logo"):
+            problems.append(f"res.company[{c.get('name')}].logo empty")
+    # website may be absent on a headless/older DB — treat a Fault as "no website".
+    try:
+        sites = client.call("website", "search_read", [[]], {"fields": ["name", "logo", "favicon"]})
+    except xmlrpc.client.Fault:
+        sites = []
+    for s in sites:
+        if not s.get("logo"):
+            problems.append(f"website[{s.get('name')}].logo empty")
+        if not s.get("favicon"):
+            problems.append(f"website[{s.get('name')}].favicon empty")
+    ok = not problems
+    detail = f"companies={len(companies)} websites={len(sites)} problems={len(problems)}"
+    if problems:
+        detail += " :: " + "; ".join(problems[:6])
+    return {"label": "branding binaries present", "ok": ok, "detail": detail}
+
+
+def _price_key(row: dict) -> str:
+    """Stable identity for a product across source/target: default_code if set,
+    else the template name."""
+    return (row.get("default_code") or row.get("name") or "").strip()
+
+
+def collect_price_sample(client) -> list:
+    """A product-price census (sellable templates) used to detect QA→prod price
+    drift after promotion (GOL-1329 launch audit item 2)."""
+    rows = client.call("product.template", "search_read",
+                       [[["sale_ok", "=", True]]],
+                       {"fields": ["name", "default_code", "list_price"], "limit": PRICE_SAMPLE_LIMIT})
+    return [{"key": _price_key(r), "name": r.get("name"), "list_price": r.get("list_price")}
+            for r in rows if _price_key(r)]
+
+
+def _price_differs(a: object, b: object) -> bool:
+    try:
+        return abs(float(a or 0) - float(b or 0)) > 0.005
+    except (TypeError, ValueError):
+        return a != b
+
+
+def gate_price_parity(client, baseline: dict | None) -> dict:
+    """Compare target product list_prices against the SOURCE baseline sample.
+
+    After a full DB copy prices match by construction; a mismatch means a
+    pricelist/reconfig defect or that the target was never actually promoted
+    (prod Persimmon $12 vs QA $39, GOL-1329 audit). Products in the baseline that
+    are ABSENT on the target are reported but not hard-failed (they may be
+    deliberately-excluded fixtures; row-loss is the completeness gate's job).
+    SKIP without a --baseline that carries a product_prices sample."""
+    sample = (baseline or {}).get("product_prices")
+    if not sample:
+        return {"label": "price parity vs source", "ok": True, "skipped": True,
+                "detail": "no product_prices in baseline — parity gate SKIPPED"}
+    target = {p["key"]: p for p in collect_price_sample(client)}
+    drift, missing = [], []
+    for b in sample:
+        t = target.get(b.get("key"))
+        if t is None:
+            missing.append(b.get("key"))
+            continue
+        if _price_differs(b.get("list_price"), t.get("list_price")):
+            drift.append(f"{b.get('key')}: src={b.get('list_price')} tgt={t.get('list_price')}")
+    ok = not drift
+    detail = f"checked={len(sample)} drift={len(drift)} missing_on_target={len(missing)}"
+    if drift:
+        detail += " :: " + "; ".join(drift[:6])
+    return {"label": "price parity vs source", "ok": ok, "detail": detail,
+            "drift": drift, "missing_on_target": missing}
+
+
 # ── driver ────────────────────────────────────────────────────────────────────
 
 def run_gates(client, baseline: dict | None) -> list[dict]:
@@ -226,6 +351,9 @@ def run_gates(client, baseline: dict | None) -> list[dict]:
                                  [["move_type", "=", "out_invoice"], ["state", "=", "posted"]],
                                  "invoice-numbering continuity"),
         gate_wv_tax_spotcheck(client),
+        gate_qa_fixture_absence(client),
+        gate_branding_present(client),
+        gate_price_parity(client, baseline),
         gate_completeness(collect_counts(client), baseline),
     ]
     return results
@@ -258,7 +386,9 @@ def main(argv: list[str]) -> int:
 
     if args.emit_baseline:
         census = collect_counts(client)
-        _log(f"== baseline census (source db={db}) ==  {census}")
+        prices = collect_price_sample(client)
+        census["product_prices"] = prices  # feeds the price-parity gate (item 2)
+        _log(f"== baseline census (source db={db}) ==  counts={ {k: v for k, v in census.items() if k != 'product_prices'} }  price_sample={len(prices)}")
         print(json.dumps(census, indent=2))
         return 0
 
