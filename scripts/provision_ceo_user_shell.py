@@ -27,7 +27,11 @@ WHY A SHELL SCRIPT (not XML-RPC)
 WHAT IT DOES (idempotent, re-runnable)
     1. Find-or-create login josh@goldberrygrove.farm with a CEO/admin group set
        (Administration/Settings + Sales/Inventory/Purchase/Website managers).
-       Groups are ensured with (4, gid) links -- additive, never clobbers.
+       Groups are ensured with (4, gid) links -- additive, never clobbers. If the
+       found user is a hand-made PORTAL/share account (Odoo's Portal and Public
+       roles are mutually exclusive with Internal), base.group_portal /
+       base.group_public are DROPPED in the SAME write that adds base.group_user,
+       or `_check_disjoint_groups` aborts the promotion.
     1b. Resolve the intended COMPANY set and set BOTH company_id (active) and
        company_ids (allowed), additively (GOL-1842 / GOL-1811 root cause). On a
        multi-company DB a user with no explicit company_ids is left on whatever
@@ -38,12 +42,13 @@ WHAT IT DOES (idempotent, re-runnable)
        Default intended set = ALL companies in the DB (correct for a solo-operator
        CEO who owns every entity); override with CEO_COMPANIES / CEO_MAIN_COMPANY.
     2. Deliver a credential WITHOUT Terra ever handling a plaintext password:
-         * Preferred: generate a one-time self-service SET-PASSWORD link via the
-           auth_signup module (res.partner.signup_url). Josh opens it and sets
-           his OWN password. No email/SMTP dependency, nothing stored anywhere.
-         * Fallback (auth_signup not installed): set a strong random password and
-           print it ONCE, between markers, to the operator's own terminal. Josh
-           logs in, changes it under Preferences, and saves it in 1Password.
+         * Self-service link (auth_signup, res.partner.signup_url): taken ONLY
+           when that attribute exists. Odoo 19 removed signup_url, so this path
+           is skipped on prod today and the script falls through to:
+         * Direct temp password: set a strong random password and print it ONCE,
+           between markers, to the operator's own terminal. Josh logs in, changes
+           it under Preferences, and saves it in 1Password. This is the path that
+           actually unblocked the CEO on prod 2026-08-31.
        Either way the secret is emitted only to the terminal of whoever runs
        this script -- never to an issue comment, a log artifact, or a store
        Terra controls.
@@ -153,6 +158,36 @@ def _groups_field():
     return "group_ids" if "group_ids" in fields else "groups_id"
 
 
+def _exclusive_group_removals(user, groups_field):
+    """(3, gid) unlink commands for any exclusive Portal/Public group the found
+    user currently holds.
+
+    Odoo's `_check_disjoint_groups` forbids an internal user (base.group_user)
+    from ALSO being in the mutually-exclusive Portal or Public roles. A
+    find-or-create that promotes a hand-made PORTAL/share account therefore MUST
+    drop base.group_portal / base.group_public in the SAME write that adds
+    base.group_user, or the write raises:
+
+        ValidationError: User '...' cannot be at the same time in exclusive
+        groups 'Role / Portal', 'Role / User'.
+
+    Verified live on prod 2026-08-31: uid=7 (josh@) was a hand-made portal signup
+    (share=True, its only group base.group_portal) and could only be promoted to
+    internal by dropping group_portal in the same write. Returns [] for a user
+    that is already internal (the common re-run case)."""
+    removals = []
+    current_ids = getattr(user, groups_field).ids
+    for xmlid in ("base.group_portal", "base.group_public"):
+        rec = env.ref(xmlid, raise_if_not_found=False)
+        if rec and rec._name == "res.groups" and rec.id in current_ids:
+            removals.append((3, rec.id))
+            _err(
+                f"will drop exclusive group {xmlid} -> res.groups({rec.id}) "
+                "(portal/internal disjoint constraint)"
+            )
+    return removals
+
+
 def _resolve_companies(user):
     """Resolve (allowed_companies, active_company) for the CEO.
 
@@ -259,7 +294,15 @@ def main():
             + ", ".join(f"{c.name}({c.id})" for c in allowed_companies.sorted("id"))
         )
         print(f"company_id active -> {active_company.name}({active_company.id})")
-        print(f"credential_delivery={'auth_signup self-service link' if signup_installed else 'random temp password (auth_signup missing)'}")
+        print(
+            "credential_delivery="
+            + (
+                "auth_signup self-service link (ONLY if res.partner.signup_url "
+                "exists -- absent on Odoo 19, then falls back to temp password)"
+                if signup_installed
+                else "random temp password (auth_signup missing)"
+            )
+        )
         print("No write, no commit.")
         print("----END CEO_PROVISION_DRYRUN----")
         return 0
@@ -269,10 +312,17 @@ def main():
     # _resolve_companies to be within the allowed set (constraint safe).
     company_link_cmds = [(4, c.id) for c in allowed_companies]
     if user:
+        # Promote a possibly-portal/share account: drop the exclusive Portal/
+        # Public groups (if held) in the SAME write that adds the internal/admin
+        # set, else _check_disjoint_groups aborts. Unlinks first, then (4, gid)
+        # adds -- additive on groups the user already has.
+        group_cmds = _exclusive_group_removals(user, groups_field) + [
+            (4, gid) for gid in group_ids
+        ]
         user.write({
             "name": CEO_NAME,
             "email": CEO_EMAIL,
-            groups_field: [(4, gid) for gid in group_ids],
+            groups_field: group_cmds,
             "company_ids": company_link_cmds,
             "company_id": active_company.id,
         })
@@ -320,7 +370,12 @@ def main():
             _err(f"ERROR: action_reset_password failed ({exc!r}); check prod SMTP.")
             return 4
 
-    if signup_installed:
+    # Odoo 19 removed res.partner.signup_url (verified live on prod 2026-08-31:
+    # `AttributeError: 'res.partner' object has no attribute 'signup_url'`), so
+    # the self-service-link path is dead there even with auth_signup installed.
+    # Only take it when the attribute actually exists; otherwise fall through to
+    # the direct temp-password delivery below -- the path that unblocked the CEO.
+    if signup_installed and hasattr(user.partner_id, "signup_url"):
         # Prepare a one-time signup/reset token and emit the self-service URL.
         try:
             user.partner_id.signup_prepare(signup_type="reset")
