@@ -25,11 +25,13 @@ variable "spaces_secret_key" {
 variable "admin_ip_cidrs" {
   description = "Operator IPv4 CIDRs for the blogs/Odoo SSH allowlist AND the managed-PG trusted-source rule. A LIST so more than one operator address can be authorised at once (GOL-1842): an ISP-rotated home IP no longer locks every operator out of every droplet, and a second address can be added without dropping the first. Every entry is a `curl -4 ifconfig.me`/32. Keeping the codified entry here rather than in a gitignored tfvars is what makes the SSH rule reproducible from code (GOL-385). Codify a NEW address by adding it to this list (do not replace the existing one blind); an out-of-band DO rule added by hand is silently removed by the next apply, so it must land here to be durable."
   type        = list(string)
-  # Preserves the address live in prod state (blogs/Odoo firewall port-22 rule)
-  # today. Additional operator CIDRs are appended here (GOL-1842) after Josh
-  # confirms them -- NOT hardcoded as the sole value, which is the recurrence
-  # this issue exists to stop.
-  default = ["74.47.41.38/32"]
+  # Both addresses are live on grove-prod-odoo-fw port-22 today (verified
+  # 2026-08-31): 74.47.41.38/32 preexisting, 173.84.140.152/32 is Josh's
+  # ISP-rotated operator address, added out-of-band via the DO API and now
+  # codified here so the next apply converges onto -- rather than removes --
+  # it (GOL-1842). Append future operator CIDRs; do not replace the existing
+  # entries blind -- the recurrence this issue exists to stop.
+  default = ["74.47.41.38/32", "173.84.140.152/32"]
   validation {
     condition     = length(var.admin_ip_cidrs) > 0 && alltrue([for c in var.admin_ip_cidrs : can(regex("^[0-9.]+/[0-9]+$", c))])
     error_message = "admin_ip_cidrs must be a non-empty list of IPv4 CIDRs like [\"74.47.41.38/32\"]."
