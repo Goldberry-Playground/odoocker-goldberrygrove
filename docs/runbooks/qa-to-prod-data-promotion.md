@@ -15,6 +15,44 @@ GOL-484 (prod `grove_headless` install — gates the *real* cutover), vault
 > (prod `grove_headless` installed) and **before** the hub/goldberry apex window
 > closes the launch (GOL-287 / GOL-1279).
 
+---
+
+> ## ⛔ CORRECTION — CEO ruling 2026-08-31 (Josh). READ BEFORE RUNNING.
+> Two facts changed **after** this runbook was drafted; the wholesale
+> *"promote QA's live data to prod"* premise above is **no longer valid as
+> written.**
+>
+> **1. Prod prices are AUTHORITATIVE; QA's are wrong. Do NOT promote prices.**
+> Potted Apple = **$35 prod is correct** (QA's $37 is wrong). Persimmon = **$12
+> normal / $35 grafted (Meader)** prod is correct (QA's $39 is neither). The
+> *"Persimmon $39→$12 drift"* that motivated **gate 6** is mis-framed — prod is
+> right. **Gate 6 (price parity vs QA source) is RETIRED / inverted:** as written
+> it would report PASS while overwriting 42 correct prod `list_price`s with wrong
+> QA values on a live storefront. See §6 note.
+>
+> **2. Prod checkout is LIVE and taking real orders** (GOL-1880, 2026-08-31). The
+> original design assumed prod held **zero** orders (GOL-1795), which is what made
+> a whole-DB `pg_dump`+restore lossless *for prod*. That assumption is now
+> **void**: a wholesale restore would destroy prod's real orders, invoices, and
+> correct prices. **The wholesale `promote-db.sh` restore path (§4–§7) is RETIRED
+> for the real prod cutover** until the CEO re-scopes it; it remains valid only as
+> a **scratch-restore rehearsal** (§9).
+>
+> **Corrected shape (pending CEO confirmation of the acceptance criteria).**
+> Promote **inventory state only**; prod is otherwise authoritative:
+> - `is_storable = True` on the 18 catalog templates (prod has them as
+>   non-stock-tracked `consu`, so quantities can't even be stored).
+> - on-hand quantities / `stock.quant` rows (prod: 0 rows; QA: 27 of 84 Apple
+>   variants stocked).
+> - **NOT** `list_price` / any pricing field, **NOT** orders/invoices/partners,
+>   **NOT** `rootstock` (prod already holds `M.111` on the variants; only the
+>   stale module pin `8accb943` fails to serialize it — a pin bump, not an import).
+>
+> This selective sync is a **different operation** than the wholesale restore
+> below and needs new tooling (a scoped `product.template.is_storable` +
+> `stock.quant` sync, not `promote-db.sh`). Do **not** run §4–§7 against prod
+> until the corrected acceptance criteria are confirmed.
+
 This runbook composes existing, hardened tooling — it does not replace it:
 
 | Concern | Tool | Doc |
@@ -280,9 +318,15 @@ Gates:
    > baseline rule above they are NOTE-only and never block the promotion. Those two
    > marks are a **content gap Josh must supply**; they are not recoverable from QA.
    > Real-logo enforcement is website-1-only, via the §7 smoke.
-6. **price parity vs source** — target product `list_price`s match the §2
-   baseline `product_prices` sample (launch audit item 2; catches drift like
-   Persimmon $39→$12). SKIPs if the baseline carries no price sample.
+6. **price parity vs source** — ⛔ **RETIRED per CEO ruling 2026-08-31 (see top of
+   doc).** This gate asserted target `list_price`s match the **QA** baseline
+   sample — but **prod prices are authoritative and QA's are wrong**, so the gate
+   would greenlight overwriting 42 correct prod prices with wrong QA values on a
+   live storefront (GOL-1880). The "Persimmon $39→$12 drift" it cited is prod
+   being *correct*, not drift. **Do not run this gate QA→prod.** If a price gate is
+   ever reinstated it must be **prod-authoritative** (flag QA drift to reconcile
+   *to* prod), never assert QA as truth. Until then, exclude `list_price` from the
+   promoted field set entirely.
 7. **promotion completeness** — target counts ≥ the §2 source baseline (no rows
    lost in transit).
 
