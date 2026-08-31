@@ -152,6 +152,15 @@ resource "digitalocean_droplet" "odoo" {
     custom_modules_ref = var.custom_modules_ref
     caddy_tag          = var.caddy_tag
 
+    # GOL-1859: host Odoo bakes into every absolute URL it emits (password-reset,
+    # portal, e-commerce, report.url). entrypoint.sh's seed_web_base_url() upserts
+    # web.base.url + web.base.url.freeze=True from this on every boot so a rebuild
+    # never reverts to localhost:8069. Empty default => seed is a no-op until the
+    # launch host is confirmed and the value is populated (from the vault, like
+    # the Stripe scaffold). user_data is in ignore_changes below, so landing this
+    # does NOT touch the running droplet — a board-gated rebuild activates it.
+    web_base_url = var.web_base_url
+
     # Stripe LIVE-mode keys for grove_headless prod checkout (GOL-973). These
     # are the DEDICATED backend key + webhook secret — runbook §4 forbids
     # reusing a storefront key here. Empty defaults keep checkout inert until

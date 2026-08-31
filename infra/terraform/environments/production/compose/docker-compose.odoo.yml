@@ -57,6 +57,14 @@ services:
       # Trust Caddy's X-Forwarded-* headers (CSRF + URL generation).
       PROXY_MODE: "true"
       LIST_DB: "false" # one fixed DB; hide the selector
+      # GOL-1859: the prod host Odoo bakes into every absolute URL it emits
+      # (password-reset / portal / e-commerce links, report.url). entrypoint.sh's
+      # seed_web_base_url() upserts web.base.url + web.base.url.freeze=True from
+      # this on every boot, so a droplet rebuild (GOL-920) or fresh bootstrap
+      # converges to the real host instead of drifting to localhost:8069. Sourced
+      # from --env-file /etc/grove/.env (cloud-init writes it from TF var
+      # web_base_url). Empty default keeps the seed a no-op until the value lands.
+      WEB_BASE_URL: ${WEB_BASE_URL:-}
       # GOL-1009: run a blocking `-u grove_headless` at boot whenever the
       # git-synced modules revision advances, so new models' DB tables are
       # created on deploy. The production branch boots --init=base with NO

@@ -367,6 +367,16 @@ variable "grove_assets_optimize_token" {
 # checkout INERT until CFO mints the live keys AND the board greenlights a
 # prod-checkout rebuild (activation replaces the droplet — board-gated per
 # GOL-920). Sensitive so the value never prints in plan/apply output.
+variable "web_base_url" {
+  description = "GOL-1859: the prod host Odoo bakes into every ABSOLUTE URL it generates — password-reset / set-password links, sale-order + customer-portal links, e-commerce/website links, and report.url. odoo/entrypoint.sh seed_web_base_url() upserts `web.base.url` + `web.base.url.freeze=True` (and report.url) from this value on every boot, so an immutable droplet rebuild (GOL-920) never silently reverts to Odoo's http://localhost:8069 default. NOT a secret; NO trailing slash (e.g. https://odoo.gatheringatthegrove.com pre-apex-cutover, or the hub apex per GOL-287 once cut over — decision pending, see GOL-1859). Empty default keeps apply/plan working and the seed inert until the launch host is confirmed and the value is populated (read via TF_VAR_web_base_url / op:// ref). user_data is in ignore_changes, so landing this is inert until a board-gated rebuild."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.web_base_url == "" || can(regex("^https?://[^/]+$", var.web_base_url))
+    error_message = "web_base_url must be empty or an absolute origin with NO trailing slash (e.g. https://odoo.gatheringatthegrove.com)."
+  }
+}
+
 variable "stripe_test_secret_key" {
   description = "Stripe LIVE-mode restricted secret key (rk_live_...) for grove_headless prod checkout — scoped to Checkout Session create + webhook ops only (live equivalent of the QA rk_test_ scope GOL-956 proved sufficient). DEDICATED backend key, never a storefront key (runbook §4). Injected into /etc/grove/.env as lowercase `stripe_test_secret_key`; grove_headless reads it via os.environ. VALUE is its own item in the `Goldberry Grove - Admin` vault (minted by CFO under GOL-973); read via TF_VAR_stripe_test_secret_key. Empty default keeps apply/plan working and checkout inert until provisioned + board-greenlit."
   type        = string

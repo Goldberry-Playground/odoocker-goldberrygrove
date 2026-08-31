@@ -131,6 +131,60 @@ if [[ $USE_SENTRY == "true" ]]; then
     LOAD+=",sentry"
 fi
 
+# ── GOL-1859: seed web.base.url + freeze (reproducible, env-driven) ──────────
+# Odoo generates every ABSOLUTE URL it emits off the `web.base.url`
+# ir.config_parameter: password-reset / set-password links, sale-order
+# confirmation + customer-portal links, e-commerce / website links, and (via
+# report.url) PDF report asset URLs. Its out-of-the-box default is
+# http://localhost:8069, and — unless `web.base.url.freeze` is 'True' — Odoo
+# silently REWRITES it to whatever Host the next authenticated web request
+# arrives on. On a headless prod box sitting behind Caddy, that drifts to
+# localhost:8069, so every link delivered to a customer is unusable by any
+# external party (the GOL-1859 defect). This also defeats the transactional-
+# email SMTP work: wiring Mailgun does not help if every link points at
+# localhost.
+#
+# This seed makes the correct value REPRODUCIBLE instead of a one-off live
+# mutation that the next immutable rebuild (GOL-920: prod root disk is
+# destroyed on replace) silently reverts. It runs on every deploy-shaped boot
+# (the production / qa / staging branches call seed_web_base_url just before
+# their serve exec) and upserts both params, so a droplet rebuild OR a
+# from-scratch bootstrap converges to the right host. It is driven by the
+# WEB_BASE_URL env var (compose `environment:` block <- /etc/grove/.env <- TF),
+# so changing the value is CONFIG, never a code edit; envs that do not set
+# WEB_BASE_URL (local / preview / testing) are a no-op. freeze='True' then stops
+# Odoo ever rewriting it again — belt (re-seed each boot) and suspenders
+# (freeze).
+#
+# IDEMPOTENT: set_param writes the same value on every boot (no-op when
+# unchanged). FAILS SOFT: on a brand-new EMPTY DB (base not yet installed) the
+# shell cannot load a registry; we log a WARN and let the serve command's
+# --init=base bootstrap the DB, then the NEXT boot seeds it. Prod's Managed-PG
+# DB is durable (survives the immutable replace) and already initialised, so on
+# prod the seed lands on the very first boot after this ships.
+seed_web_base_url() {
+    local db="$1"
+    if [ -z "${WEB_BASE_URL:-}" ]; then
+        return 0
+    fi
+    echo "GOL-1859: seeding web.base.url=${WEB_BASE_URL} (+ freeze, report.url) on database '${db}'"
+    # Pass the value through the subprocess env (never string-interpolated into
+    # the Python heredoc) so an odd character in the URL can never inject code.
+    WEB_BASE_URL="${WEB_BASE_URL}" odoo shell \
+        --config ${ODOO_RC} --database="${db}" --no-http --log-level=warn <<'PY' || \
+        echo "WARN(GOL-1859): web.base.url seed skipped (DB not ready / base not installed?); it will retry on the next boot"
+import os
+url = (os.environ.get("WEB_BASE_URL") or "").strip()
+if url:
+    icp = env["ir.config_parameter"].sudo()
+    icp.set_param("web.base.url", url)
+    icp.set_param("web.base.url.freeze", "True")
+    icp.set_param("report.url", url)
+    env.cr.commit()
+    print("GOL-1859: set web.base.url=%s web.base.url.freeze=True report.url=%s" % (url, url))
+PY
+}
+
 case "$1" in
     -- | odoo)
         shift
@@ -231,6 +285,9 @@ case "$1" in
                 # Automagically upgrade all addons and install new ones. Ideal for deployment process.
                 echo odoo --config ${ODOO_RC} --database=${DB_NAME} --init=${INIT} --update=all --load=${LOAD} --log-level=${LOG_LEVEL} --load-language=${LOAD_LANGUAGE} --limit-time-cpu=3600 --limit-time-real=7200 --dev=
 
+                # GOL-1859: reproducible web.base.url seed (no-op unless WEB_BASE_URL set).
+                seed_web_base_url "${DB_NAME}"
+
                 exec odoo --config ${ODOO_RC} --database=${DB_NAME} --init=${INIT} --update=all --without-demo=all --workers=0 --limit-time-cpu=3600 --limit-time-real=7200 --dev=
             fi
 
@@ -245,6 +302,10 @@ case "$1" in
                 # exists), --init=base is a no-op for the already-installed
                 # base module.
                 echo odoo --config ${ODOO_RC} --database=${DB_NAME:-grove_qa} --init=${INIT:-base} --load=${LOAD:-web} --workers=${WORKERS:-2} --log-level=${LOG_LEVEL:-info}
+
+                # GOL-1859: same reproducible seed on QA. No-op unless the QA
+                # compose sets WEB_BASE_URL (e.g. https://qa.gatheringatthegrove.com).
+                seed_web_base_url "${DB_NAME:-grove_qa}"
 
                 exec odoo --config ${ODOO_RC} --database=${DB_NAME:-grove_qa} --init=${INIT:-base} --without-demo=all --workers=${WORKERS:-2}
             fi
@@ -263,6 +324,11 @@ case "$1" in
                 # `restart: unless-stopped` bounce (which would risk downtime +
                 # partial migrations). Demo data OFF.
                 echo odoo --config ${ODOO_RC} --database=${DB_NAME:-grove_prod} --init=${INIT:-base} --load=${LOAD:-web} --workers=${WORKERS:-2} --log-level=${LOG_LEVEL:-info} --without-demo=all
+
+                # GOL-1859: converge web.base.url + freeze before serving so every
+                # emitted link (password reset, portal, e-commerce, reports) points
+                # at the real prod host, not localhost:8069.
+                seed_web_base_url "${DB_NAME:-grove_prod}"
 
                 exec odoo --config ${ODOO_RC} --database=${DB_NAME:-grove_prod} --init=${INIT:-base} --without-demo=all --workers=${WORKERS:-2}
             fi
