@@ -82,6 +82,21 @@ write_files:
       # incident happened).
       ADDONS_PATH=/usr/lib/python3/dist-packages/odoo/addons,/workspace/current
 
+      # GOL-1859/GOL-1876: the QA host Odoo bakes into every ABSOLUTE URL it
+      # generates (password-reset / set-password links, sale-order + customer-
+      # portal links, e-commerce/website links, report.url). entrypoint.sh's
+      # seed_web_base_url() (invoked from the `qa` branch) upserts web.base.url +
+      # web.base.url.freeze=True (and report.url) from this value on every boot,
+      # so an immutable droplet rebuild never lets web.base.url drift back to
+      # Odoo's http://localhost:8069 default -- Odoo otherwise rewrites it to the
+      # Host of the most recent authenticated login (a localhost-originated login
+      # poisons every generated link). Unlike prod's var.web_base_url (empty
+      # until an apex-cutover host decision, GOL-1859), the QA host is
+      # deterministic from qa_zone, so we derive it here (single source of truth:
+      # re-keying qa_subdomain re-keys this too). Consumed via the odoo
+      # `environment:` block in docker-compose.qa.yml (WEB_BASE_URL: $${WEB_BASE_URL:-}).
+      WEB_BASE_URL=https://odoo.${qa_zone}
+
       # Caddy DNS-01 ACME - single hostname (odoo.${qa_zone}), so the
       # rate-limit class that motivated the monolith's multi-issuer
       # fallback (ADR-005 PR-D) is essentially non-applicable here.
