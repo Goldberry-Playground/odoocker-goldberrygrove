@@ -419,3 +419,65 @@ variable "grove_shippo_webhook_token" {
   sensitive   = true
   default     = ""
 }
+
+# === Mailgun SMTP — Odoo transactional email (GOL-988) =======================
+# Order-confirmation + shipping-notification email for the storefront. Prod Odoo
+# reads these from /etc/grove/.env (SMTP_SERVER/PORT/SSL/USER/PASSWORD +
+# EMAIL_FROM/FROM_FILTER); the grove-odoo image's odoorc.sh substitutes them into
+# the SMTP group of /etc/odoo/odoo.conf at container start (same image + path
+# QA proved live under GOL-995/GOL-988). This is the Odoo storefront transport —
+# DISTINCT from the Ghost-blog SMTP (var.ghost_smtp / GOL-248) above.
+#
+# LANDMINE (board correction 2026-08-18): the sending domain is
+# send.gatheringatthegrove.com — NOT mg.gatheringatthegrove.com, which is held by
+# a Mailgun account we do not control (see var.ghost_smtp note + mailgun-domains.sh
+# note 9). send.* is DNS-verified (SPF + DKIM krs._domainkey) and is the only
+# authenticated domain Odoo may send From.
+#
+# Only smtp_password is a real secret (read from TF_VAR_smtp_password / .env.op);
+# the empty default keeps plan/apply working and SMTP auth inert (zero regression)
+# until the value is provided. Like stripe_test_*/shippo_*, these feed cloud-init
+# user_data, which is in ignore_changes (odoo.tf) — landing this scaffold does NOT
+# touch the running droplet; activation rides a board-gated rebuild/hand-inject.
+variable "smtp_server" {
+  description = "Mailgun SMTP relay host for Odoo transactional email. Injected into /etc/grove/.env as SMTP_SERVER. US endpoint; switch to smtp.eu.mailgun.org for an EU account."
+  type        = string
+  default     = "smtp.mailgun.org"
+}
+
+variable "smtp_port" {
+  description = "Mailgun SMTP port. 587 => Odoo negotiates STARTTLS (smtp_ssl=False). Injected as SMTP_PORT."
+  type        = string
+  default     = "587"
+}
+
+variable "smtp_ssl" {
+  description = "Odoo smtp_ssl (SMTP_SSL). False on port 587 (STARTTLS, not implicit TLS)."
+  type        = string
+  default     = "False"
+}
+
+variable "smtp_user" {
+  description = "Mailgun SMTP login on the verified send.* sending domain (GOL-995 QA-verified value). Injected as SMTP_USER. Same login as the QA transport (1P item 'Mailgun | Goldberry Grove' -> smtp_login_hub)."
+  type        = string
+  default     = "transactional@send.gatheringatthegrove.com"
+}
+
+variable "smtp_password" {
+  description = "Mailgun SMTP password for smtp_user. Injected as SMTP_PASSWORD. VALUE = the verified send.* hub credential: 1P 'Goldberry Grove - Admin' item 'Mailgun | Goldberry Grove' field smtp_password_hub, read via TF_VAR_smtp_password (see .env.op). Empty default keeps apply/plan working and SMTP auth inert (zero regression) until provided."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "email_from" {
+  description = "Odoo email_from — display-name + address on the verified send.* sending domain. Injected as EMAIL_FROM (double-quoted in the .env because it is shell-`source`d and contains spaces + <>; odoorc.sh strips one quote layer for odoo.conf). Mailgun rejects a From outside the authenticated domain, so all prod order/shipping mail sends From send.gatheringatthegrove.com. NOTE: this is the transport-level fallback From; per-brand display (e.g. At The Grove Nursery) is set on the Odoo company's email and overrides this on the sale-confirmation template — a launch-config decision, not a transport change."
+  type        = string
+  default     = "Gathering at the Grove <orders@send.gatheringatthegrove.com>"
+}
+
+variable "from_filter" {
+  description = "Odoo from_filter (FROM_FILTER) — the authenticated Mailgun sending domain Odoo is allowed to send From. Must stay send.gatheringatthegrove.com (the DNS-verified domain), never mg.*."
+  type        = string
+  default     = "send.gatheringatthegrove.com"
+}
