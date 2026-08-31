@@ -239,6 +239,13 @@ jobs:
           git -c user.name="grove-promote-bot" -c user.email="actions@github.com" \
             commit -am "infra(prod): promote storefronts to ${TARGET_SHA} (promote-storefronts.yml)"
 
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        timeout-minutes: 3
+        with:
+          terraform_version: "~1.10" # GOL-40: use_lockfile requires >= 1.10
+          terraform_wrapper: false   # plan/apply output is parsed directly; the wrapper corrupts it
+
       - name: Terraform init
         timeout-minutes: 5
         run: |
