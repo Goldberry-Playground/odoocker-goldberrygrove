@@ -128,6 +128,26 @@ class _Model:
         return 0
 
 
+class _Grp:
+    """A size-1 res.groups record for env.ref() in _exclusive_group_removals."""
+
+    def __init__(self, gid):
+        self.id = gid
+        self._name = "res.groups"
+
+
+class _User:
+    """A minimal res.users singleton: only the m2m groups field (with .ids) that
+    _exclusive_group_removals reads."""
+
+    def __init__(self, groups_field, group_ids):
+        setattr(self, groups_field, type("_M2M", (), {"ids": list(group_ids)})())
+
+
+# res.groups xmlid -> id. Portal/public are the exclusive roles; 1 = internal.
+_GROUP_XMLIDS = {"base.group_portal": 10, "base.group_public": 11, "base.group_user": 1}
+
+
 class _FakeEnv:
     def __init__(self, companies, users_fields):
         self._models = {
@@ -137,6 +157,14 @@ class _FakeEnv:
 
     def __getitem__(self, name):
         return self._models[name]
+
+    def ref(self, xmlid, raise_if_not_found=True):
+        gid = _GROUP_XMLIDS.get(xmlid)
+        if gid is None:
+            if raise_if_not_found:
+                raise ValueError(xmlid)
+            return None
+        return _Grp(gid)
 
 
 def _load(users_fields, companies=()):
@@ -181,6 +209,34 @@ def test_companies_explicit_override_active_forced_in():
     assert active.name == "At The Grove Nursery, LLC"
     assert active in allowed, "active company must be forced into the allowed set"
     assert sorted(c.name for c in allowed) == ["At The Grove Nursery, LLC", "Farm"]
+
+
+def test_portal_user_drops_exclusive_group():
+    # A hand-made portal signup (only base.group_portal) must yield a (3, id)
+    # unlink so the internal-group add in the same write doesn't trip
+    # _check_disjoint_groups. This is the exact prod uid=7 shape (2026-08-31).
+    ns = _load(users_fields={"group_ids": object()})
+    user = _User("group_ids", [_GROUP_XMLIDS["base.group_portal"]])
+    removals = ns["_exclusive_group_removals"](user, "group_ids")
+    assert removals == [(3, _GROUP_XMLIDS["base.group_portal"])], removals
+
+
+def test_portal_and_public_both_dropped():
+    ns = _load(users_fields={"group_ids": object()})
+    user = _User("group_ids", [_GROUP_XMLIDS["base.group_portal"],
+                               _GROUP_XMLIDS["base.group_public"]])
+    removals = ns["_exclusive_group_removals"](user, "group_ids")
+    assert removals == [(3, _GROUP_XMLIDS["base.group_portal"]),
+                        (3, _GROUP_XMLIDS["base.group_public"])], removals
+
+
+def test_internal_user_no_removals():
+    # The idempotent re-run case: an already-internal user has no exclusive
+    # groups, so no unlink commands are emitted (nothing to clobber).
+    ns = _load(users_fields={"group_ids": object()})
+    user = _User("group_ids", [_GROUP_XMLIDS["base.group_user"]])
+    removals = ns["_exclusive_group_removals"](user, "group_ids")
+    assert removals == [], removals
 
 
 def _run():
