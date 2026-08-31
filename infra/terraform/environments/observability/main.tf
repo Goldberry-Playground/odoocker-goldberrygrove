@@ -170,11 +170,11 @@ module "obs_droplet" {
 }
 
 # ── Firewall ──────────────────────────────────────────────────────────────
-# UIs (5080 OpenObserve, 3034 Keep) + SSH are admin-only (admin_ip_cidr). The
+# UIs (5080 OpenObserve, 3034 Keep) + SSH are admin-only (admin_ip_cidrs). The
 # SEPARATE obs plane also needs CROSS-BOX OTLP ingest on 5080 from off-droplet
 # collectors — primarily the agenticos droplet (host.role=agenticos, GOL-54).
 # Those source CIDRs go in var.ingest_source_cidrs (a /32 per collector), kept
-# distinct from admin_ip_cidr so ingest never widens admin/UI access.
+# distinct from admin_ip_cidrs so ingest never widens admin/UI access.
 # TODO(live): front OpenObserve ingest with the Cloudflare-WAF Bearer endpoint
 # (spec §1) for the off-droplet GitHub Actions Playwright/Hurl crons whose IPs
 # are dynamic and can't be pinned to a /32 here.
@@ -185,7 +185,7 @@ resource "digitalocean_firewall" "obs" {
   inbound_rule {
     protocol         = "tcp"
     port_range       = "22"
-    source_addresses = [var.admin_ip_cidr]
+    source_addresses = var.admin_ip_cidrs
   }
 
   # Automation SSH vantage — the agenticos droplet runs the obs ops automation
@@ -203,7 +203,7 @@ resource "digitalocean_firewall" "obs" {
   inbound_rule {
     protocol         = "tcp"
     port_range       = "5080" # OpenObserve UI + OTLP ingest (admin)
-    source_addresses = [var.admin_ip_cidr]
+    source_addresses = var.admin_ip_cidrs
   }
 
   # Cross-plane OTLP ingest on 5080 from off-droplet collectors (agenticos
@@ -226,18 +226,18 @@ resource "digitalocean_firewall" "obs" {
   # firewall, so it needs no allow entry here (verified: hairpin returned 200
   # while 8080 had no inbound rule at all). setup-monitoring.py reaches Keep
   # internally (keep-backend:8080 on the obs network), also not via this port.
-  # So the only external consumer is an admin debugging Keep -> admin_ip_cidr
+  # So the only external consumer is an admin debugging Keep -> admin_ip_cidrs
   # only. Keep is additionally X-API-KEY (WEBHOOK_TOKEN) gated. (GOL-279)
   inbound_rule {
     protocol         = "tcp"
     port_range       = "8080" # Keep webhook/API (admin-only; OO->Keep is host-local hairpin)
-    source_addresses = [var.admin_ip_cidr]
+    source_addresses = var.admin_ip_cidrs
   }
 
   inbound_rule {
     protocol         = "tcp"
     port_range       = "3034" # Keep UI
-    source_addresses = [var.admin_ip_cidr]
+    source_addresses = var.admin_ip_cidrs
   }
 
   # Public RUM ingest on 443 (Caddy -> openobserve:5080), GOL-311. This is the

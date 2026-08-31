@@ -5,12 +5,14 @@ context, superuser `env`). GOL-1780: Josh (CEO) has NO res.users login on prod
 Odoo -- there is no Odoo account credential in any 1Password vault, only API
 service keys and the master/DB password. This bootstraps his first login.
 
-    docker compose \
-        -f docker-compose.yml \
-        -f docker-compose.override.grove.yml \
-        -f docker-compose.override.production.yml \
-        exec -T odoo odoo shell -d "$DB_NAME" --no-http --logfile=/dev/null \
+    set -a; . /etc/grove/.env; set +a
+    cd /etc/grove && docker compose exec -T odoo \
+        odoo shell -d "$DB_NAME" --no-http --logfile=/dev/null \
         < scripts/provision_ceo_user_shell.py
+
+    (The live prod droplet runs a SINGLE docker-compose.yml under /etc/grove --
+    no override files, no /opt/grove. Confirmed off the running container's own
+    compose labels, 2026-08-31.)
 
 WHY A SHELL SCRIPT (not XML-RPC)
     Bootstrapping the FIRST admin user is a chicken-and-egg: XML-RPC
@@ -26,6 +28,15 @@ WHAT IT DOES (idempotent, re-runnable)
     1. Find-or-create login josh@goldberrygrove.farm with a CEO/admin group set
        (Administration/Settings + Sales/Inventory/Purchase/Website managers).
        Groups are ensured with (4, gid) links -- additive, never clobbers.
+    1b. Resolve the intended COMPANY set and set BOTH company_id (active) and
+       company_ids (allowed), additively (GOL-1842 / GOL-1811 root cause). On a
+       multi-company DB a user with no explicit company_ids is left on whatever
+       default the DB picks, so the other LLC storefronts are invisible to him --
+       exactly the GOL-1811 symptom. company_ids is ensured with (4, cid) links
+       (additive, never drops an existing allowed company); company_id is set to
+       the resolved active company, guaranteed to be within the allowed set.
+       Default intended set = ALL companies in the DB (correct for a solo-operator
+       CEO who owns every entity); override with CEO_COMPANIES / CEO_MAIN_COMPANY.
     2. Deliver a credential WITHOUT Terra ever handling a plaintext password:
          * Preferred: generate a one-time self-service SET-PASSWORD link via the
            auth_signup module (res.partner.signup_url). Josh opens it and sets
@@ -59,6 +70,21 @@ DRY_RUN = os.environ.get("CEO_DRY_RUN", "").strip() not in ("", "0", "false", "F
 #     set-password link; print only a non-secret confirmation. Use in CI, whose
 #     logs are durable -- nothing secret must land there. Requires working SMTP.
 CEO_DELIVER = (os.environ.get("CEO_DELIVER", "print").strip().lower() or "print")
+
+# Company scoping (GOL-1842 / GOL-1811). Both optional:
+#   CEO_COMPANIES     SEMICOLON-separated res.company NAMES to allow. Empty
+#                     (default) => ALL companies in the DB (a solo-operator CEO
+#                     owns every entity). ';' not ',' because a company name may
+#                     itself contain a comma ("At The Grove Nursery, LLC"). Names
+#                     are matched exactly; a name not found WARNs and is skipped
+#                     rather than aborting.
+#   CEO_MAIN_COMPANY  the res.company NAME to make ACTIVE (company_id). Empty
+#                     (default) => keep the user's current active company if it is
+#                     inside the allowed set, else the lowest-id allowed company
+#                     (the DB's main company). Always forced into the allowed set
+#                     so Odoo's "company_id must be in company_ids" holds.
+CEO_COMPANIES = os.environ.get("CEO_COMPANIES", "").strip()
+CEO_MAIN_COMPANY = os.environ.get("CEO_MAIN_COMPANY", "").strip()
 
 # Full CEO/admin posture. base.group_system (Administration / Settings) is the
 # ratified "Settings access" grant GOL-1780 asks about -- for a solo-operator
@@ -117,6 +143,63 @@ def _resolve_groups():
     return group_ids, missing_required
 
 
+def _groups_field():
+    """Odoo 19 renamed res.users.groups_id -> group_ids (m2m to res.groups).
+    Resolve the field at runtime rather than hardcoding either name, so this
+    script survives the version straddle: 17/18 (groups_id) AND 19+ (group_ids).
+    Prod is 19.0 as of 2026-08-31 -- writing the old name raises
+    ValueError: Invalid field 'groups_id' in 'res.users' before any commit."""
+    fields = env["res.users"]._fields
+    return "group_ids" if "group_ids" in fields else "groups_id"
+
+
+def _resolve_companies(user):
+    """Resolve (allowed_companies, active_company) for the CEO.
+
+    allowed = CEO_COMPANIES names, or ALL companies when unset.
+    active  = CEO_MAIN_COMPANY, or the user's current active company if it is in
+              the allowed set, else the lowest-id allowed company. The active
+              company is always unioned into the allowed set so Odoo's
+              company_id-in-company_ids constraint holds.
+    Returns (allowed_recordset, active_record). Never returns an empty allowed
+    set: a DB always has at least one company.
+    """
+    Company = env["res.company"].sudo()
+    all_companies = Company.search([], order="id")
+
+    if CEO_COMPANIES:
+        allowed = Company.browse()
+        missing = []
+        for name in [n.strip() for n in CEO_COMPANIES.split(";") if n.strip()]:
+            rec = Company.search([("name", "=", name)], limit=1)
+            if rec:
+                allowed |= rec
+            else:
+                missing.append(name)
+        if missing:
+            _err(f"WARN: CEO_COMPANIES names not found (skipped): {missing}")
+        if not allowed:
+            _err("WARN: no CEO_COMPANIES matched any company; using ALL companies")
+            allowed = all_companies
+    else:
+        allowed = all_companies
+
+    # Resolve the active company.
+    active = Company.browse()
+    if CEO_MAIN_COMPANY:
+        active = Company.search([("name", "=", CEO_MAIN_COMPANY)], limit=1)
+        if not active:
+            _err(f"WARN: CEO_MAIN_COMPANY '{CEO_MAIN_COMPANY}' not found; falling back")
+    if not active and user and user.company_id and user.company_id in allowed:
+        active = user.company_id
+    if not active:
+        active = allowed.sorted("id")[0]
+
+    # Guarantee the active company is within the allowed set (constraint).
+    allowed |= active
+    return allowed, active
+
+
 def _mail_posture():
     """Report whether a self-service link (auth_signup) and/or SMTP are usable.
     Informational only -- the signup-URL path does not require SMTP."""
@@ -142,43 +225,76 @@ def main():
         return 3
     _err(f"resolved {len(group_ids)} groups total: {group_ids}")
 
+    groups_field = _groups_field()
+    _err(f"res.users groups m2m field resolved -> {groups_field}")
+
     signup_installed = _mail_posture()
     user = env["res.users"].search([("login", "=", CEO_LOGIN)], limit=1)
+    allowed_companies, active_company = _resolve_companies(user)
+    _err(
+        "resolved companies: allowed="
+        + ", ".join(f"{c.name}({c.id})" for c in allowed_companies.sorted("id"))
+        + f" | active={active_company.name}({active_company.id})"
+    )
 
     if DRY_RUN:
-        action = "UPDATE groups on existing" if user else "CREATE"
+        action = "UPDATE groups+companies on existing" if user else "CREATE"
         print("----BEGIN CEO_PROVISION_DRYRUN----")
         print(f"login={CEO_LOGIN}")
         print(f"name={CEO_NAME}")
         print(f"action={action}{(' (uid=%d)' % user.id) if user else ''}")
+        print(f"groups_m2m_field={groups_field}")
         for xmlid in REQUIRED_GROUP_XMLIDS + OPTIONAL_GROUP_XMLIDS:
             rec = env.ref(xmlid, raise_if_not_found=False)
             ok = rec and rec._name == "res.groups"
             tier = "REQUIRED" if xmlid in REQUIRED_GROUP_XMLIDS else "optional"
             print(f"group {xmlid} [{tier}] -> {'granted' if ok else 'SKIP(not-installed)'}")
+        cur = (
+            ", ".join(f"{c.name}({c.id})" for c in user.company_ids.sorted("id"))
+            if user else "(new user)"
+        )
+        print(f"company_ids current -> {cur}")
+        print(
+            "company_ids resolved (additive) -> "
+            + ", ".join(f"{c.name}({c.id})" for c in allowed_companies.sorted("id"))
+        )
+        print(f"company_id active -> {active_company.name}({active_company.id})")
         print(f"credential_delivery={'auth_signup self-service link' if signup_installed else 'random temp password (auth_signup missing)'}")
         print("No write, no commit.")
         print("----END CEO_PROVISION_DRYRUN----")
         return 0
 
+    # company_ids: (4, cid) links are additive -- never drops an already-allowed
+    # company. company_id (active) is set in the SAME write and is guaranteed by
+    # _resolve_companies to be within the allowed set (constraint safe).
+    company_link_cmds = [(4, c.id) for c in allowed_companies]
     if user:
         user.write({
             "name": CEO_NAME,
             "email": CEO_EMAIL,
-            "groups_id": [(4, gid) for gid in group_ids],
+            groups_field: [(4, gid) for gid in group_ids],
+            "company_ids": company_link_cmds,
+            "company_id": active_company.id,
         })
-        _err(f"updated existing user uid={user.id}, ensured CEO/admin groups")
+        _err(f"updated existing user uid={user.id}, ensured CEO/admin groups + companies")
     else:
         user = env["res.users"].create({
             "name": CEO_NAME,
             "login": CEO_LOGIN,
             "email": CEO_EMAIL,
-            "groups_id": [(6, 0, group_ids)],
+            groups_field: [(6, 0, group_ids)],
+            "company_ids": company_link_cmds,
+            "company_id": active_company.id,
         })
         _err(f"created user uid={user.id}")
 
     env.cr.commit()
     print(f"CEO_ODOO_UID={user.id}")
+    print(
+        "CEO_ODOO_COMPANY_IDS="
+        + ",".join(str(c.id) for c in user.company_ids.sorted("id"))
+    )
+    print(f"CEO_ODOO_ACTIVE_COMPANY_ID={user.company_id.id}")
 
     # --- Credential delivery (no plaintext ever handled by Terra) -------------
     if CEO_DELIVER == "email":

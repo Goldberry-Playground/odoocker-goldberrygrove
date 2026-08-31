@@ -55,8 +55,11 @@ resources being changed, and any plan that proposes replacing
      end-to-end from a clean checkout.
    - `healthchecks_ping_url` — feeds the blogs droplet **user_data**; see
      "Reproducibility" below before setting it.
-   - `admin_ip_cidr`, `region`, `blogs_droplet_size` now have codified defaults
-     matching live prod. Do **not** re-supply them from a local tfvars.
+   - `admin_ip_cidrs` (list), `region`, `blogs_droplet_size` now have codified
+     defaults matching live prod. Do **not** re-supply them from a local tfvars.
+     Add an operator address by appending its `/32` to the `admin_ip_cidrs`
+     list default (GOL-1842) — never as a hand-added DO rule, which the next
+     apply removes.
 3. `terraform init -backend-config=backend.hcl`
 4. `op run --env-file=.env.op -- terraform plan`
 5. `op run --env-file=.env.op -- terraform apply -target=...`
@@ -75,8 +78,8 @@ The provider stores `user_data` as a SHA1. State holds
 proposes a replace.
 
 **Consequence:** prod is not currently reproducible from code, and the only
-inputs that can still be recovered have been — `admin_ip_cidr`
-(`74.47.41.38/32`, read back out of the live firewall's port-22 rule), `region`,
+inputs that can still be recovered have been — `admin_ip_cidrs`
+(`["74.47.41.38/32"]`, read back out of the live firewall's port-22 rule), `region`,
 and `blogs_droplet_size` are now codified defaults. The single genuinely
 unrecoverable input is `healthchecks_ping_url`, which exists only inside the
 hashed `user_data`.
