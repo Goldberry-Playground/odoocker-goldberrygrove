@@ -18,6 +18,7 @@ system-of-record promotion:
 
 from __future__ import annotations
 
+import base64
 import importlib.util
 import os
 import re
@@ -364,31 +365,61 @@ def test_gates_qa_fixture_absence():
     check("lowercase fixture still caught (=ilike)", not gates.gate_qa_fixture_absence(lc)["ok"])
 
 
+def _b64_of_len(n: int) -> str:
+    """A base64 string whose DECODED length is exactly n bytes (for byte-parity
+    tests). base64.b64encode of n zero-bytes decodes back to n bytes."""
+    return base64.b64encode(b"\0" * n).decode("ascii")
+
+
 def test_gates_branding_present():
     print("integrity-gates: branding binaries present (launch audit item 1)")
-    ok_fake = FakeOdoo({
-        "res.company": {1: {"name": "Goldberry Grove", "logo": "iVBORw0KGgo="}},
-        "website": {1: {"name": "Main", "logo": "iVBORw0KGgo=", "favicon": "AAAB"}},
-    })
-    check("company+website branding present → PASS", gates.gate_branding_present(ok_fake)["ok"])
+    REAL = _b64_of_len(91505)   # website/1 real Goldberry Grove logo
+    PLACEHOLDER = _b64_of_len(gates.BRANDING_PLACEHOLDER_LEN)  # generic 6,078 B camera
+    FAVICON = _b64_of_len(1150)
 
-    # the exact prod-launch defect: company logo empty (default 'Your Logo')
-    empty_logo = FakeOdoo({
-        "res.company": {1: {"name": "Goldberry Grove", "logo": False}},
-        "website": {1: {"name": "Main", "logo": "iVBOR", "favicon": "AAAB"}},
-    })
-    r = gates.gate_branding_present(empty_logo)
-    check("empty res.company.logo → FAIL", not r["ok"], r["detail"])
+    # --- baseline-relative: gate SKIPs without a --baseline census ---
+    no_baseline = gates.gate_branding_parity(FakeOdoo({"res.company": {}}), None)
+    check("no baseline → SKIP (not FAIL)", no_baseline.get("skipped") and no_baseline["ok"])
 
-    empty_favicon = FakeOdoo({
-        "res.company": {1: {"name": "GG", "logo": "x"}},
-        "website": {1: {"name": "Main", "logo": "x", "favicon": False}},
-    })
-    check("empty website favicon → FAIL", not gates.gate_branding_present(empty_favicon)["ok"])
+    # --- the real-world case Josh flagged 2026-08-31: only website/1 has a real
+    # asset; websites/2,3 + companies/2,3 hold the generic placeholder. A full
+    # copy carries every field byte-identical → PASS, with the placeholders noted
+    # (NOT a failure) so the missing nursery/GGG logos surface as a prerequisite. ---
+    src = {
+        "res.company": {1: {"name": "Goldberry Grove", "logo": REAL},
+                        2: {"name": "At The Grove Nursery", "logo": PLACEHOLDER},
+                        3: {"name": "GGG Woodworking", "logo": PLACEHOLDER}},
+        "website": {1: {"name": "goldberry", "logo": REAL, "favicon": FAVICON},
+                    2: {"name": "nursery", "logo": PLACEHOLDER, "favicon": PLACEHOLDER},
+                    3: {"name": "ggg", "logo": PLACEHOLDER, "favicon": PLACEHOLDER}},
+    }
+    baseline = {"branding": gates.collect_branding(FakeOdoo(src))}
+    faithful_copy = FakeOdoo({m: {i: dict(r) for i, r in rows.items()} for m, rows in src.items()})
+    r = gates.gate_branding_parity(faithful_copy, baseline)
+    check("faithful byte-identical copy → PASS", r["ok"], r["detail"])
+    check("placeholders reported as NOTE, not failure", len(r["placeholders"]) == 6, r["detail"])
+    check("no false failure on nursery/GGG placeholders", not r["dropped"], r["detail"])
 
-    # no website module installed (empty model) is fine as long as company logo set
-    no_site = FakeOdoo({"res.company": {1: {"name": "GG", "logo": "x"}}})
-    check("no website rows + company logo set → PASS", gates.gate_branding_present(no_site)["ok"])
+    # --- the exact prod-launch defect: the REAL website/1 logo dropped in transit
+    # (target serves the tiny 'Your Logo' default) → FAIL ---
+    dropped_real = FakeOdoo({m: {i: dict(r) for i, r in rows.items()} for m, rows in src.items()})
+    dropped_real.records["website"][1]["logo"] = _b64_of_len(8700)  # default 'Your Logo'
+    dr = gates.gate_branding_parity(dropped_real, baseline)
+    check("real website/1 logo shrunk to placeholder → FAIL", not dr["ok"], dr["detail"])
+
+    # --- company logo emptied entirely on the target → FAIL ---
+    emptied = FakeOdoo({m: {i: dict(r) for i, r in rows.items()} for m, rows in src.items()})
+    emptied.records["res.company"][1]["logo"] = False
+    er = gates.gate_branding_parity(emptied, baseline)
+    check("target res.company/1 logo empty → FAIL", not er["ok"], er["detail"])
+
+    # --- source field that never existed anywhere is NOT required (no false fail) ---
+    src_missing = {"res.company": {1: {"name": "GG", "logo": REAL}},
+                   "website": {1: {"name": "gg", "logo": False, "favicon": False}}}
+    bl2 = {"branding": gates.collect_branding(FakeOdoo(src_missing))}
+    ok2 = gates.gate_branding_parity(
+        FakeOdoo({m: {i: dict(r) for i, r in rows.items()} for m, rows in src_missing.items()}), bl2)
+    check("source-absent website logo/favicon not required → PASS", ok2["ok"], ok2["detail"])
 
 
 def test_gates_price_parity():
