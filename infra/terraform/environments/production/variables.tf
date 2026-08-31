@@ -152,9 +152,9 @@ variable "app_instance_size_slug" {
 }
 
 variable "hub_image_tag" {
-  description = "Tag of the grove-hub image on GHCR (ghcr.io/goldberry-playground/grove-hub:<tag>) that App Platform pulls. GOL-1304 Option-A ruling (ratified 2026-08-12, launch-gate Aug 20): prod pins a 40-char grove-sites commit SHA -- it NEVER tracks a moving 'latest'. Same reproducible-release rationale + validation as var.custom_modules_ref: a 'latest' retag from grove-sites CI must not silently ship to prod (and with GHCR-sourced apps deploy_on_push never even fires -- GOL-1607 -- so an unpinned 'latest' is BOTH un-gated and unobservable). Bumping this is a reviewed infra PR whose deploy step is an explicit `doctl apps create-deployment` (grove-sites do-app-redeploy primitive, PR #547). Current pin b84d7678: the grove-sites main HEAD that prod pulled on the 2026-08-17 15:44Z redeploy (GOL-1607); GHCR `latest` still resolves to this same digest across all four images, so pinning to it is a verified no-op deploy (GOL-1650 recon)."
+  description = "Tag of the grove-hub image on GHCR (ghcr.io/goldberry-playground/grove-hub:<tag>) that App Platform pulls. GOL-1304 Option-A ruling (ratified 2026-08-12, launch-gate Aug 20): prod pins a 40-char grove-sites commit SHA -- it NEVER tracks a moving 'latest'. Same reproducible-release rationale + validation as var.custom_modules_ref: a 'latest' retag from grove-sites CI must not silently ship to prod (and with GHCR-sourced apps deploy_on_push never even fires -- GOL-1607 -- so an unpinned 'latest' is BOTH un-gated and unobservable). Bumping this is a reviewed infra PR whose deploy step is an explicit `doctl apps create-deployment` (grove-sites do-app-redeploy primitive, PR #547). Current pin 2436786c: grove-sites main HEAD as of 2026-08-31 (docker.yml built+pushed all four images at this SHA, run success 2026-08-31T11:11Z). GOL-1850 promotion of record -- the grove-nursery-prod app was already rolled live to this SHA out-of-band on 2026-08-31T13:10Z to clear the P0 GOL-1822 shipping under-quote; applying this pin converges hub/goldberry/ggg to the same reviewed commit and makes nursery's live state match SoR (no-op deploy for nursery). Supersedes the never-applied e77fcb0f pin (live prod is still on the earlier b84d7678 for the three non-nursery apps)."
   type        = string
-  default     = "e77fcb0f11d260c1ffe790a9065d45b1b9d15183"
+  default     = "2436786c1b16b6d51554fd0378b3b2c754017e65"
 
   validation {
     condition     = can(regex("^[0-9a-f]{40}$", var.hub_image_tag))
@@ -163,9 +163,9 @@ variable "hub_image_tag" {
 }
 
 variable "tenant_image_tag" {
-  description = "Tag of the grove-goldberry / grove-ggg / grove-nursery images on GHCR that the tenant App Platform apps pull. One shared tag because grove-sites CI publishes all four images from the same commit -- pinning tenants to different tags would deploy skewed monorepo states. GOL-1304 Option-A: a pinned 40-char SHA, same rationale + validation as var.hub_image_tag / var.custom_modules_ref. Current pin b84d7678 == the same commit as var.hub_image_tag (verified: GHCR `latest` for grove-goldberry/grove-ggg/grove-nursery all resolve to this SHA's digest today, GOL-1650) so applying the pin is a no-op deploy."
+  description = "Tag of the grove-goldberry / grove-ggg / grove-nursery images on GHCR that the tenant App Platform apps pull. One shared tag because grove-sites CI publishes all four images from the same commit -- pinning tenants to different tags would deploy skewed monorepo states. GOL-1304 Option-A: a pinned 40-char SHA, same rationale + validation as var.hub_image_tag / var.custom_modules_ref. Current pin 2436786c == the same commit as var.hub_image_tag (grove-sites main HEAD 2026-08-31; carries the GOL-1822 Format-card per-box-floor shipping fix, PR #587). GOL-1850: grove-nursery-prod was moved to this SHA live on 2026-08-31T13:10Z to clear the P0 shipping under-quote and is ALREADY serving it -- applying this pin is a no-op for nursery and rolls goldberry/ggg forward from the live b84d7678 to the same reviewed commit."
   type        = string
-  default     = "e77fcb0f11d260c1ffe790a9065d45b1b9d15183"
+  default     = "2436786c1b16b6d51554fd0378b3b2c754017e65"
 
   validation {
     condition     = can(regex("^[0-9a-f]{40}$", var.tenant_image_tag))
