@@ -1,0 +1,125 @@
+name: Provision CEO Odoo Login
+
+###############################################################################
+# GOL-1780 — bootstrap the CEO's FIRST prod Odoo res.users login. Josh has no
+# Odoo account anywhere (only API service keys + the master/DB password exist),
+# so https://odoo.gatheringatthegrove.com/web/login is unusable by him and every
+# catalog-data fix (GOL-408 nursery photos, $0.00 prices) is gated on this.
+#
+# MECHANISM (same as provision-logistics-otto / GOL-89, CEO-ratified)
+#   SSH to the prod droplet as root and pipe scripts/provision_ceo_user_shell.py
+#   into `docker compose ... exec -T odoo odoo shell`. Inside the shell `env`
+#   runs as SUPERUSER, so no admin login/API key is needed — which is the whole
+#   point, since none exists to bootstrap from. XML-RPC cannot be used: it needs
+#   a res.users credential we do not have.
+#
+# CREDENTIAL DELIVERY — nothing secret ever touches this (durable) log.
+#   LIVE runs pass CEO_DELIVER=email: the script calls action_reset_password()
+#   so Odoo EMAILS Josh a one-time set-password link. He sets his OWN password
+#   and stores it in 1Password (Grove Prod) himself. No plaintext is minted,
+#   printed, or written by this workflow. If prod SMTP is not wired the step
+#   fails LOUD (rc=4) — use the manual SSH path in docs/RUNBOOK-provision-ceo-
+#   odoo-login.md, which prints a one-time link to the operator's own terminal.
+#
+# GOVERNANCE — the `production` GitHub Environment approval IS the CEO gate on
+#   this prod-credential action. Reuses the SAME PROD_SSH_PRIVATE_KEY / PROD_HOST
+#   secrets release.yml uses to deploy prod (already seeded). Dry-run needs no
+#   approval and writes nothing; live requires the environment reviewer.
+#
+# IDEMPOTENT — find-or-create; re-running only re-ensures groups + re-sends the
+#   set-password email. Safe to re-run.
+###############################################################################
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Print the scope preview + SMTP/auth_signup posture only — create nothing"
+        type: boolean
+        required: true
+        default: true
+
+concurrency:
+  group: provision-ceo-odoo-login
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  provision:
+    name: Provision CEO login (${{ inputs.dry_run && 'dry-run' || 'LIVE' }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Both modes SSH into the prod droplet, so both sit behind the `production`
+    # environment reviewer — the CEO approval gate for this prod-credential
+    # action. (Dry-run writes nothing but still touches prod over SSH.)
+    environment: production
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        timeout-minutes: 2
+
+      - name: Load SSH agent
+        uses: webfactory/ssh-agent@e83874834305fe9a4a2997156cb26c5de65a8555 # v0.10.0
+        timeout-minutes: 2
+        with:
+          ssh-private-key: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+
+      - name: Add droplet to known hosts
+        timeout-minutes: 1
+        env:
+          HOST: ${{ secrets.PROD_HOST }}
+        run: |
+          set -euo pipefail
+          if [ -z "${HOST:-}" ]; then
+            echo "::error::PROD_HOST not set — cannot reach the prod droplet."
+            exit 1
+          fi
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Provision CEO login
+        id: provision
+        timeout-minutes: 6
+        env:
+          HOST: ${{ secrets.PROD_HOST }}
+          DRY: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          # DB name is read from the droplet's own .env — never hardcoded.
+          # LIVE -> email delivery (nothing secret printed); dry-run -> preview.
+          REMOTE_ENV="-e CEO_DELIVER=email"
+          [ "$DRY" = "true" ] && REMOTE_ENV="-e CEO_DRY_RUN=1"
+          ssh -o StrictHostKeyChecking=yes "root@${HOST}" \
+            "set -a; . /opt/grove/.env; set +a; \
+             cd /opt/grove && docker compose \
+               -f docker-compose.yml \
+               -f docker-compose.override.grove.yml \
+               -f docker-compose.override.production.yml \
+               exec -T ${REMOTE_ENV} \
+               odoo odoo shell -d \"\$DB_NAME\" --no-http --logfile=/dev/null" \
+            < scripts/provision_ceo_user_shell.py \
+            | tee provision.out
+          echo "----- provision output (no secrets; email delivery on live) -----"
+          cat provision.out
+
+      - name: Summary
+        if: ${{ always() }}
+        env:
+          DRY: ${{ inputs.dry_run }}
+        run: |
+          {
+            echo "### Provision CEO Odoo Login"
+            echo ""
+            echo "- mode: $([ "$DRY" = "true" ] && echo 'DRY-RUN (preview only)' || echo 'LIVE')"
+            echo "- login: josh@goldberrygrove.farm  (Administration/Settings + Sales/Inventory/Purchase/Website managers)"
+            echo "- ODOO_URL: https://odoo.gatheringatthegrove.com/web/login"
+            if [ "$DRY" != "true" ]; then
+              echo "- delivery: Odoo emailed Josh a one-time set-password link (CEO_DELIVER=email)."
+              echo "- NEXT (Josh): open the email link, set your password, then save it in 1Password → Grove Prod."
+              echo "- if no email arrives: prod SMTP is unwired — use docs/RUNBOOK-provision-ceo-odoo-login.md (manual SSH, on-terminal link)."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

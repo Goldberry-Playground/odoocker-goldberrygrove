@@ -81,6 +81,15 @@ services:
       # until CFO mints the live keys AND the board greenlights a rebuild.
       stripe_test_secret_key: ${stripe_test_secret_key:-}
       stripe_test_webhook_secret: ${stripe_test_webhook_secret:-}
+      # Per-tenant Stripe webhook signing secrets (GOL-973 Gap A, mirrors QA
+      # GOL-1016 docker-compose.qa.yml). grove_headless tries EACH non-empty
+      # secret against the incoming Stripe-Signature (GOL-1020) so all three LLC
+      # storefronts sign the one Odoo endpoint. Legacy stripe_test_webhook_secret
+      # above stays unset in prod (Josh 2026-08-27); default-empty here => that
+      # tenant's secret is simply not tried.
+      stripe_webhook_secret_nursery: ${stripe_webhook_secret_nursery:-}
+      stripe_webhook_secret_ggg: ${stripe_webhook_secret_ggg:-}
+      stripe_webhook_secret_goldberry: ${stripe_webhook_secret_goldberry:-}
       # Shippo fulfillment (GOL-988). Outbound label purchase reads
       # SHIPPO_API_KEY (sale_order.py, UserError when empty); inbound tracking
       # webhook compares GROVE_SHIPPO_WEBHOOK_TOKEN (controllers/main.py,
