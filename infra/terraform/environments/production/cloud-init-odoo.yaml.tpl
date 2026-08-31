@@ -85,6 +85,17 @@ write_files:
       # no review gate). TF var custom_modules_ref enforces a 40-char SHA.
       CUSTOM_MODULES_REF=${custom_modules_ref}
 
+      # GOL-1859: the customer-facing host Odoo bakes into every absolute URL it
+      # generates (password-reset / set-password, sale-order + customer-portal,
+      # e-commerce/website links, and report.url). odoo/entrypoint.sh's
+      # seed_web_base_url() upserts web.base.url + web.base.url.freeze=True from
+      # this value on every boot, so an immutable droplet rebuild (GOL-920) can
+      # never silently revert it to Odoo's http://localhost:8069 default. TF var
+      # web_base_url; empty until the launch host is confirmed + the value lands
+      # in the vault, at which point the seed becomes active. Also passed through
+      # to the odoo service's compose `environment:` block (WEB_BASE_URL).
+      WEB_BASE_URL=${web_base_url}
+
       # Stripe LIVE-mode keys for grove_headless prod checkout (GOL-973).
       # LOWERCASE names on purpose: grove_headless controllers/main.py reads
       # them via os.environ.get("stripe_test_secret_key") /
