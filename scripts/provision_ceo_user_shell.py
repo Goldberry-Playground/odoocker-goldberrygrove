@@ -5,12 +5,14 @@ context, superuser `env`). GOL-1780: Josh (CEO) has NO res.users login on prod
 Odoo -- there is no Odoo account credential in any 1Password vault, only API
 service keys and the master/DB password. This bootstraps his first login.
 
-    docker compose \
-        -f docker-compose.yml \
-        -f docker-compose.override.grove.yml \
-        -f docker-compose.override.production.yml \
-        exec -T odoo odoo shell -d "$DB_NAME" --no-http --logfile=/dev/null \
+    set -a; . /etc/grove/.env; set +a
+    cd /etc/grove && docker compose exec -T odoo \
+        odoo shell -d "$DB_NAME" --no-http --logfile=/dev/null \
         < scripts/provision_ceo_user_shell.py
+
+    (The live prod droplet runs a SINGLE docker-compose.yml under /etc/grove --
+    no override files, no /opt/grove. Confirmed off the running container's own
+    compose labels, 2026-08-31.)
 
 WHY A SHELL SCRIPT (not XML-RPC)
     Bootstrapping the FIRST admin user is a chicken-and-egg: XML-RPC
@@ -141,6 +143,16 @@ def _resolve_groups():
     return group_ids, missing_required
 
 
+def _groups_field():
+    """Odoo 19 renamed res.users.groups_id -> group_ids (m2m to res.groups).
+    Resolve the field at runtime rather than hardcoding either name, so this
+    script survives the version straddle: 17/18 (groups_id) AND 19+ (group_ids).
+    Prod is 19.0 as of 2026-08-31 -- writing the old name raises
+    ValueError: Invalid field 'groups_id' in 'res.users' before any commit."""
+    fields = env["res.users"]._fields
+    return "group_ids" if "group_ids" in fields else "groups_id"
+
+
 def _resolve_companies(user):
     """Resolve (allowed_companies, active_company) for the CEO.
 
@@ -213,6 +225,9 @@ def main():
         return 3
     _err(f"resolved {len(group_ids)} groups total: {group_ids}")
 
+    groups_field = _groups_field()
+    _err(f"res.users groups m2m field resolved -> {groups_field}")
+
     signup_installed = _mail_posture()
     user = env["res.users"].search([("login", "=", CEO_LOGIN)], limit=1)
     allowed_companies, active_company = _resolve_companies(user)
@@ -228,6 +243,7 @@ def main():
         print(f"login={CEO_LOGIN}")
         print(f"name={CEO_NAME}")
         print(f"action={action}{(' (uid=%d)' % user.id) if user else ''}")
+        print(f"groups_m2m_field={groups_field}")
         for xmlid in REQUIRED_GROUP_XMLIDS + OPTIONAL_GROUP_XMLIDS:
             rec = env.ref(xmlid, raise_if_not_found=False)
             ok = rec and rec._name == "res.groups"
@@ -256,7 +272,7 @@ def main():
         user.write({
             "name": CEO_NAME,
             "email": CEO_EMAIL,
-            "groups_id": [(4, gid) for gid in group_ids],
+            groups_field: [(4, gid) for gid in group_ids],
             "company_ids": company_link_cmds,
             "company_id": active_company.id,
         })
@@ -266,7 +282,7 @@ def main():
             "name": CEO_NAME,
             "login": CEO_LOGIN,
             "email": CEO_EMAIL,
-            "groups_id": [(6, 0, group_ids)],
+            groups_field: [(6, 0, group_ids)],
             "company_ids": company_link_cmds,
             "company_id": active_company.id,
         })

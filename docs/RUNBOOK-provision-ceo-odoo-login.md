@@ -93,14 +93,16 @@ If **no email arrives**, prod Odoo SMTP is not wired — use Path B.
 
 Run from a machine that holds the prod deploy SSH key (`PROD_HOST` droplet).
 
+The live prod droplet runs a **single** `docker-compose.yml` under **`/etc/grove`**
+— there is no `/opt/grove`, and no `docker-compose.override.*` files (confirmed
+off the running container's own compose labels, 2026-08-31). `.env` (which
+defines `DB_NAME`) is at `/etc/grove/.env` and the service is `odoo`.
+
 ```bash
 # From a checkout of odoocker-goldberrygrove at the repo root:
 ssh -o StrictHostKeyChecking=yes "root@${PROD_HOST}" \
-  'set -a; . /opt/grove/.env; set +a; \
-   cd /opt/grove && docker compose \
-     -f docker-compose.yml \
-     -f docker-compose.override.grove.yml \
-     -f docker-compose.override.production.yml \
+  'set -a; . /etc/grove/.env; set +a; \
+   cd /etc/grove && docker compose \
      exec -T odoo odoo shell -d "$DB_NAME" --no-http --logfile=/dev/null' \
   < scripts/provision_ceo_user_shell.py
 ```
