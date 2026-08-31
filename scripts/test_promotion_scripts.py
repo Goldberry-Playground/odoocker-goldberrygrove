@@ -342,6 +342,89 @@ def test_gates_completeness():
     check("no baseline is SKIP not FAIL", gates.gate_completeness(counts, None).get("skipped"))
 
 
+def test_gates_qa_fixture_absence():
+    print("integrity-gates: QA-fixture/placeholder absence (launch audit item 3)")
+    clean = FakeOdoo({"product.template": {
+        1: {"name": "Persimmon (bareroot)", "sale_ok": True},
+        2: {"name": "Apple (potted)", "sale_ok": True},
+    }})
+    check("no fixtures → PASS", gates.gate_qa_fixture_absence(clean)["ok"])
+
+    dirty = FakeOdoo({"product.template": {
+        1: {"name": "Persimmon (bareroot)", "sale_ok": True},
+        2: {"name": "AAA QA E2E bareroot", "sale_ok": True},
+        3: {"name": "Coming Soon — mystery pear", "sale_ok": True},
+        4: {"name": "Fig — Price TBD", "sale_ok": True},
+    }})
+    r = gates.gate_qa_fixture_absence(dirty)
+    check("QA E2E + Coming Soon + Price TBD present → FAIL", not r["ok"], r["detail"])
+    check("all three fixtures reported", len(r["found"]) == 3, r["found"])
+    # case-insensitive: lowercase must still be caught
+    lc = FakeOdoo({"product.template": {1: {"name": "aaa qa e2e potted", "sale_ok": True}}})
+    check("lowercase fixture still caught (=ilike)", not gates.gate_qa_fixture_absence(lc)["ok"])
+
+
+def test_gates_branding_present():
+    print("integrity-gates: branding binaries present (launch audit item 1)")
+    ok_fake = FakeOdoo({
+        "res.company": {1: {"name": "Goldberry Grove", "logo": "iVBORw0KGgo="}},
+        "website": {1: {"name": "Main", "logo": "iVBORw0KGgo=", "favicon": "AAAB"}},
+    })
+    check("company+website branding present → PASS", gates.gate_branding_present(ok_fake)["ok"])
+
+    # the exact prod-launch defect: company logo empty (default 'Your Logo')
+    empty_logo = FakeOdoo({
+        "res.company": {1: {"name": "Goldberry Grove", "logo": False}},
+        "website": {1: {"name": "Main", "logo": "iVBOR", "favicon": "AAAB"}},
+    })
+    r = gates.gate_branding_present(empty_logo)
+    check("empty res.company.logo → FAIL", not r["ok"], r["detail"])
+
+    empty_favicon = FakeOdoo({
+        "res.company": {1: {"name": "GG", "logo": "x"}},
+        "website": {1: {"name": "Main", "logo": "x", "favicon": False}},
+    })
+    check("empty website favicon → FAIL", not gates.gate_branding_present(empty_favicon)["ok"])
+
+    # no website module installed (empty model) is fine as long as company logo set
+    no_site = FakeOdoo({"res.company": {1: {"name": "GG", "logo": "x"}}})
+    check("no website rows + company logo set → PASS", gates.gate_branding_present(no_site)["ok"])
+
+
+def test_gates_price_parity():
+    print("integrity-gates: price parity vs source (launch audit item 2)")
+    baseline = {"product_prices": [
+        {"key": "PERSIMMON", "name": "Persimmon", "list_price": 39.0},
+        {"key": "APPLE-POT", "name": "Apple (potted)", "list_price": 37.0},
+    ]}
+    matched = FakeOdoo({"product.template": {
+        1: {"name": "Persimmon", "default_code": "PERSIMMON", "list_price": 39.0, "sale_ok": True},
+        2: {"name": "Apple (potted)", "default_code": "APPLE-POT", "list_price": 37.0, "sale_ok": True},
+    }})
+    check("equal prices → PASS", gates.gate_price_parity(matched, baseline)["ok"])
+
+    # the exact observed drift: prod Persimmon $12 vs QA $39
+    drifted = FakeOdoo({"product.template": {
+        1: {"name": "Persimmon", "default_code": "PERSIMMON", "list_price": 12.0, "sale_ok": True},
+        2: {"name": "Apple (potted)", "default_code": "APPLE-POT", "list_price": 35.0, "sale_ok": True},
+    }})
+    r = gates.gate_price_parity(drifted, baseline)
+    check("price drift $39→$12 → FAIL", not r["ok"], r["detail"])
+    check("both drifted rows reported", len(r["drift"]) == 2, r["drift"])
+
+    # a product missing on target is reported but NOT a hard fail (completeness's job)
+    partial = FakeOdoo({"product.template": {
+        1: {"name": "Persimmon", "default_code": "PERSIMMON", "list_price": 39.0, "sale_ok": True},
+    }})
+    r2 = gates.gate_price_parity(partial, baseline)
+    check("missing-on-target is not a parity FAIL", r2["ok"], r2["detail"])
+    check("missing product recorded", r2["missing_on_target"] == ["APPLE-POT"], r2["missing_on_target"])
+
+    check("no baseline sample → SKIP", gates.gate_price_parity(matched, None).get("skipped"))
+    check("baseline without product_prices → SKIP",
+          gates.gate_price_parity(matched, {"sale_orders": 5}).get("skipped"))
+
+
 # ── qa-reseed-guard ───────────────────────────────────────────────────────────
 
 def test_reseed_guard():
@@ -368,6 +451,8 @@ def main() -> int:
     for fn in (test_reconfig_env_refs, test_reconfig_apply_and_assert,
                test_reconfig_create_if_missing,
                test_gates_sequence, test_gates_wv_tax, test_gates_completeness,
+               test_gates_qa_fixture_absence, test_gates_branding_present,
+               test_gates_price_parity,
                test_reseed_guard):
         fn()
     print()
