@@ -37,6 +37,32 @@ Optional groups whose module isn't installed are skipped with a WARN, never
 fatal. `base.group_user` + `base.group_system` are required; the script aborts
 if either is missing (wrong DB / modules).
 
+## Company scoping (GOL-1842 / GOL-1811)
+
+On a multi-company DB, a user with no explicit `company_ids` is left on whatever
+default the DB picks, so records owned by the other LLC companies are invisible
+(the GOL-1811 symptom). The script therefore resolves the intended company set
+and sets **both**:
+
+- `company_ids` (allowed) — additive `(4, cid)` links; never drops an existing
+  allowed company.
+- `company_id` (active) — always forced to be within the allowed set (Odoo
+  constraint).
+
+Defaults: **all** companies in the DB are allowed (a solo-operator CEO owns every
+entity), and the active company is the user's current one if already allowed,
+else the lowest-id (main) company. Override per-run with container env:
+
+- `CEO_COMPANIES="Goldberry Grove Farm;At The Grove Nursery, LLC"` — restrict the
+  allowed set to those exact `res.company` names, **semicolon**-separated (a name
+  may contain a comma). Unknown names WARN + skip.
+- `CEO_MAIN_COMPANY="Goldberry Grove Farm"` — pick the active company by name.
+
+The live run prints `CEO_ODOO_COMPANY_IDS=` and `CEO_ODOO_ACTIVE_COMPANY_ID=`;
+the dry-run prints the current vs resolved company sets so you can review before
+writing. NOTE: re-running the OLD script does NOT fix company scoping — it was
+idempotent on groups only; this version is what actually sets the companies.
+
 ## Google SSO?
 
 **Not available today.** `auth_oauth` is not installed or configured on prod
@@ -99,7 +125,18 @@ Then log in with `josh@goldberrygrove.farm`; you should land on the backend with
 the **Settings** app visible (confirms `base.group_system`). You can now upload
 nursery product photos and correct `$0.00` prices (GOL-408).
 
+Confirm the **company scoping** actually landed (GOL-1811 was this being unset).
+The live provision output already echoes `CEO_ODOO_COMPANY_IDS=` /
+`CEO_ODOO_ACTIVE_COMPANY_ID=`; to check against prod directly, in the backend the
+company switcher (top-right) should list every LLC, or from an Odoo shell:
+
+```
+u = env["res.users"].search([("login", "=", "josh@goldberrygrove.farm")])
+print(u.company_id.name, [c.name for c in u.company_ids])
+```
+
 ## Idempotency / re-runs
 
-Safe to re-run. The script finds-or-creates the user and only re-ensures the
-group set (additive `(4, gid)` links) and re-issues the set-password link.
+Safe to re-run. The script finds-or-creates the user, re-ensures the group set
+(additive `(4, gid)` links) and the company set (additive `(4, cid)` links +
+active `company_id`), and re-issues the set-password link.
