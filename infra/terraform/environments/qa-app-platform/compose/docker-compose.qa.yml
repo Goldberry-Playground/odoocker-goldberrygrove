@@ -65,6 +65,15 @@ services:
       # never actually booted Odoo unassisted.
       APP_ENV: qa
       WORKERS: "2"
+      # GOL-1859/GOL-1876: reproducible web.base.url seed. entrypoint.sh's
+      # seed_web_base_url() (qa branch) reads WEB_BASE_URL from os.environ and
+      # upserts web.base.url + web.base.url.freeze=True (+ report.url) on every
+      # boot, so a droplet rebuild never lets Odoo drift web.base.url back to
+      # http://localhost:8069 (the login-Host poisoning fixed live on 2026-08-31).
+      # Value comes from `docker compose --env-file /etc/grove/.env`; cloud-init
+      # writes WEB_BASE_URL=https://odoo.<qa_zone> there. Default-empty keeps the
+      # seed a no-op for local/preview (same shape as the stripe_test_* keys).
+      WEB_BASE_URL: ${WEB_BASE_URL:-}
       # PROXY_MODE=true tells Odoo to trust X-Forwarded-* headers (which
       # Caddy sets). Without this, Odoo's CSRF + URL generation breaks
       # when behind a reverse proxy.
