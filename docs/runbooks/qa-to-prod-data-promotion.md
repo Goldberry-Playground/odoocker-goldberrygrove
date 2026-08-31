@@ -255,6 +255,15 @@ Gates:
 5. **branding binaries present** *(HARD)* — `res.company.logo` and website
    logo/favicon non-empty on the target (launch audit item 1; catches the default
    *"Your Logo"* placeholder). The served-asset check is the §7 asset smoke.
+   > **Scope: this gate proves *non-empty*, not *real* (GOL-1863, measured
+   > 2026-08-31).** Only Goldberry Grove Farm has a real logo anywhere:
+   > `website(1).logo` = 91,505 B and `res.company(1).logo` = 707,543 B on **QA**.
+   > GGG (`website 8` / `company 8`) and the Nursery (`website 9` / `company 9`)
+   > carry Odoo placeholders on QA *and* prod — 8,689 B / 6,078 B / 11,445 B, all
+   > non-empty — so they **pass this gate**. That is intentional: it will not block
+   > the promotion on the missing GGG/nursery marks. Those two logos are a **content
+   > gap Josh must supply**; they are not recoverable from QA. Real-logo enforcement
+   > is website-1-only, via the §7 smoke.
 6. **price parity vs source** — target product `list_price`s match the §2
    baseline `product_prices` sample (launch audit item 2; catches drift like
    Persimmon $39→$12). SKIPs if the baseline carries no price sample.
@@ -276,13 +285,21 @@ Gates 1–5 are HARD (a failure exits non-zero → do not cut over). Gates 6–7
   photo (`image_1920` count > 0):
 
   ```bash
-  BASE_URL=https://qa.gatheringatthegrove.com \
+  # BASE_URL must be the Odoo host — the storefront apex (gatheringatthegrove.com)
+  # is Next.js and 404s /web/image. Prod Odoo = https://odoo.gatheringatthegrove.com.
+  BASE_URL=https://odoo.qa.gatheringatthegrove.com \
     PRODUCT_TEMPLATE_IDS="1 2 3" \
     scripts/promotion-asset-smoke.sh     # exit 2 → placeholder/missing assets
   ```
 
   Run it against the target (scratch/prod) after restore; pass a few real
   `product.template` ids you expect to have photos.
+  > **Keep `WEBSITE_ID=1` (the default) — do NOT smoke websites 8 or 9, and do
+  > NOT lower `MIN_LOGO_BYTES` (GOL-1863).** The GGG (`8`) and Nursery (`9`) logos
+  > do not exist as real assets anywhere — a real logo lives only on `website(1)`
+  > (QA, 91,505 B). Pointing the smoke at 8/9 asserts an asset that cannot be
+  > promoted and fails the cutover on a content gap, not a promotion defect. Those
+  > marks are Josh's to supply before either brand can pass a served-logo check.
 - Run a **real end-to-end checkout** (add to cart → checkout → payment → order
   confirmation email). On the scratch rehearsal, a Stripe *test* card is fine and
   is the evidence; on prod, do a canary live order and refund it.
