@@ -33,9 +33,20 @@ This runbook composes existing, hardened tooling — it does not replace it:
 > the default 8.7 KB *"Your Logo"* placeholder only because it was bootstrapped
 > blank, **not** promoted from QA — this runbook is what fixes that. Two audit
 > checks below make the fix verifiable, not assumed: the §6 *branding-present*
-> gate (binary non-empty in the DB) and the §7 *asset smoke* (the served logo is
-> `image/png` at real size and products serve photos). Cross-source audit:
-> Josh, 2026-08-31 (GOL-1329).
+> gate (each branding binary the **source** held survives to the target
+> byte-for-byte) and the §7 *asset smoke* (the served logo is `image/png` at real
+> size and products serve photos). Cross-source audit: Josh, 2026-08-31
+> (GOL-1329).
+>
+> **Scope caveat (Josh byte-measurement, 2026-08-31):** only **Goldberry Grove**
+> (`website/1`, `res.company/1`) holds a real logo (~91.5 KB) in QA. **At The
+> Grove Nursery** (`/2`) and **GGG** (`/3`) hold only Odoo's generic 6,078 B
+> camera placeholder — there is nothing real to promote there. The §6 gate is
+> therefore **baseline-relative**: it requires only what the *source* actually
+> has (so it never fails on a nursery/GGG logo that exists in no environment) and
+> reports placeholder-only fields as a **NOTE**, not a failure. Supplying the
+> real nursery/GGG logos is a **prerequisite Josh owns** (tracked as the separate
+> branding issue filed 2026-08-31), independent of this promotion.
 
 ---
 
@@ -252,26 +263,32 @@ Gates:
 4. **QA-fixture/placeholder absence** *(HARD)* — no `AAA QA E2E` fixtures and no
    `Coming Soon` / `Price TBD` placeholders present on the target (launch audit
    item 3; the fail-loud backstop for the §1b pre-freeze exclusion).
-5. **branding binaries present** *(HARD)* — `res.company.logo` and website
-   logo/favicon non-empty on the target (launch audit item 1; catches the default
-   *"Your Logo"* placeholder). The served-asset check is the §7 asset smoke.
-   > **Scope: this gate proves *non-empty*, not *real* (GOL-1863, measured
-   > 2026-08-31).** Only Goldberry Grove Farm has a real logo anywhere:
-   > `website(1).logo` = 91,505 B and `res.company(1).logo` = 707,543 B on **QA**.
-   > GGG (`website 8` / `company 8`) and the Nursery (`website 9` / `company 9`)
-   > carry Odoo placeholders on QA *and* prod — 8,689 B / 6,078 B / 11,445 B, all
-   > non-empty — so they **pass this gate**. That is intentional: it will not block
-   > the promotion on the missing GGG/nursery marks. Those two logos are a **content
-   > gap Josh must supply**; they are not recoverable from QA. Real-logo enforcement
-   > is website-1-only, via the §7 smoke.
+5. **branding binaries present** *(HARD, `--baseline`)* — every `res.company.logo`
+   / website logo/favicon the **source** actually held survives to the target
+   byte-for-byte (a `pg_dump`+filestore copy is byte-identical). Baseline-relative
+   on purpose: fields the source never had (the nursery/GGG logos that exist in no
+   environment — Josh 2026-08-31) are **not required**, so the gate can't fail on
+   assets there's nothing to promote for; a source field that is only the ~6 KB
+   generic placeholder is reported as a **NOTE** (supply prerequisite), never a
+   failure. Catches the real defect: a genuine logo (~91.5 KB on `website/1`) that
+   shrank to the *"Your Logo"* default or emptied in transit. The served-asset
+   check is the §7 asset smoke.
+   > **Measured baseline (GOL-1863, 2026-08-31).** Only Goldberry Grove Farm has a
+   > real logo in any environment: on QA `website(1).logo` = 91,505 B and
+   > `res.company(1).logo` = 707,543 B. GGG and At The Grove Nursery carry Odoo
+   > placeholders on QA *and* prod (8,689 B SVG / 6,078 B / 11,445 B) — under the
+   > baseline rule above they are NOTE-only and never block the promotion. Those two
+   > marks are a **content gap Josh must supply**; they are not recoverable from QA.
+   > Real-logo enforcement is website-1-only, via the §7 smoke.
 6. **price parity vs source** — target product `list_price`s match the §2
    baseline `product_prices` sample (launch audit item 2; catches drift like
    Persimmon $39→$12). SKIPs if the baseline carries no price sample.
 7. **promotion completeness** — target counts ≥ the §2 source baseline (no rows
    lost in transit).
 
-Gates 1–5 are HARD (a failure exits non-zero → do not cut over). Gates 6–7 need
-`--baseline`; without it they SKIP (not fail).
+Gates 1–4 are HARD unconditionally. Gates 5–7 need `--baseline` (the census
+`--emit-baseline` captures on the source before the freeze — now including a
+`branding` field census); without it they SKIP (not fail).
 
 ---
 
