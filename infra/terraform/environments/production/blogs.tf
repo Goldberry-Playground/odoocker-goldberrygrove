@@ -310,7 +310,7 @@ resource "digitalocean_firewall" "blogs" {
   inbound_rule {
     protocol         = "tcp"
     port_range       = "22"
-    source_addresses = [var.admin_ip_cidr]
+    source_addresses = var.admin_ip_cidrs
   }
 
   inbound_rule {

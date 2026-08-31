@@ -308,9 +308,14 @@ resource "digitalocean_database_firewall" "pg" {
     value = digitalocean_droplet.odoo.id
   }
 
-  rule {
-    type  = "ip_addr"
-    value = split("/", var.admin_ip_cidr)[0]
+  # One ip_addr rule per operator CIDR (GOL-1842). DO's ip_addr rule takes a
+  # bare address, so strip the /mask from each entry.
+  dynamic "rule" {
+    for_each = var.admin_ip_cidrs
+    content {
+      type  = "ip_addr"
+      value = split("/", rule.value)[0]
+    }
   }
 }
 
@@ -325,7 +330,7 @@ resource "digitalocean_firewall" "odoo" {
   inbound_rule {
     protocol         = "tcp"
     port_range       = "22"
-    source_addresses = [var.admin_ip_cidr]
+    source_addresses = var.admin_ip_cidrs
   }
 
   inbound_rule {

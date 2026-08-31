@@ -24,7 +24,7 @@
 # This file documents the non-sensitive vars an operator might want to
 # override (defaults work for the canonical setup):
 
-# admin_ip_cidr = "74.47.41.38/32"
+# admin_ip_cidrs = ["74.47.41.38/32"]
 # region        = "nyc3"
 # qa_subdomain  = "qa-l3"            # parallel-cutover; flips to "qa" in Phase 4
 # pg_size       = "db-s-1vcpu-1gb"   # dev tier; bump to db-s-1vcpu-2gb in prod

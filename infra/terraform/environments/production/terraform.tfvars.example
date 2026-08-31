@@ -7,12 +7,12 @@
 # surfaces as `digitalocean_droplet.blogs must be replaced` with an opaque
 # (sensitive value) diff and no hint as to which input moved.
 #
-# Everything that CAN be defaulted now is, in variables.tf (admin_ip_cidr,
+# Everything that CAN be defaulted now is, in variables.tf (admin_ip_cidrs,
 # region, blogs_droplet_size, droplet_image, image tags). Prod's SSH rule and
 # sizing are therefore reproducible from code alone. Do not re-add them here:
 # a stale copy in a gitignored tfvars silently overrides the codified value,
 # which is the exact class of failure GOL-385 is about. (The old example's
-# admin_ip_cidr was 203.0.113.7/32 -- a TEST-NET-3 documentation address --
+# admin_ip_cidrs entry was 203.0.113.7/32 -- a TEST-NET-3 documentation address --
 # so copying it verbatim also locked SSH to an IP nobody owns.)
 #
 # That leaves TWO inputs a plan/apply needs, and NEITHER belongs in this file:

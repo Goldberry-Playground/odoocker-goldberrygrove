@@ -14,13 +14,13 @@ variable "cloudflare_api_token" {
 
 # === Operator inputs ===
 
-variable "admin_ip_cidr" {
-  description = "Operator IPv4 CIDR for SSH allowlist (Odoo droplet + Managed PG trusted-source). Use `curl -4 ifconfig.me`/32."
-  type        = string
-  default     = "74.47.41.38/32"
+variable "admin_ip_cidrs" {
+  description = "Operator IPv4 CIDRs for the SSH allowlist (Odoo + obs droplets) and the Managed PG trusted-source rule. A LIST so more than one operator address can be authorised at once (GOL-1842) — an ISP-rotated IP no longer locks every operator out. Each entry is a `curl -4 ifconfig.me`/32. Codify a new address by appending it here, never as a hand-added DO rule (removed by the next apply)."
+  type        = list(string)
+  default     = ["74.47.41.38/32"]
   validation {
-    condition     = can(regex("^[0-9.]+/[0-9]+$", var.admin_ip_cidr))
-    error_message = "admin_ip_cidr must be a valid IPv4 CIDR like 74.47.41.38/32"
+    condition     = length(var.admin_ip_cidrs) > 0 && alltrue([for c in var.admin_ip_cidrs : can(regex("^[0-9.]+/[0-9]+$", c))])
+    error_message = "admin_ip_cidrs must be a non-empty list of IPv4 CIDRs like [\"74.47.41.38/32\"]."
   }
 }
 

@@ -227,9 +227,14 @@ resource "digitalocean_database_firewall" "pg" {
     value = digitalocean_droplet.odoo.id
   }
 
-  rule {
-    type  = "ip_addr"
-    value = split("/", var.admin_ip_cidr)[0]
+  # One ip_addr rule per operator CIDR (GOL-1842); DO's ip_addr rule takes a
+  # bare address, so strip the /mask from each entry.
+  dynamic "rule" {
+    for_each = var.admin_ip_cidrs
+    content {
+      type  = "ip_addr"
+      value = split("/", rule.value)[0]
+    }
   }
 }
 
@@ -253,7 +258,7 @@ resource "digitalocean_database_firewall" "pg" {
 # terraform_data.local-exec sidesteps it entirely: a provisioner runs ONLY on
 # create/replace during `apply` and NEVER connects on a plan/refresh, so CI
 # plans stay green. Grove applies are MANUAL from the operator machine, whose
-# /32 is already in `var.admin_ip_cidr` (allowlisted in the firewall above) --
+# /32 is already in `var.admin_ip_cidrs` (allowlisted in the firewall above) --
 # so no new firewall rule is needed. depends_on the firewall guarantees the
 # allowlist exists before we connect. Prereqs on the apply host: `psql`
 # (postgresql-client) + outbound 25060 to the cluster's public host. Re-runs
@@ -516,7 +521,7 @@ resource "digitalocean_firewall" "odoo" {
   inbound_rule {
     protocol         = "tcp"
     port_range       = "22"
-    source_addresses = [var.admin_ip_cidr]
+    source_addresses = var.admin_ip_cidrs
   }
 
   # HTTP — Caddy redirects 80 → 443. DNS-01 ACME means port 80 is NOT
