@@ -6,6 +6,17 @@
     "Validate Docker Compose (Grove)",
     "Validate Nginx Config",
     "Lint Python (Odoo Modules)",
-    "prod-plan-guard"
+    "prod-plan-guard",
+    "Protected paths guard",
+    "Config freeze",
+    "fix touches a test",
+    "CI scripts",
+    "Required-checks audit",
+    "actionlint (all workflows)",
+    "shellcheck (scripts/)",
+    "Reject tracked .env files",
+    "cloud-init ASCII guard",
+    "Terraform fmt + validate",
+    "Promotion script tests"
   ]
 }
