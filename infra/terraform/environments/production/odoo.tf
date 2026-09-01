@@ -186,6 +186,17 @@ resource "digitalocean_droplet" "odoo" {
     shippo_api_key             = var.shippo_api_key
     grove_shippo_webhook_token = var.grove_shippo_webhook_token
 
+    # Discord #grove-ops alerting (GOL-1935, parent GOL-1933). grove_headless
+    # _notify_discord() reads DISCORD_OPS_WEBHOOK_URL from os.environ to page
+    # oversell/refund/new-order events. Reuses the SAME bare webhook var
+    # observability.tf pages DO alerts on (validated non-empty, no /slack) --
+    # _notify_discord posts a Discord-native payload to the bare URL, so no new
+    # secret or 1P item is needed. user_data is in ignore_changes (below), so
+    # landing this does NOT touch the running droplet; a board-gated rebuild
+    # (GOL-920) activates it. Until then the value is applied live by appending
+    # it to /etc/grove/.env + recreating the odoo container (see PR notes).
+    discord_ops_webhook_url = var.discord_webhook_url
+
     # Managed PG connection params (private VPC network). odoorc.sh substitutes
     # these into /etc/odoo/odoo.conf at container start.
     pg_host     = digitalocean_database_cluster.pg.private_host

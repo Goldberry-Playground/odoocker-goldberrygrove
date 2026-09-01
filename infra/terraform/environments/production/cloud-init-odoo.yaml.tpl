@@ -132,6 +132,15 @@ write_files:
       # empty). Same --env-file -> compose environment: path as stripe_test_*.
       SHIPPO_API_KEY=${shippo_api_key}
       GROVE_SHIPPO_WEBHOOK_TOKEN=${grove_shippo_webhook_token}
+      # Discord #grove-ops alerting (GOL-1935, parent GOL-1933). grove_headless
+      # _notify_discord() reads this from os.environ (compose environment: block)
+      # and POSTs a Discord-native payload to the BARE webhook -- do NOT add the
+      # /slack suffix here (observability.tf appends that only for DO's Slack-
+      # shaped alerts). Same --env-file -> compose environment: path as
+      # stripe_test_*; unquoted like WEB_BASE_URL (a webhook URL has no shell
+      # metacharacters). Sourced from TF var discord_webhook_url, the same bare
+      # webhook DO already pages on -- so this is populated (not empty-default).
+      DISCORD_OPS_WEBHOOK_URL=${discord_ops_webhook_url}
 
   # Compose YAML - base64 so cloud-init's YAML parser never sees its content.
   - path: /etc/grove/docker-compose.yml

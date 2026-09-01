@@ -104,6 +104,20 @@ services:
       # fail-closed when empty). Same --env-file source as stripe_test_*.
       SHIPPO_API_KEY: ${SHIPPO_API_KEY:-}
       GROVE_SHIPPO_WEBHOOK_TOKEN: ${GROVE_SHIPPO_WEBHOOK_TOKEN:-}
+      # Discord #grove-ops alerting (GOL-1935, parent GOL-1933). grove_headless
+      # _notify_discord() reads DISCORD_OPS_WEBHOOK_URL from os.environ and POSTs
+      # a Discord-native payload to the BARE webhook (NO /slack suffix -- that
+      # suffix is only for DigitalOcean's Slack-shaped alert payload, appended by
+      # production/observability.tf). Like the stripe_test_* / SHIPPO_* vars
+      # above, the odoo process env comes ONLY from this block -- the /.env mount
+      # feeds odoorc.sh's odoo.conf substitution, NOT os.environ -- so an unlisted
+      # var in /etc/grove/.env never reaches the container (the footgun that left
+      # every oversell/refund/new-order alert a silent no-op on prod). Value is
+      # interpolated from `docker compose --env-file /etc/grove/.env` (cloud-init
+      # writes it from TF var discord_webhook_url, the same bare webhook
+      # observability.tf already pages on). Empty default keeps _notify_discord a
+      # no-op on any env that does not set it.
+      DISCORD_OPS_WEBHOOK_URL: ${DISCORD_OPS_WEBHOOK_URL:-}
     # GOL-746: gate the Odoo start on git-sync's FIRST clone. depends_on
     # (service_started) only guarantees the sidecar CONTAINER started, not
     # that /workspace/current is populated. On the 2026-07-22 droplet replace
