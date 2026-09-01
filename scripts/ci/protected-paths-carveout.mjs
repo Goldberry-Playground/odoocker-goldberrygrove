@@ -26,7 +26,8 @@ import { pathToFileURL } from "node:url";
 // guard, and auto-approve.yml).
 export const PROTECTED_GLOBS = [
   '.github/workflows/**',
-  'infra/terraform/environments/production/**',
+  'infra/terraform/**',
+  'nginx/**',
 ];
 
 // glob -> RegExp (supports **, *, and literals; '/' is literal). MUST stay
