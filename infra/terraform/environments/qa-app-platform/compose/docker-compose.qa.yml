@@ -86,7 +86,12 @@ services:
       # e.g. grove.publish.event from GOL-985). Idempotent + rev-gated in
       # odoo/entrypoint.sh (marker on the durable /mnt/odoo-filestore volume); a
       # plain restart on the same revision is a no-op.
-      AUTO_UPGRADE_MODULES: grove_headless
+      # GOL-2039: append grove_support (GOL-2022 glue). QA git-sync tracks the
+      # module repo's main; once grove-odoo-modules PR #171 merges, this list
+      # installs grove_support (+ im_livechat / crm / sale via --init deps) on the
+      # next QA deploy or scripts/module-upgrade.sh run. Reconcile with PR #601
+      # (adds im_livechat,website_livechat,crm) -> union this line on merge.
+      AUTO_UPGRADE_MODULES: grove_headless,grove_support
       # Stripe TEST-mode sandbox checkout (GOL-688). grove_headless reads these
       # from os.environ (LOWERCASE names, controllers/main.py). The odoo process
       # env comes ONLY from this compose environment block -- the /.env mount
