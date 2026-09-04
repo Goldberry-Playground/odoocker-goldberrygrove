@@ -182,6 +182,10 @@ jobs:
           CLOUDFLARE_API_TOKEN:     op://Grove Prod/Cloudflare API Token/credential
           GROVE_REVALIDATE_SECRET:  op://Grove Prod/odoocker/GROVE_REVALIDATE_SECRET
           DISCORD_OPS_WEBHOOK_URL:  op://Grove Prod/odoocker/DISCORD_OPS_WEBHOOK_URL
+          # Dedicated order/pickup-summaries channel (Josh 2026-09-03). Field
+          # must exist on the odoocker item BEFORE this merges or the op load
+          # step fails the promote path.
+          DISCORD_ORDERS_WEBHOOK_URL: op://Grove Prod/odoocker/DISCORD_ORDERS_WEBHOOK_URL
           ODOO_API_KEYS_TF_JSON:    op://Grove Prod/odoocker/ODOO_API_KEYS_TF_JSON
         with:
           export-env: true
@@ -271,6 +275,8 @@ jobs:
             echo "TF_VAR_spaces_secret_key=$SPACES_SECRET_ACCESS_KEY"
             echo "TF_VAR_grove_revalidate_secret=$GROVE_REVALIDATE_SECRET"
             echo "TF_VAR_discord_webhook_url=$DISCORD_OPS_WEBHOOK_URL"
+            # Orders-channel webhook rides the same rebuild (odoocker#603).
+            echo "TF_VAR_discord_orders_webhook_url=$DISCORD_ORDERS_WEBHOOK_URL"
             echo "TF_VAR_odoo_api_keys=$ODOO_API_KEYS_TF_JSON"
             # Not app-spec-relevant to the four targeted resources below;
             # placeholders are safe here for the same reason prod-plan-guard.yml
