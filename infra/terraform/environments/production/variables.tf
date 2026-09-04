@@ -264,6 +264,17 @@ variable "ghost_smtp" {
     condition     = alltrue([for t in ["hub", "goldberry", "ggg", "nursery"] : contains(keys(var.ghost_smtp), t)])
     error_message = "ghost_smtp must contain keys: hub, goldberry, ggg, nursery."
   }
+  # The `op run` apply path sources TF_VAR_ghost_smtp from the 1Password item
+  # ghost_smtp_tf_json, so this variable's DEFAULT (fixed in #420) is never
+  # consumed in prod — the stored map wins. If that map was assembled before
+  # 2026-08-07 it may still carry the old hub sender noreply@mg.gatheringatthegrove.com,
+  # a subdomain on a Mailgun account we do NOT control: Ghost would silently
+  # fail to deliver receipts/magic-links at the Phase-2 blogs flip. The
+  # key-presence check above cannot see this. Fail loudly at plan time instead.
+  validation {
+    condition     = alltrue([for t, c in var.ghost_smtp : !can(regex("mg\\.gatheringatthegrove\\.com", c.from))])
+    error_message = "ghost_smtp[*].from must not use mg.gatheringatthegrove.com (a Mailgun account we do not control). The hub must send from send.gatheringatthegrove.com. Fix the stored value in 1P: Goldberry Grove - Admin/Grove Infra/ghost_smtp_tf_json."
+  }
 }
 
 # === Observability — platform plane (GOL-381) ===============================
