@@ -120,6 +120,10 @@ services:
       # source as stripe_test_* above; cloud-init writes both.
       SHIPPO_API_KEY: ${SHIPPO_API_KEY:-}
       GROVE_SHIPPO_WEBHOOK_TOKEN: ${GROVE_SHIPPO_WEBHOOK_TOKEN:-}
+      # Dedicated order/pickup-summaries Discord channel (Josh 2026-09-03).
+      # _notify_discord() prefers this over DISCORD_OPS_WEBHOOK_URL; empty =>
+      # order alerts are a no-op in QA (QA plumbs no ops webhook either).
+      DISCORD_ORDERS_WEBHOOK_URL: ${DISCORD_ORDERS_WEBHOOK_URL:-}
     # GOL-746: gate the Odoo start on git-sync's FIRST clone. depends_on
     # (service_started, below) only guarantees the sidecar CONTAINER started,
     # not that /workspace/current is populated. The old assumption that Odoo

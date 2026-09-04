@@ -453,6 +453,13 @@ variable "from_filter" {
   default     = "send.gatheringatthegrove.com"
 }
 
+variable "discord_orders_webhook_url" {
+  description = "Discord webhook for the dedicated order/pickup-summaries channel (Josh 2026-09-03), mirroring prod: grove_headless _notify_discord() prefers os.environ DISCORD_ORDERS_WEBHOOK_URL over DISCORD_OPS_WEBHOOK_URL (QA plumbs neither today, so empty = alerts stay a silent no-op in QA, current behavior). QA test orders posting to the REAL orders channel is intentional for the post-deploy smoke check; point TF_VAR_discord_orders_webhook_url at a QA-only webhook later if the noise bothers staff. 1P: op://Grove Prod/odoocker/DISCORD_ORDERS_WEBHOOK_URL (via .env.op). Feeds user_data — changing it REPLACES the QA odoo droplet."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 variable "shippo_api_key" {
   description = "Shippo TEST API key for QA label purchase + rate quotes. grove_headless (models/sale_order.py) reads os.environ SHIPPO_API_KEY — raises UserError if unset, so the empty default keeps plan/apply working and label purchase inert until wired. 1P: op://Grove QA/Shippo Key/password (via TF_VAR_shippo_api_key in .env.op). Feeds cloud-init user_data — changing it REPLACES the QA odoo droplet."
   type        = string

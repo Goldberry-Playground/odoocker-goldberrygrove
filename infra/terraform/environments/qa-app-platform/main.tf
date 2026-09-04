@@ -437,6 +437,10 @@ resource "digitalocean_droplet" "odoo" {
     shippo_api_key             = var.shippo_api_key
     grove_shippo_webhook_token = var.grove_shippo_webhook_token
 
+    # Dedicated order/pickup-summaries Discord channel (Josh 2026-09-03),
+    # mirrors prod. Empty default = order alerts stay silent in QA.
+    discord_orders_webhook_url = var.discord_orders_webhook_url
+
     # base64-encode embedded files (ADR-005 PR-B pattern — bypasses cloud-init
     # YAML parser entirely for content with awkward characters).
     compose_yml_b64   = base64encode(file("${path.module}/compose/docker-compose.qa.yml"))

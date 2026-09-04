@@ -141,6 +141,11 @@ write_files:
       # metacharacters). Sourced from TF var discord_webhook_url, the same bare
       # webhook DO already pages on -- so this is populated (not empty-default).
       DISCORD_OPS_WEBHOOK_URL=${discord_ops_webhook_url}
+      # Dedicated order/pickup-summaries channel (Josh 2026-09-03).
+      # _notify_discord() prefers this and falls back to DISCORD_OPS above, so
+      # empty => order alerts visibly misroute into #grove-ops rather than drop.
+      # Same bare-URL / no-/slack rule as DISCORD_OPS.
+      DISCORD_ORDERS_WEBHOOK_URL=${discord_orders_webhook_url}
 
   # Compose YAML - base64 so cloud-init's YAML parser never sees its content.
   - path: /etc/grove/docker-compose.yml
