@@ -1,0 +1,225 @@
+name: Provision Project Agents (Odoo)
+
+###############################################################################
+# GOL-2095 (WS3c, under GOL-2092) — self-serve provisioning of the per-agent
+# least-privilege Odoo Projects roster + each agent's API key, run where access
+# already exists (the droplet), so no admin credential ever leaves the vault /
+# the droplet and no operator is in the loop. Generalises the GOL-89
+# provision-logistics-otto.yml mechanism from one user to the agent roster.
+#
+# WHAT IT DOES (idempotent, re-runnable)
+#   1. SSH to the target Odoo droplet.
+#   2. Inside `docker compose exec -T odoo odoo shell` (superuser `env`, full DB
+#      context — NO admin login/API key needed; see the scripts' headers for why
+#      XML-RPC can't mint keys or bootstrap the first user on these droplets):
+#        a. provision_project_agents_shell.py — create/ensure every agent user
+#           (agent-ada … agent-otto) with ONLY base.group_user +
+#           project.group_project_user (project.task write; no Accounting, no
+#           Settings, no user management). Humans (Wes/George/Abigail) are
+#           SKIPPED until their emails are filled into the script's ROSTER.
+#        b. mint_agent_key_shell.py, once per agent — mint that user's
+#           `rpc`-scoped API key (revokes any prior same-name key first → clean
+#           rotation).
+#   3. Mask each minted key and write it to 1Password, one item per agent, in
+#      the dedicated `Grove CI Writeback` vault (same vault + token as the Otto
+#      writeback — see docs/RUNBOOK-otto-key-writeback.md; blast radius = the
+#      rpc-scoped project keys this workflow itself mints, nothing else).
+#
+#   DevOps-Terra then injects each agent's ODOO_URL/ODOO_DB/ODOO_LOGIN/
+#   ODOO_API_KEY into that agent's Paperclip env (1Password ref, not plaintext),
+#   replacing the shared CEO/admin MCP key. See docs/RUNBOOK-agent-odoo-keys.md.
+#
+# DISPATCHABILITY
+#   `workflow_dispatch` activates once this file is on the default branch (main).
+#   It fails FAST and LOUD on any missing secret rather than half-running. The
+#   SSH + 1Password writeback secrets are the SAME ones provision-logistics-otto
+#   needs; seed status is tracked on GOL-2095 (go-live) — none are seeded yet.
+#
+# ── Secrets this workflow needs (per environment) — shared with logistics ────
+#     qa   : QA_SSH_PRIVATE_KEY, QA_HOST
+#     prod : PROD_SSH_PRIVATE_KEY, PROD_HOST
+#     1P   : OP_CI_WRITEBACK_SA_TOKEN (write_items on `Grove CI Writeback` only)
+###############################################################################
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target Odoo environment"
+        type: choice
+        required: true
+        default: qa
+        options:
+          - qa
+          - prod
+      dry_run:
+        description: "Print the scope preview only — do NOT create users or mint keys"
+        type: boolean
+        required: true
+        default: true
+
+concurrency:
+  # One provisioning run per environment at a time (key mints are rotations).
+  group: provision-project-agents-${{ inputs.environment }}
+  cancel-in-progress: false
+
+# No id-token: 1Password authenticates with a service-account token, not OIDC.
+permissions:
+  contents: read
+
+jobs:
+  provision:
+    name: Provision roster + mint keys (${{ inputs.environment }}${{ inputs.dry_run && ' · dry-run' || ' · LIVE' }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      OP_WRITEBACK_VAULT: Grove CI Writeback
+      # Per-agent items live in the shared writeback vault; the env suffix keeps
+      # a qa run and a prod run off each other's items (1P SA tokens scope
+      # per-vault, not per-item — the item naming is what keeps them distinct).
+      ENV_SUFFIX: ${{ inputs.environment == 'prod' && 'prod' || 'qa' }}
+      # The agent logins to mint keys for. Kept in lockstep with the "agent"
+      # entries of ROSTER in scripts/provision_project_agents_shell.py.
+      AGENT_LOGINS: "agent-ada agent-terra agent-iris agent-penny agent-sora agent-otto"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        timeout-minutes: 2
+
+      - name: Resolve environment
+        id: resolve
+        timeout-minutes: 1
+        env:
+          TARGET: ${{ inputs.environment }}
+        run: |
+          set -euo pipefail
+          if [ "$TARGET" = "prod" ]; then
+            echo "deploy_dir=/opt/grove"                                                   >> "$GITHUB_OUTPUT"
+            echo "compose_args=-f docker-compose.yml -f docker-compose.override.grove.yml -f docker-compose.override.production.yml" >> "$GITHUB_OUTPUT"
+            echo "odoo_url=https://odoo.gatheringatthegrove.com"                            >> "$GITHUB_OUTPUT"
+          else
+            echo "deploy_dir=/etc/grove"                                                    >> "$GITHUB_OUTPUT"
+            echo "compose_args=--env-file /etc/grove/.env"                                  >> "$GITHUB_OUTPUT"
+            echo "odoo_url=https://odoo.qa.gatheringatthegrove.com"                         >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Load SSH agent
+        uses: webfactory/ssh-agent@e83874834305fe9a4a2997156cb26c5de65a8555 # v0.10.0
+        timeout-minutes: 2
+        with:
+          ssh-private-key: ${{ inputs.environment == 'prod' && secrets.PROD_SSH_PRIVATE_KEY || secrets.QA_SSH_PRIVATE_KEY }}
+
+      - name: Add droplet to known hosts
+        timeout-minutes: 1
+        env:
+          HOST: ${{ inputs.environment == 'prod' && secrets.PROD_HOST || secrets.QA_HOST }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          chmod 600 ~/.ssh/known_hosts
+
+      # ── Provision the WHOLE roster in one idempotent pass. On dry-run this
+      # prints the scope preview and writes nothing.
+      - name: Provision agent roster
+        id: provision
+        timeout-minutes: 5
+        env:
+          HOST: ${{ inputs.environment == 'prod' && secrets.PROD_HOST || secrets.QA_HOST }}
+          DEPLOY_DIR: ${{ steps.resolve.outputs.deploy_dir }}
+          COMPOSE_ARGS: ${{ steps.resolve.outputs.compose_args }}
+          DRY: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          DRYENV=""
+          [ "$DRY" = "true" ] && DRYENV="-e AGENT_DRY_RUN=1"
+          ssh -o StrictHostKeyChecking=yes "root@${HOST}" \
+            "set -a; . ${DEPLOY_DIR}/.env; set +a; \
+             cd ${DEPLOY_DIR} && docker compose ${COMPOSE_ARGS} exec -T ${DRYENV} \
+               odoo odoo shell -d \"\$DB_NAME\" --no-http --logfile=/dev/null" \
+            < scripts/provision_project_agents_shell.py \
+            | tee provision.out
+          echo "----- provision output (scope preview / uids; no secrets) -----"
+          cat provision.out
+
+      # `op` CLI — needed because load-secrets-action is read-only and the mint
+      # step below WRITES a secret.
+      - name: Install 1Password CLI
+        if: ${{ inputs.dry_run == false }}
+        uses: 1password/install-cli-action@v4
+        timeout-minutes: 2
+
+      # ── Mint each agent's key (live only) and write it to its own 1P item.
+      # Each key is captured, masked immediately, written, then cleared before
+      # the next agent — the plaintext never lands in a log or a step output.
+      - name: Mint + store per-agent API keys
+        if: ${{ inputs.dry_run == false }}
+        timeout-minutes: 10
+        env:
+          HOST: ${{ inputs.environment == 'prod' && secrets.PROD_HOST || secrets.QA_HOST }}
+          DEPLOY_DIR: ${{ steps.resolve.outputs.deploy_dir }}
+          COMPOSE_ARGS: ${{ steps.resolve.outputs.compose_args }}
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_CI_WRITEBACK_SA_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${OP_SERVICE_ACCOUNT_TOKEN:-}" ]; then
+            echo "::error::OP_CI_WRITEBACK_SA_TOKEN not set — cannot store keys. Keys minted this run would be DISCARDED; re-run after seeding the token (docs/RUNBOOK-otto-key-writeback.md / GOL-2095)."
+            exit 1
+          fi
+          if ! op vault get "$OP_WRITEBACK_VAULT" >/dev/null 2>&1; then
+            echo "::error::vault '${OP_WRITEBACK_VAULT}' not reachable with OP_CI_WRITEBACK_SA_TOKEN (docs/RUNBOOK-otto-key-writeback.md)."
+            exit 1
+          fi
+          for LOGIN in $AGENT_LOGINS; do
+            ITEM="${LOGIN}-${ENV_SUFFIX}"
+            echo "::group::mint ${LOGIN} -> op://${OP_WRITEBACK_VAULT}/${ITEM}/ODOO_API_KEY"
+            ssh -o StrictHostKeyChecking=yes "root@${HOST}" \
+              "set -a; . ${DEPLOY_DIR}/.env; set +a; \
+               cd ${DEPLOY_DIR} && docker compose ${COMPOSE_ARGS} exec -T -e AGENT_LOGIN=${LOGIN} \
+                 odoo odoo shell -d \"\$DB_NAME\" --no-http --logfile=/dev/null" \
+              < scripts/mint_agent_key_shell.py \
+              > mint.out 2> mint.err || { echo "::error::mint failed for ${LOGIN}"; cat mint.err; exit 1; }
+            KEY="$(sed -n '/----BEGIN AGENT_API_KEY----/{n;p;}' mint.out)"
+            rm -f mint.out
+            if [ -z "$KEY" ]; then
+              echo "::error::no key parsed for ${LOGIN}"; exit 1
+            fi
+            echo "::add-mask::$KEY"
+            if op item get "$ITEM" --vault "$OP_WRITEBACK_VAULT" >/dev/null 2>&1; then
+              op item edit "$ITEM" --vault "$OP_WRITEBACK_VAULT" \
+                "ODOO_API_KEY[password]=${KEY}" "ODOO_LOGIN[text]=${LOGIN}" >/dev/null
+              echo "updated op://${OP_WRITEBACK_VAULT}/${ITEM}/ODOO_API_KEY"
+            else
+              op item create --category="API Credential" \
+                --title "$ITEM" --vault "$OP_WRITEBACK_VAULT" \
+                "ODOO_API_KEY[password]=${KEY}" "ODOO_LOGIN[text]=${LOGIN}" >/dev/null
+              echo "created op://${OP_WRITEBACK_VAULT}/${ITEM}/ODOO_API_KEY"
+            fi
+            KEY=""
+            echo "::endgroup::"
+          done
+
+      - name: Summary
+        if: ${{ always() }}
+        env:
+          TARGET: ${{ inputs.environment }}
+          DRY: ${{ inputs.dry_run }}
+          ODOO_URL: ${{ steps.resolve.outputs.odoo_url }}
+        run: |
+          {
+            echo "### Provision Project Agents — ${TARGET}"
+            echo ""
+            echo "- mode: $([ "$DRY" = "true" ] && echo 'DRY-RUN (scope preview only)' || echo 'LIVE')"
+            echo "- ODOO_URL: ${ODOO_URL}"
+            echo "- roster: ${AGENT_LOGINS}"
+            echo "- groups: base.group_user + project.group_project_user (project.task write; NO accounting/settings)"
+            if [ "$DRY" != "true" ]; then
+              echo "- keys written to: \`op://${OP_WRITEBACK_VAULT}/<login>-${ENV_SUFFIX}/ODOO_API_KEY\`"
+            fi
+            echo ""
+            echo "Next (live): DevOps-Terra injects ODOO_URL/ODOO_DB/ODOO_LOGIN/ODOO_API_KEY"
+            echo "per agent into Paperclip env (1Password ref), then verifies each MCP"
+            echo "profile authenticates as its own user. See docs/RUNBOOK-agent-odoo-keys.md."
+          } >> "$GITHUB_STEP_SUMMARY"
