@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import datetime as dt
 import importlib.util
+import json
 import os
 import unittest
 
@@ -220,6 +221,92 @@ class Plan(unittest.TestCase):
         dev = next(p for p in plan["projects"] if p["asana_name"].endswith("Dev"))
         self.assertEqual(dev["action"], "exclude")
         self.assertEqual(dev["reason"], "archived project")
+
+
+class ArchiveLoading(unittest.TestCase):
+    """The WS3a export on disk is split + nested; load_archive must normalize it
+    into the merged input-contract shape build_plan consumes."""
+
+    def test_flatten_tasks_lifts_nested_subtasks(self):
+        tasks = [
+            {"gid": "p", "name": "parent", "subtasks": [
+                {"gid": "c1", "name": "child1", "parent": {"gid": "p"}},
+                {"gid": "c2", "name": "child2", "parent": {"gid": "p"},
+                 "subtasks": [{"gid": "g", "name": "grandchild",
+                               "parent": {"gid": "c2"}}]},
+            ]},
+            {"gid": "lone", "name": "no kids"},
+        ]
+        flat = a2o._flatten_tasks(tasks)
+        self.assertEqual([t["gid"] for t in flat], ["p", "c1", "c2", "g", "lone"])
+        # nested payload dropped from the emitted parents
+        self.assertNotIn("subtasks", flat[0])
+        self.assertNotIn("subtasks", flat[2])
+        # parent linkage preserved on children
+        self.assertEqual(flat[1]["parent"]["gid"], "p")
+        self.assertEqual(flat[3]["parent"]["gid"], "c2")
+
+    def test_normalize_project_doc_lifts_meta(self):
+        doc = {
+            "project": {"gid": "1213824483978728", "name": "Content calendar",
+                        "archived": False, "team": {"name": "GatherAtTheGrove"},
+                        "notes": "ignored"},
+            "sections": [{"gid": "s1", "name": "Backlog"}],
+            "tasks": [{"gid": "t1", "name": "top", "subtasks": [
+                {"gid": "t1a", "name": "sub", "parent": {"gid": "t1"}}]}],
+        }
+        norm = a2o._normalize_project_doc(doc)
+        self.assertEqual(norm["gid"], "1213824483978728")
+        self.assertEqual(norm["name"], "Content calendar")
+        self.assertFalse(norm["archived"])
+        self.assertEqual(norm["team"], {"name": "GatherAtTheGrove"})
+        self.assertEqual([t["gid"] for t in norm["tasks"]], ["t1", "t1a"])
+
+    def _write_split_archive(self, root):
+        os.makedirs(os.path.join(root, "projects"))
+        with open(os.path.join(root, "manifest.json"), "w") as fh:
+            json.dump({"generated_at": "2026-09-05T18:06:26Z",
+                       "workspace": {"gid": "1213817682522376"},
+                       "projects": [{"gid": "1213867393569940",
+                                     "file": "projects/project-1213867393569940.json"}]},
+                      fh)
+        with open(os.path.join(root, "workspace.json"), "w") as fh:
+            json.dump({"users": [{"gid": "u1", "name": "Joshua Dunbar",
+                                  "email": "josh@goldberrygrove.farm"}]}, fh)
+        with open(os.path.join(root, "projects",
+                               "project-1213867393569940.json"), "w") as fh:
+            json.dump({"project": {"gid": "1213867393569940", "name": "Dev",
+                                   "archived": False, "team": None},
+                       "sections": [{"gid": "s1", "name": "Backlog"}],
+                       "tasks": [{"gid": "t1", "name": "Undated active",
+                                  "notes": "", "completed": False,
+                                  "assignee": None, "due_on": None,
+                                  "memberships": [], "stories": [],
+                                  "subtasks": [{"gid": "t1a", "name": "sub",
+                                                "notes": "", "completed": False,
+                                                "assignee": None, "due_on": None,
+                                                "parent": {"gid": "t1"},
+                                                "memberships": [], "stories": []}]}]},
+                      fh)
+
+    def test_load_split_archive_dir_feeds_build_plan(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as root:
+            self._write_split_archive(root)
+            # dir, manifest.json path, and merged file all resolve identically.
+            arch_dir = a2o.load_archive(root)
+            arch_manifest = a2o.load_archive(os.path.join(root, "manifest.json"))
+        self.assertEqual(arch_dir, arch_manifest)
+        self.assertEqual(arch_dir["workspace_gid"], "1213817682522376")
+        self.assertEqual(len(arch_dir["users"]), 1)
+        proj = arch_dir["projects"][0]
+        self.assertEqual(proj["gid"], "1213867393569940")
+        self.assertEqual([t["gid"] for t in proj["tasks"]], ["t1", "t1a"])
+        # and it runs clean through build_plan: t1 undated-active kept, t1a subtask
+        plan = a2o.build_plan(arch_dir, TODAY, gid_field_present=False)
+        dev = next(p for p in plan["projects"] if p["action"] == "migrate")
+        self.assertEqual({t["gid"] for t in dev["tasks"]}, {"t1", "t1a"})
+        self.assertEqual(plan["totals"]["tasks_subtasks"], 1)
 
 
 if __name__ == "__main__":

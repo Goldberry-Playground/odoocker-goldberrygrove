@@ -61,8 +61,8 @@ in agent config / an issue thread):
     ODOO_LOGIN      the API user's login
     ODOO_API_KEY    that user's Odoo API key (XML-RPC password)
 
-WS3a ARCHIVE INPUT CONTRACT (the JSON this script consumes)
------------------------------------------------------------
+WS3a ARCHIVE INPUT CONTRACT (the shape this script consumes internally)
+-----------------------------------------------------------------------
 {
   "generated_at": "<ISO8601>",
   "workspace_gid": "1213817682522376",
@@ -91,14 +91,29 @@ WS3a ARCHIVE INPUT CONTRACT (the JSON this script consumes)
   ]
 }
 
+ARCHIVE ON DISK (what GOL-2093 actually wrote to Spaces) vs. the shape above:
+the WS3a export is a SPLIT directory, not one merged file —
+    manifest.json                     # counts + per-project {file: ...} index
+    workspace.json                    # {users, teams, projects_index, ...}
+    projects/project-<gid>.json       # {project: {...meta}, sections, tasks}
+        - project metadata (gid/name/archived/team) is nested under "project"
+        - subtasks are nested under each task's "subtasks" array, NOT flattened
+`load_archive` normalizes that layout into the single in-memory shape above
+(lifting project meta to the top level and depth-first-flattening subtasks into
+`tasks` with their `parent.gid` intact) so build_plan/execute_plan never see the
+difference. A pre-merged single JSON file in the shape above is also accepted.
+
 USAGE
 -----
-    # dry-run (default) — prints manifest, no writes, no Odoo needed:
+    # dry-run (default) — prints manifest, no writes, no Odoo needed.
+    # --input is EITHER the split WS3a archive dir (or its manifest.json) OR a
+    # single merged JSON in the contract shape above:
+    asana_to_odoo_migrate.py --input ./ws3a-archive/
     asana_to_odoo_migrate.py --input asana_export.json
 
     # write to Odoo (gated on archive existing + CEO/board approval):
     ODOO_URL=… ODOO_DB=… ODOO_LOGIN=… ODOO_API_KEY=… \
-        asana_to_odoo_migrate.py --input asana_export.json --execute --confirm
+        asana_to_odoo_migrate.py --input ./ws3a-archive/ --execute --confirm
 """
 
 from __future__ import annotations
@@ -583,6 +598,99 @@ def execute_plan(archive: dict, plan: dict, odoo: Odoo, gid_field: str | None,
 
 
 # --------------------------------------------------------------------------- #
+# Archive loading — normalize the split WS3a export into the input-contract shape
+# --------------------------------------------------------------------------- #
+
+def _flatten_tasks(tasks: list) -> list:
+    """Depth-first flatten of nested `subtasks` into one flat task list.
+
+    The WS3a export nests subtasks under each task's `subtasks` array; build_plan
+    expects every task (parents and subtasks alike) as a flat entry in `tasks`,
+    detecting subtasks by their `parent.gid`. Each exported subtask already
+    carries its `parent`, so the flat list preserves parent linkage. The nested
+    `subtasks` payload is dropped from the emitted parent so the flat list is the
+    single source of truth (no double-counting downstream).
+    """
+    out: list[dict] = []
+    for task in tasks or []:
+        subs = task.get("subtasks") or []
+        out.append({k: v for k, v in task.items() if k != "subtasks"})
+        if subs:
+            out.extend(_flatten_tasks(subs))
+    return out
+
+
+def _normalize_project_doc(doc: dict) -> dict:
+    """One split `projects/project-<gid>.json` -> the merged project shape.
+
+    The export nests project metadata under a `project` sub-object and keeps
+    subtasks nested; lift the metadata to the top level and flatten the tasks.
+    """
+    meta = doc.get("project") or {}
+    return {
+        "gid": meta.get("gid"),
+        "name": meta.get("name"),
+        "archived": bool(meta.get("archived")),
+        "team": meta.get("team"),
+        "sections": doc.get("sections") or [],
+        "tasks": _flatten_tasks(doc.get("tasks") or []),
+    }
+
+
+def _assemble_split_archive(root: str, manifest: dict | None = None) -> dict:
+    """Assemble the split WS3a archive under `root` into the merged input shape.
+
+    Layout: manifest.json (per-project {file} index) + workspace.json (users) +
+    projects/project-<gid>.json. Missing manifest -> not a WS3a archive dir.
+    """
+    if manifest is None:
+        mpath = os.path.join(root, "manifest.json")
+        if not os.path.exists(mpath):
+            _die(f"{root!r} is not a WS3a archive dir (no manifest.json)")
+        with open(mpath, encoding="utf-8") as fh:
+            manifest = json.load(fh)
+
+    users: list = []
+    wpath = os.path.join(root, "workspace.json")
+    if os.path.exists(wpath):
+        with open(wpath, encoding="utf-8") as fh:
+            users = json.load(fh).get("users") or []
+
+    projects: list = []
+    for entry in manifest.get("projects") or []:
+        rel = entry.get("file")
+        if not rel:
+            continue
+        with open(os.path.join(root, rel), encoding="utf-8") as fh:
+            projects.append(_normalize_project_doc(json.load(fh)))
+
+    return {
+        "generated_at": manifest.get("generated_at"),
+        "workspace_gid": (manifest.get("workspace") or {}).get("gid"),
+        "users": users,
+        "projects": projects,
+    }
+
+
+def load_archive(path: str) -> dict:
+    """Read the WS3a archive from either the split directory the GOL-2093 export
+    produced (a dir, or its manifest.json) or a single pre-merged JSON file in
+    the input-contract shape. Always returns the merged in-memory shape.
+    """
+    if os.path.isdir(path):
+        return _assemble_split_archive(path)
+    with open(path, encoding="utf-8") as fh:
+        doc = json.load(fh)
+    # Pointed straight at a split-archive manifest.json? Assemble from its dir.
+    proj = doc.get("projects")
+    if isinstance(proj, list) and proj and all(
+            isinstance(p, dict) and "file" in p for p in proj):
+        return _assemble_split_archive(os.path.dirname(os.path.abspath(path)),
+                                       manifest=doc)
+    return doc
+
+
+# --------------------------------------------------------------------------- #
 # CLI
 # --------------------------------------------------------------------------- #
 
@@ -597,7 +705,9 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         prog="asana_to_odoo_migrate.py",
         description="WS3b Asana -> Odoo project.task migration (GOL-2094).")
-    p.add_argument("--input", required=True, help="WS3a archive JSON (rollback surface)")
+    p.add_argument("--input", required=True,
+                   help="WS3a archive: the split export dir (or its manifest.json), "
+                        "or a single merged JSON in the input-contract shape")
     p.add_argument("--execute", action="store_true",
                    help="perform Odoo writes (default: dry-run manifest only)")
     p.add_argument("--confirm", action="store_true",
@@ -611,8 +721,7 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
 
     try:
-        with open(args.input, encoding="utf-8") as fh:
-            archive = json.load(fh)
+        archive = load_archive(args.input)
     except (OSError, json.JSONDecodeError) as exc:
         _die(f"could not read archive {args.input!r}: {exc}")
 
