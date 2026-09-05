@@ -176,6 +176,10 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Run promotion tooling tests
         run: python3 scripts/test_promotion_scripts.py
+      - name: Run provisioning script tests (CEO login + per-agent Projects roster)
+        run: |
+          python3 scripts/test_provision_ceo_user_shell.py
+          python3 scripts/test_provision_project_agents_shell.py
 
   validate-compose:
     name: Validate Docker Compose (Grove)
