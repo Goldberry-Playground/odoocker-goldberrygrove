@@ -88,14 +88,14 @@ services:
       # plain restart on the same revision is a no-op.
       #
       # GOL-2021: grove_support phase 1 adds the standard-Odoo livechat stack to
-      # QA — im_livechat + website_livechat (public widget + loader) + crm (pulls
+      # QA -- im_livechat + website_livechat (public widget + loader) + crm (pulls
       # calendar + contacts). All Community, present-but-uninstalled in the
       # CI-built image (verified 2026-08-31); NOTHING chat-related is installed on
       # QA today (livechat loader routes 404, verified 2026-09-02). Adding them
       # here means the entrypoint's `--init=base,<mods> --update=<mods>` pass
       # installs them (--init handles the not-yet-installed case) alongside the
       # git-synced custom module. Because this is a compose-only change (no
-      # git-sync revision advance), the install fires via the escape hatch —
+      # git-sync revision advance), the install fires via the escape hatch --
       # `scripts/module-upgrade.sh` clears the marker + restarts so the entrypoint
       # re-runs the upgrade of the expanded list (see docs/RUNBOOK-module-upgrade.md).
       # Take a QA DB backup BEFORE that run (QA still holds pre-promotion order
