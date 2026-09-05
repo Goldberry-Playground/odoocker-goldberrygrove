@@ -1,0 +1,139 @@
+name: Rotate or Disable Odoo admin (uid=2)
+
+###############################################################################
+# GOL-2080 -- kill the SHARED, non-attributable fallback password set on the
+# generic built-in Odoo administrator (res.users uid=2) during the 2026-08-31
+# CEO login recovery (GOL-1780). Josh now has his own attributable CEO login, so
+# uid=2 must not keep a live interactive credential.
+#
+# MECHANISM (same superuser odoo-shell path as provision-ceo-odoo-login /
+#   GOL-89, CEO-ratified) -- SSH to the prod droplet as root and pipe
+#   scripts/rotate_disable_admin2_shell.py into `docker compose ... exec -T odoo
+#   odoo shell`. Inside the shell `env` runs as SUPERUSER, so no admin login/API
+#   key is needed. XML-RPC cannot be used to disable an account you cannot
+#   authenticate as -- which is exactly the credential we are retiring.
+#
+# MODES (input `mode`)
+#   report  (default) READ-ONLY. Prints uid=2's posture (is a password live, is
+#           it still an admin) and enumerates every automation binding on uid=2
+#           (API keys, crons). Writes nothing. Run this FIRST -- its output
+#           answers "is the fallback live" and "does anything depend on uid=2",
+#           which decides whether the next run is disable or rotate.
+#   disable Archive uid=2 (active=False) AND rotate its password to a discarded
+#           random value. REFUSES (rc=4) if any automation binds uid=2. Preferred
+#           when report shows zero dependencies.
+#   rotate  Rotate the password to a discarded random value only; leave the
+#           account active so any automation running AS uid=2 keeps working.
+#
+# CREDENTIAL SAFETY -- nothing secret ever touches this (durable) log. Both write
+#   modes set a FRESH RANDOM password and DISCARD it; no plaintext is printed,
+#   logged, or stored. uid=2 is a built-in/service account, not a login anyone
+#   should use, so no human needs the new value.
+#
+# GOVERNANCE -- the `production` GitHub Environment reviewer IS the CEO gate on
+#   this prod-credential action. Even `report` SSHes into prod, so it sits behind
+#   the same reviewer.
+#
+# SECRETS PREREQUISITE -- reads PROD_SSH_PRIVATE_KEY and PROD_HOST (same as
+#   release.yml / provision-ceo-odoo-login.yml). If they are not provisioned at
+#   repo or `production`-environment level, this workflow cannot reach the
+#   droplet -- use the manual SSH path in
+#   docs/RUNBOOK-rotate-disable-admin2.md (Path B).
+#
+# IDEMPOTENT -- report is read-only; disable/rotate re-ensure the end state.
+###############################################################################
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "report (read-only, default) | disable (archive+rotate) | rotate (rotate only)"
+        type: choice
+        required: true
+        default: report
+        options:
+          - report
+          - disable
+          - rotate
+
+concurrency:
+  group: rotate-disable-admin2
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  rotate:
+    name: uid=2 (${{ inputs.mode }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Every mode SSHes into the prod droplet, so all sit behind the `production`
+    # environment reviewer -- the CEO approval gate for this prod-credential
+    # action. (report writes nothing but still touches prod over SSH.)
+    environment: production
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        timeout-minutes: 2
+
+      - name: Load SSH agent
+        uses: webfactory/ssh-agent@e83874834305fe9a4a2997156cb26c5de65a8555 # v0.10.0
+        timeout-minutes: 2
+        with:
+          ssh-private-key: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+
+      - name: Add droplet to known hosts
+        timeout-minutes: 1
+        env:
+          HOST: ${{ secrets.PROD_HOST }}
+        run: |
+          set -euo pipefail
+          if [ -z "${HOST:-}" ]; then
+            echo "::error::PROD_HOST not set -- cannot reach the prod droplet."
+            exit 1
+          fi
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Rotate / disable uid=2
+        id: run
+        timeout-minutes: 6
+        env:
+          HOST: ${{ secrets.PROD_HOST }}
+          MODE: ${{ inputs.mode }}
+        run: |
+          set -euo pipefail
+          # DB name is read from the droplet's own .env -- never hardcoded. The
+          # script never prints a secret in any mode.
+          ssh -o StrictHostKeyChecking=yes "root@${HOST}" \
+            "set -a; . /etc/grove/.env; set +a; \
+             cd /etc/grove && docker compose \
+               exec -T -e ADMIN2_MODE=\"${MODE}\" \
+               odoo odoo shell -d \"\$DB_NAME\" --no-http --logfile=/dev/null" \
+            < scripts/rotate_disable_admin2_shell.py \
+            | tee admin2.out
+          echo "----- output (no secrets emitted in any mode) -----"
+          cat admin2.out
+
+      - name: Summary
+        if: ${{ always() }}
+        env:
+          MODE: ${{ inputs.mode }}
+        run: |
+          {
+            echo "### Rotate / Disable Odoo admin (uid=2) -- GOL-2080"
+            echo ""
+            echo "- mode: ${MODE}"
+            echo "- target: res.users uid=2 (generic built-in administrator)"
+            echo "- credential safety: no password value is printed or stored in any mode."
+            if [ "${MODE}" = "report" ]; then
+              echo "- result: READ-ONLY posture + automation-binding report; nothing written."
+              echo "- NEXT: read the ADMIN2_REPORT block, then re-run with mode=disable (if"
+              echo "  automation_dependencies_total=0) or mode=rotate (if it is > 0)."
+            else
+              echo "- result: the shared fallback password on uid=2 is now invalid."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
