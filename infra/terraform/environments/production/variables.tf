@@ -435,3 +435,25 @@ variable "grove_shippo_webhook_token" {
   sensitive   = true
   default     = ""
 }
+
+variable "grove_ship_from_email" {
+  description = "Ship-from (sender) email stamped on prod USPS/UPS labels (GOL-2125, PR grove-odoo-modules#184). USPS Ground Advantage rejects a buy with `sender_info_missing` unless the sender has both email and phone; grove_headless shippo_client.ORIGIN reads it from os.environ GROVE_SHIP_FROM_EMAIL. Not a secret (it prints on every outbound label) — safe committed default matches the module default; Josh confirms/overrides via 1P (op://Grove Prod/odoocker/GROVE_SHIP_FROM_EMAIL) -> TF_VAR. user_data input: activation rides the board-gated rebuild (GOL-920), not a live apply."
+  type        = string
+  default     = "josh@goldberrygrove.farm"
+
+  validation {
+    condition     = can(regex("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$", var.grove_ship_from_email))
+    error_message = "grove_ship_from_email must be a plausible single email address with no spaces (cloud-init writes it into /etc/grove/.env, which is bash-sourced under set -euo pipefail)."
+  }
+}
+
+variable "grove_ship_from_phone" {
+  description = "Ship-from (sender) phone stamped on prod USPS/UPS labels (GOL-2125, PR grove-odoo-modules#184). USPS Ground Advantage HARD-REQUIRES it or the buy fails `sender_info_missing`; grove_headless shippo_client.ORIGIN reads os.environ GROVE_SHIP_FROM_PHONE. Default is EMPTY on purpose — a fabricated number on a real customer label is worse than a loud failure (Ada), so an unset phone fails the buy loudly instead of shipping a bogus contact. Josh supplies the REAL Grove ship-from number via 1P (op://Grove Prod/odoocker/GROVE_SHIP_FROM_PHONE) -> TF_VAR; empty default keeps plan/apply working until then. user_data input: activation rides the board-gated rebuild (GOL-920)."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.grove_ship_from_phone == "" || can(regex("^[0-9()+.\\-]{7,20}$", var.grove_ship_from_phone))
+    error_message = "grove_ship_from_phone must be empty or a plain phone number with NO spaces (digits and + ( ) . - only, 7-20 chars, e.g. +13045551212 or 304-555-1212) — cloud-init writes it UNQUOTED into the bash-sourced /etc/grove/.env, so a space or shell metacharacter would break set -euo pipefail."
+  }
+}

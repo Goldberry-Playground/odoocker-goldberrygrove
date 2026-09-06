@@ -186,6 +186,19 @@ resource "digitalocean_droplet" "odoo" {
     shippo_api_key             = var.shippo_api_key
     grove_shippo_webhook_token = var.grove_shippo_webhook_token
 
+    # Ship-from contact (GOL-2125, PR grove-odoo-modules#184). USPS Ground
+    # Advantage HARD-REQUIRES sender email AND phone on every buy or Shippo
+    # rejects it with `sender_info_missing`; grove_headless shippo_client.ORIGIN
+    # reads GROVE_SHIP_FROM_EMAIL / GROVE_SHIP_FROM_PHONE from os.environ. Email
+    # has a safe committed default (the farm inbox, matching the module default);
+    # phone default is EMPTY on purpose -- a fabricated number on a real label is
+    # worse than a loud failure (Ada), so an unset phone fails the buy loudly.
+    # Josh supplies the real phone via 1P (op://Grove Prod/odoocker) -> TF_VAR
+    # (see prod-plan-guard/promote-storefronts/terraform-drift .env.op). user_data
+    # input => activation rides the board-gated GOL-920 rebuild, not a live apply.
+    grove_ship_from_email = var.grove_ship_from_email
+    grove_ship_from_phone = var.grove_ship_from_phone
+
     # Discord #grove-ops alerting (GOL-1935, parent GOL-1933). grove_headless
     # _notify_discord() reads DISCORD_OPS_WEBHOOK_URL from os.environ to page
     # oversell/refund/new-order events. Reuses the SAME bare webhook var
