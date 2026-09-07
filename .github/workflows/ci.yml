@@ -549,16 +549,20 @@ jobs:
       # backend (which needs Spaces creds) is skipped. set -e + per-dir
       # grouping = one specific error instead of a 7-env wall of red.
       #
-      # GOL-938: `init` is wrapped in a bounded retry (3 attempts, backoff)
-      # so a transient provider-download reset (`connection reset by peer`
-      # from githubusercontent, seen on PR #329) self-heals instead of
-      # reddening CI and stranding an otherwise-mergeable agent PR.
+      # GOL-938: `init` is wrapped in a bounded retry so a transient
+      # provider-download reset (`connection reset by peer` from
+      # githubusercontent, seen on PR #329) self-heals instead of reddening
+      # CI and stranding an otherwise-mergeable agent PR.
+      # GOL-2169: widened from 3 attempts (~15s window) to 5 with a 60s
+      # backoff cap (~135s window) after registry.terraform.io returned a
+      # sustained 504 Gateway Timeout that outlasted the old window and
+      # reddened main-CI as an ownerless flake (run 34130853077).
       - name: terraform validate (every env + module)
         run: |
           set -e
 
           tf_init_retry() {
-            local attempt=1 max=3 delay=5
+            local attempt=1 max=5 delay=5
             until terraform init -backend=false -input=false >/dev/null; do
               if [ "$attempt" -ge "$max" ]; then
                 echo "::error::terraform init failed after $max attempts in $(pwd)"
@@ -568,6 +572,7 @@ jobs:
               sleep "$delay"
               attempt=$((attempt + 1))
               delay=$((delay * 2))
+              [ "$delay" -gt 60 ] && delay=60
             done
           }
 
