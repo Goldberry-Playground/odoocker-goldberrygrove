@@ -11,10 +11,12 @@
 odoo.gatheringatthegrove.com {
 	tls /certs/gatheringatthegrove.com.pem /certs/gatheringatthegrove.com.key
 
-	# Longpolling endpoint - must NOT be buffered/compressed; pass through raw.
-	# Odoo's chat + workflow notifications use this.
+	# Longpolling + websocket endpoints - must NOT be buffered/compressed; pass
+	# through raw. Odoo's chat + bus notifications use /longpolling (pre-19) and
+	# /websocket (the Odoo 19 bus). Both bind on the evented worker (8072), not
+	# the HTTP worker (8069), or they 500 with "Couldn't bind the websocket".
 	@longpoll {
-		path /longpolling/*
+		path /longpolling/* /websocket*
 	}
 	reverse_proxy @longpoll odoo:8072
 
