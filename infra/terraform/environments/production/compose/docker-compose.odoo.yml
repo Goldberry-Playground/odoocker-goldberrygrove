@@ -57,6 +57,14 @@ services:
       # Trust Caddy's X-Forwarded-* headers (CSRF + URL generation).
       PROXY_MODE: "true"
       LIST_DB: "false" # one fixed DB; hide the selector
+      # GOL-1859: the prod host Odoo bakes into every absolute URL it emits
+      # (password-reset / portal / e-commerce links, report.url). entrypoint.sh's
+      # seed_web_base_url() upserts web.base.url + web.base.url.freeze=True from
+      # this on every boot, so a droplet rebuild (GOL-920) or fresh bootstrap
+      # converges to the real host instead of drifting to localhost:8069. Sourced
+      # from --env-file /etc/grove/.env (cloud-init writes it from TF var
+      # web_base_url). Empty default keeps the seed a no-op until the value lands.
+      WEB_BASE_URL: ${WEB_BASE_URL:-}
       # GOL-1009: run a blocking `-u grove_headless` at boot whenever the
       # git-synced modules revision advances, so new models' DB tables are
       # created on deploy. The production branch boots --init=base with NO
@@ -68,7 +76,19 @@ services:
       # Idempotent + rev-gated in odoo/entrypoint.sh (marker on the durable
       # /mnt/odoo-filestore volume). Fails loud on a bad migration rather than
       # serving a half-migrated DB.
-      AUTO_UPGRADE_MODULES: grove_headless
+      # GOL-2039: append grove_support (Grove Support Chat glue, GOL-2022) so the
+      # rev-gated boot upgrade installs it. Deps im_livechat / crm / sale
+      # auto-install transitively via --init=base,<mods>.
+      #
+      # GATE (was: do NOT ship this list to a prod pin whose SHA lacks
+      # grove_support, or entrypoint's --init=base,grove_support crash-loops odoo
+      # with the module absent from addons_path). SATISFIED 2026-09-07: PR #171
+      # merged as f10c789, and var.custom_modules_ref is pinned to 2c4b1b88, whose
+      # tree carries grove_support/__manifest__.py (f10c789 verified an ancestor).
+      # The pin and this compose file are rendered by the SAME cloud-init apply, so
+      # they cannot skew -- a rebuild takes both or neither. Re-check this if the
+      # pin is ever moved BACKWARDS to a SHA predating f10c789.
+      AUTO_UPGRADE_MODULES: grove_headless,grove_support
       # Stripe LIVE-mode prod checkout (GOL-973). grove_headless reads these
       # from os.environ (LOWERCASE names, controllers/main.py). The odoo process
       # env comes ONLY from this compose environment block -- the /.env mount
@@ -96,6 +116,36 @@ services:
       # fail-closed when empty). Same --env-file source as stripe_test_*.
       SHIPPO_API_KEY: ${SHIPPO_API_KEY:-}
       GROVE_SHIPPO_WEBHOOK_TOKEN: ${GROVE_SHIPPO_WEBHOOK_TOKEN:-}
+      # Ship-from contact (GOL-2125, PR grove-odoo-modules#184). USPS Ground
+      # Advantage HARD-REQUIRES sender email AND phone or the buy fails
+      # `sender_info_missing`. grove_headless shippo_client.ORIGIN reads these
+      # from os.environ -- and per the DISCORD note below, the odoo process env
+      # comes ONLY from this block (the /.env mount feeds odoorc.sh, NOT
+      # os.environ), so an unlisted var in /etc/grove/.env never reaches the
+      # container. Interpolated from `docker compose --env-file /etc/grove/.env`
+      # (cloud-init writes GROVE_SHIP_FROM_EMAIL/PHONE from the TF vars). Email
+      # has a safe default; empty phone default keeps the buy failing loudly
+      # rather than shipping a fabricated number.
+      GROVE_SHIP_FROM_EMAIL: ${GROVE_SHIP_FROM_EMAIL:-}
+      GROVE_SHIP_FROM_PHONE: ${GROVE_SHIP_FROM_PHONE:-}
+      # Discord #grove-ops alerting (GOL-1935, parent GOL-1933). grove_headless
+      # _notify_discord() reads DISCORD_OPS_WEBHOOK_URL from os.environ and POSTs
+      # a Discord-native payload to the BARE webhook (NO /slack suffix -- that
+      # suffix is only for DigitalOcean's Slack-shaped alert payload, appended by
+      # production/observability.tf). Like the stripe_test_* / SHIPPO_* vars
+      # above, the odoo process env comes ONLY from this block -- the /.env mount
+      # feeds odoorc.sh's odoo.conf substitution, NOT os.environ -- so an unlisted
+      # var in /etc/grove/.env never reaches the container (the footgun that left
+      # every oversell/refund/new-order alert a silent no-op on prod). Value is
+      # interpolated from `docker compose --env-file /etc/grove/.env` (cloud-init
+      # writes it from TF var discord_webhook_url, the same bare webhook
+      # observability.tf already pages on). Empty default keeps _notify_discord a
+      # no-op on any env that does not set it.
+      DISCORD_OPS_WEBHOOK_URL: ${DISCORD_OPS_WEBHOOK_URL:-}
+      # Dedicated order/pickup-summaries channel (Josh 2026-09-03).
+      # _notify_discord() prefers this over DISCORD_OPS_WEBHOOK_URL; empty =>
+      # order alerts fall back into #grove-ops (visible misroute, never a drop).
+      DISCORD_ORDERS_WEBHOOK_URL: ${DISCORD_ORDERS_WEBHOOK_URL:-}
     # GOL-746: gate the Odoo start on git-sync's FIRST clone. depends_on
     # (service_started) only guarantees the sidecar CONTAINER started, not
     # that /workspace/current is populated. On the 2026-07-22 droplet replace

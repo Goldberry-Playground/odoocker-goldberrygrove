@@ -152,6 +152,15 @@ resource "digitalocean_droplet" "odoo" {
     custom_modules_ref = var.custom_modules_ref
     caddy_tag          = var.caddy_tag
 
+    # GOL-1859: host Odoo bakes into every absolute URL it emits (password-reset,
+    # portal, e-commerce, report.url). entrypoint.sh's seed_web_base_url() upserts
+    # web.base.url + web.base.url.freeze=True from this on every boot so a rebuild
+    # never reverts to localhost:8069. Empty default => seed is a no-op until the
+    # launch host is confirmed and the value is populated (from the vault, like
+    # the Stripe scaffold). user_data is in ignore_changes below, so landing this
+    # does NOT touch the running droplet — a board-gated rebuild activates it.
+    web_base_url = var.web_base_url
+
     # Stripe LIVE-mode keys for grove_headless prod checkout (GOL-973). These
     # are the DEDICATED backend key + webhook secret — runbook §4 forbids
     # reusing a storefront key here. Empty defaults keep checkout inert until
@@ -177,6 +186,33 @@ resource "digitalocean_droplet" "odoo" {
     shippo_api_key             = var.shippo_api_key
     grove_shippo_webhook_token = var.grove_shippo_webhook_token
 
+    # Ship-from contact (GOL-2125, PR grove-odoo-modules#184). USPS Ground
+    # Advantage HARD-REQUIRES sender email AND phone on every buy or Shippo
+    # rejects it with `sender_info_missing`; grove_headless shippo_client.ORIGIN
+    # reads GROVE_SHIP_FROM_EMAIL / GROVE_SHIP_FROM_PHONE from os.environ. Email
+    # has a safe committed default (the farm inbox, matching the module default);
+    # phone default is EMPTY on purpose -- a fabricated number on a real label is
+    # worse than a loud failure (Ada), so an unset phone fails the buy loudly.
+    # Josh supplies the real phone via 1P (op://Grove Prod/odoocker) -> TF_VAR
+    # (see prod-plan-guard/promote-storefronts/terraform-drift .env.op). user_data
+    # input => activation rides the board-gated GOL-920 rebuild, not a live apply.
+    grove_ship_from_email = var.grove_ship_from_email
+    grove_ship_from_phone = var.grove_ship_from_phone
+
+    # Discord #grove-ops alerting (GOL-1935, parent GOL-1933). grove_headless
+    # _notify_discord() reads DISCORD_OPS_WEBHOOK_URL from os.environ to page
+    # oversell/refund/new-order events. Reuses the SAME bare webhook var
+    # observability.tf pages DO alerts on (validated non-empty, no /slack) --
+    # _notify_discord posts a Discord-native payload to the bare URL, so no new
+    # secret or 1P item is needed. user_data is in ignore_changes (below), so
+    # landing this does NOT touch the running droplet; a board-gated rebuild
+    # (GOL-920) activates it. Until then the value is applied live by appending
+    # it to /etc/grove/.env + recreating the odoo container (see PR notes).
+    discord_ops_webhook_url = var.discord_webhook_url
+    # Dedicated order/pickup-summaries channel (Josh 2026-09-03): grove_headless
+    # prefers this and falls back to the ops webhook above, so order alerts
+    # separate from bot-logs once the webhook is provisioned.
+    discord_orders_webhook_url = var.discord_orders_webhook_url
     # Mailgun SMTP for Odoo transactional email (GOL-988). odoorc.sh substitutes
     # these into the SMTP group of /etc/odoo/odoo.conf. Empty smtp_password =>
     # SMTP auth inert (no send), so this scaffold is a safe no-op until the
@@ -321,9 +357,14 @@ resource "digitalocean_database_firewall" "pg" {
     value = digitalocean_droplet.odoo.id
   }
 
-  rule {
-    type  = "ip_addr"
-    value = split("/", var.admin_ip_cidr)[0]
+  # One ip_addr rule per operator CIDR (GOL-1842). DO's ip_addr rule takes a
+  # bare address, so strip the /mask from each entry.
+  dynamic "rule" {
+    for_each = var.admin_ip_cidrs
+    content {
+      type  = "ip_addr"
+      value = split("/", rule.value)[0]
+    }
   }
 }
 
@@ -338,7 +379,7 @@ resource "digitalocean_firewall" "odoo" {
   inbound_rule {
     protocol         = "tcp"
     port_range       = "22"
-    source_addresses = [var.admin_ip_cidr]
+    source_addresses = var.admin_ip_cidrs
   }
 
   inbound_rule {

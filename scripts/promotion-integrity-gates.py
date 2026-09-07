@@ -36,9 +36,15 @@ THE GATES
      'Coming Soon / Price TBD' placeholders are QA-only and must never reach prod
      as buyable products. A full DB copy would carry them across — this gate
      fails loud if any survived the pre-freeze exclusion (GOL-1329 launch audit).
-  5. branding binaries present — res.company.logo and website logo/favicon must
-     be non-empty on the target. Prod launched serving the default 'Your Logo'
-     placeholder; an empty binary means the branding didn't come across.
+  5. branding binaries present — every res.company.logo / website logo/favicon
+     the SOURCE actually held must survive to the target byte-for-byte (a
+     pg_dump+filestore copy is byte-identical). Prod launched serving the default
+     'Your Logo' placeholder; a target field that is empty or byte-different
+     means the branding didn't come across. Baseline-RELATIVE (--baseline):
+     fields the source never had (e.g. no real nursery/GGG logo exists anywhere —
+     Josh 2026-08-31) are not required, so the gate can't fail on assets that
+     don't exist to promote; a source field that is only the ~6 KB generic
+     placeholder is reported as a NOTE (a supply prerequisite), never a failure.
   6. price parity vs source — target product list_prices must match the SOURCE
      baseline sample (--baseline). After a full copy they match by construction;
      a mismatch means a pricelist/reconfig defect or that the target was never
@@ -47,8 +53,8 @@ THE GATES
      baseline manifest captured on the SOURCE before the freeze (--baseline).
      A post-count LOWER than baseline means rows were lost in transit.
 
-Gates 1–5 are HARD by default (a failure exits non-zero → do not cut over).
-Gates 6–7 require --baseline; without it, they are reported as SKIPPED (not
+Gates 1–4 are HARD by default (a failure exits non-zero → do not cut over).
+Gates 5–7 require --baseline; without it, they are reported as SKIPPED (not
 failed), so the tool is still useful for a standalone integrity read.
 
 USAGE
@@ -70,6 +76,8 @@ Stdlib only. Progress → stderr; --json / --emit-baseline → stdout.
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import json
 import os
 import re
@@ -87,6 +95,15 @@ WV_STATE_CODES = ("WV",)  # West Virginia — Grove's only sales-tax nexus (GOL-
 QA_FIXTURE_NAME_PATTERNS = ("AAA QA E2E%", "Coming Soon%", "%Price TBD%")
 
 PRICE_SAMPLE_LIMIT = 300  # cap the product-price census (parity gate + baseline)
+
+# Odoo's stock "generic camera" placeholder binary — 6,078 decoded bytes on this
+# Odoo 19 build (Josh's 2026-08-31 byte measurement: QA website/2, website/3 and
+# res.company/2, /3 all hold this exact placeholder, not real brand assets). A
+# branding field of this length is present-but-unbranded — reported as a NOTE,
+# not a failure, so a missing nursery/GGG logo becomes a supply prerequisite
+# (tracked separately) rather than a false promotion blocker.
+BRANDING_PLACEHOLDER_LEN = 6078
+BRANDING_LEN_TOLERANCE = 64  # bytes; a pg_dump+filestore copy is byte-identical
 
 
 def _log(*args: object) -> None:
@@ -256,36 +273,93 @@ def gate_qa_fixture_absence(client) -> dict:
             "found": sorted(set(hits))}
 
 
-def gate_branding_present(client) -> dict:
-    """HARD gate: company + website branding binaries survived the promotion.
+def _b64len(val: object) -> int:
+    """Decoded byte length of an Odoo binary field (base64 str, or False/empty)."""
+    if not val or not isinstance(val, str):
+        return 0
+    try:
+        return len(base64.b64decode(val, validate=False))
+    except (binascii.Error, ValueError):
+        return len(val)  # not decodable — fall back to the raw length (still >0)
 
-    Prod launched serving the default 8.7 KB 'Your Logo' placeholder (GOL-1329
-    launch audit item 1) because the branding binaries live only in the DB /
-    filestore and there is no separate config-promotion path. An empty
-    res.company.logo or website logo/favicon on the target means the binary did
-    not come across. Binary fields read as base64 (str) or False over XML-RPC;
-    this asserts each is non-empty. (The HTTP content-type/size assertion is a
-    separate storefront smoke — scripts/promotion-asset-smoke.sh.)"""
-    problems: list[str] = []
+
+def collect_branding(client) -> list:
+    """Per-field branding-binary census (res.company.logo + website logo/favicon)
+    with the DECODED byte length of each — the input to gate_branding_parity.
+
+    Captured on the SOURCE by --emit-baseline. Recording per-field byte length
+    (not just present/absent) is deliberate: Josh's 2026-08-31 measurement showed
+    QA website/2, /3 and res.company/2, /3 hold the 6,078 B generic placeholder,
+    NOT real brand assets. An absolute 'all present' assertion would demand
+    branding that exists in no environment; a byte-parity check against the
+    source only requires what the source actually has, and can still tell a real
+    logo (~91 KB) apart from the placeholder."""
+    entries: list[dict] = []
     companies = client.call("res.company", "search_read", [[]], {"fields": ["name", "logo"]})
     for c in companies:
-        if not c.get("logo"):
-            problems.append(f"res.company[{c.get('name')}].logo empty")
+        entries.append({"key": f"res.company[{c['id']}].logo", "name": c.get("name"),
+                        "len": _b64len(c.get("logo"))})
     # website may be absent on a headless/older DB — treat a Fault as "no website".
     try:
         sites = client.call("website", "search_read", [[]], {"fields": ["name", "logo", "favicon"]})
     except xmlrpc.client.Fault:
         sites = []
     for s in sites:
-        if not s.get("logo"):
-            problems.append(f"website[{s.get('name')}].logo empty")
-        if not s.get("favicon"):
-            problems.append(f"website[{s.get('name')}].favicon empty")
-    ok = not problems
-    detail = f"companies={len(companies)} websites={len(sites)} problems={len(problems)}"
-    if problems:
-        detail += " :: " + "; ".join(problems[:6])
-    return {"label": "branding binaries present", "ok": ok, "detail": detail}
+        for field in ("logo", "favicon"):
+            entries.append({"key": f"website[{s['id']}].{field}", "name": s.get("name"),
+                            "len": _b64len(s.get(field))})
+    return entries
+
+
+def gate_branding_parity(client, baseline: dict | None) -> dict:
+    """HARD gate: every branding binary the SOURCE actually held survived intact.
+
+    Prod launched serving the default 8.7 KB 'Your Logo' placeholder (GOL-1329
+    launch audit item 1) because the branding binaries live only in the DB /
+    filestore and there is no separate config-promotion path — a full
+    pg_dump+filestore copy is the only thing that carries them across.
+
+    This gate is baseline-RELATIVE (like price parity / completeness): for each
+    branding field that was non-empty on the source, the target must carry a
+    binary of the same byte length (a pg_dump+filestore copy is byte-identical).
+    A target field that is empty or byte-different means the branding did NOT
+    come across → FAIL. Fields the source did not have (e.g. no real
+    nursery/GGG logo exists anywhere — Josh 2026-08-31) are simply not required,
+    so the gate can't fail on assets that don't exist to promote. Source fields
+    that are only the ~6 KB generic placeholder are reported as a NOTE (a supply
+    prerequisite, tracked separately), never a failure.
+
+    Requires --baseline (captured on the source). Without it the gate SKIPs —
+    you cannot judge 'did branding survive' without knowing what the source had.
+    The served-asset content-type/size check is the separate storefront smoke
+    scripts/promotion-asset-smoke.sh."""
+    src = (baseline or {}).get("branding")
+    if not src:
+        return {"label": "branding binaries present", "ok": True, "skipped": True,
+                "detail": "no branding census in baseline — parity gate SKIPPED "
+                          "(run --emit-baseline on the source before the freeze)"}
+    target = {e["key"]: e for e in collect_branding(client)}
+    dropped, placeholders = [], []
+    required = 0
+    for b in src:
+        blen = b.get("len") or 0
+        if blen <= 0:
+            continue  # source had nothing here → nothing to promote
+        required += 1
+        tlen = (target.get(b["key"]) or {}).get("len") or 0
+        if tlen <= 0 or abs(tlen - blen) > BRANDING_LEN_TOLERANCE:
+            dropped.append(f"{b['key']} ({b.get('name')}): src={blen}B tgt={tlen}B")
+        elif abs(blen - BRANDING_PLACEHOLDER_LEN) <= BRANDING_LEN_TOLERANCE:
+            placeholders.append(f"{b['key']} ({b.get('name')})")
+    ok = not dropped
+    detail = f"required={required} dropped={len(dropped)} placeholder={len(placeholders)}"
+    if dropped:
+        detail += " :: DROPPED " + "; ".join(dropped[:6])
+    if placeholders:
+        detail += " :: NOTE generic-placeholder (real brand asset not supplied): " \
+                  + "; ".join(placeholders[:6])
+    return {"label": "branding binaries present", "ok": ok, "detail": detail,
+            "dropped": dropped, "placeholders": placeholders}
 
 
 def _price_key(row: dict) -> str:
@@ -352,7 +426,7 @@ def run_gates(client, baseline: dict | None) -> list[dict]:
                                  "invoice-numbering continuity"),
         gate_wv_tax_spotcheck(client),
         gate_qa_fixture_absence(client),
-        gate_branding_present(client),
+        gate_branding_parity(client, baseline),
         gate_price_parity(client, baseline),
         gate_completeness(collect_counts(client), baseline),
     ]
@@ -388,7 +462,11 @@ def main(argv: list[str]) -> int:
         census = collect_counts(client)
         prices = collect_price_sample(client)
         census["product_prices"] = prices  # feeds the price-parity gate (item 2)
-        _log(f"== baseline census (source db={db}) ==  counts={ {k: v for k, v in census.items() if k != 'product_prices'} }  price_sample={len(prices)}")
+        branding = collect_branding(client)
+        census["branding"] = branding  # feeds the branding-parity gate (item 1)
+        _log(f"== baseline census (source db={db}) ==  "
+             f"counts={ {k: v for k, v in census.items() if k not in ('product_prices', 'branding')} }  "
+             f"price_sample={len(prices)}  branding_fields={len(branding)}")
         print(json.dumps(census, indent=2))
         return 0
 

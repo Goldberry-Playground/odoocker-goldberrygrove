@@ -85,6 +85,17 @@ write_files:
       # no review gate). TF var custom_modules_ref enforces a 40-char SHA.
       CUSTOM_MODULES_REF=${custom_modules_ref}
 
+      # GOL-1859: the customer-facing host Odoo bakes into every absolute URL it
+      # generates (password-reset / set-password, sale-order + customer-portal,
+      # e-commerce/website links, and report.url). odoo/entrypoint.sh's
+      # seed_web_base_url() upserts web.base.url + web.base.url.freeze=True from
+      # this value on every boot, so an immutable droplet rebuild (GOL-920) can
+      # never silently revert it to Odoo's http://localhost:8069 default. TF var
+      # web_base_url; empty until the launch host is confirmed + the value lands
+      # in the vault, at which point the seed becomes active. Also passed through
+      # to the odoo service's compose `environment:` block (WEB_BASE_URL).
+      WEB_BASE_URL=${web_base_url}
+
       # Stripe LIVE-mode keys for grove_headless prod checkout (GOL-973).
       # LOWERCASE names on purpose: grove_headless controllers/main.py reads
       # them via os.environ.get("stripe_test_secret_key") /
@@ -121,6 +132,30 @@ write_files:
       # empty). Same --env-file -> compose environment: path as stripe_test_*.
       SHIPPO_API_KEY=${shippo_api_key}
       GROVE_SHIPPO_WEBHOOK_TOKEN=${grove_shippo_webhook_token}
+      # Ship-from contact (GOL-2125, PR grove-odoo-modules#184). USPS Ground
+      # Advantage rejects a buy with `sender_info_missing` unless the sender has
+      # BOTH email and phone; grove_headless shippo_client.ORIGIN reads these from
+      # os.environ (compose environment: block -> here). Email has a safe default;
+      # phone is empty until Josh provides the real number (fabricating one is
+      # worse than a loud failure -- Ada). Written UNQUOTED like the URLs above:
+      # the TF var validation forbids spaces/metacharacters so bash-sourcing this
+      # file under set -euo pipefail stays safe.
+      GROVE_SHIP_FROM_EMAIL=${grove_ship_from_email}
+      GROVE_SHIP_FROM_PHONE=${grove_ship_from_phone}
+      # Discord #grove-ops alerting (GOL-1935, parent GOL-1933). grove_headless
+      # _notify_discord() reads this from os.environ (compose environment: block)
+      # and POSTs a Discord-native payload to the BARE webhook -- do NOT add the
+      # /slack suffix here (observability.tf appends that only for DO's Slack-
+      # shaped alerts). Same --env-file -> compose environment: path as
+      # stripe_test_*; unquoted like WEB_BASE_URL (a webhook URL has no shell
+      # metacharacters). Sourced from TF var discord_webhook_url, the same bare
+      # webhook DO already pages on -- so this is populated (not empty-default).
+      DISCORD_OPS_WEBHOOK_URL=${discord_ops_webhook_url}
+      # Dedicated order/pickup-summaries channel (Josh 2026-09-03).
+      # _notify_discord() prefers this and falls back to DISCORD_OPS above, so
+      # empty => order alerts visibly misroute into #grove-ops rather than drop.
+      # Same bare-URL / no-/slack rule as DISCORD_OPS.
+      DISCORD_ORDERS_WEBHOOK_URL=${discord_orders_webhook_url}
       # Mailgun SMTP for Odoo transactional email (GOL-988) — order-confirmation
       # + shipping-notification send. odoorc.sh substitutes these into the SMTP
       # group of /etc/odoo/odoo.conf (same image + path QA proved live under

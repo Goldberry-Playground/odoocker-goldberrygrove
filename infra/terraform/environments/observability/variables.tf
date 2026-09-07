@@ -33,13 +33,17 @@ variable "admin_ssh_key_name" {
   default     = "grove-qa-admin"
 }
 
-variable "admin_ip_cidr" {
-  description = "CIDR allowed to reach SSH (22) and the OpenObserve/Keep UIs (5080/3034). Never 0.0.0.0/0 in a real tfvars."
-  type        = string
+variable "admin_ip_cidrs" {
+  description = "CIDRs allowed to reach SSH (22) and the OpenObserve/Keep UIs (5080/3034). A LIST so more than one operator address can be authorised at once (GOL-1842) — an ISP-rotated IP no longer locks admin access to grove-obs. Never 0.0.0.0/0 in a real tfvars. NOTE: this env's tfvars now supplies `admin_ip_cidrs = [\"x/32\"]` (list), not the old scalar `admin_ip_cidr`."
+  type        = list(string)
+  validation {
+    condition     = length(var.admin_ip_cidrs) > 0 && alltrue([for c in var.admin_ip_cidrs : can(regex("^[0-9.]+/[0-9]+$", c))])
+    error_message = "admin_ip_cidrs must be a non-empty list of IPv4 CIDRs like [\"203.0.113.4/32\"]."
+  }
 }
 
 variable "ingest_source_cidrs" {
-  description = "Extra CIDRs allowed to reach OpenObserve OTLP ingest on 5080 — cross-plane collectors like the agenticos droplet (/32 each). Kept distinct from admin_ip_cidr so ingest never widens admin/UI access. Empty = admin-only."
+  description = "Extra CIDRs allowed to reach OpenObserve OTLP ingest on 5080 — cross-plane collectors like the agenticos droplet (/32 each). Kept distinct from admin_ip_cidrs so ingest never widens admin/UI access. Empty = admin-only."
   type        = list(string)
   default     = []
 }

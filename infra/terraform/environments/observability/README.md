@@ -173,7 +173,7 @@ KEEP_WEBHOOK_TOKEN=... DISCORD_WEBHOOK_WARNING=... DISCORD_WEBHOOK_CRITICAL=... 
   hairpin** (OpenObserve container -> host public IP:8080 -> Docker DNAT -> Keep)
   and never traverses the cloud firewall — verified 200/202 live. `setup-monitoring.py`
   reaches Keep internally (`keep-backend:8080` on the `obs` network), also not via
-  this port; so the only external consumer is an admin, hence `admin_ip_cidr` only.
+  this port; so the only external consumer is an admin, hence `admin_ip_cidrs` only.
   Keep is additionally X-API-KEY (`WEBHOOK_TOKEN`) gated. Next: set
   `KEEP_EVENT_URL=<keep_webhook_url>/alerts/event?provider_id=openobserve` and re-run
   `setup-monitoring.py` so the OO destination + alerts load (GOL-278).

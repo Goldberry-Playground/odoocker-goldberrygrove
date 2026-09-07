@@ -142,7 +142,7 @@ resource "digitalocean_database_user" "odoo" {
 # firewall carve-out for dynamic runner IPs. terraform_data.local-exec runs
 # ONLY on create during `apply` and never connects on plan/refresh, so no
 # carve-out is needed: the manual, gated prod apply (GOL-105 / GOL-737) runs
-# from the operator machine, whose /32 is already in var.admin_ip_cidr.
+# from the operator machine, whose /32 is already in var.admin_ip_cidrs.
 #
 # depends_on the firewall so the operator CIDR is allowlisted before we
 # connect. Prereqs on the apply host: `psql` + outbound 25060 to the cluster's

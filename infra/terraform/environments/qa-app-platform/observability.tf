@@ -97,7 +97,7 @@ resource "digitalocean_firewall" "obs" {
   inbound_rule {
     protocol         = "tcp"
     port_range       = "22"
-    source_addresses = [var.admin_ip_cidr]
+    source_addresses = var.admin_ip_cidrs
   }
 
   # HTTP — LE HTTP-01 fallback only. Caddy redirects everything else to 443.
@@ -112,7 +112,7 @@ resource "digitalocean_firewall" "obs" {
   inbound_rule {
     protocol         = "tcp"
     port_range       = "443"
-    source_addresses = [var.admin_ip_cidr]
+    source_addresses = var.admin_ip_cidrs
   }
 
   outbound_rule {

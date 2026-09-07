@@ -15,6 +15,44 @@ GOL-484 (prod `grove_headless` install — gates the *real* cutover), vault
 > (prod `grove_headless` installed) and **before** the hub/goldberry apex window
 > closes the launch (GOL-287 / GOL-1279).
 
+---
+
+> ## ⛔ CORRECTION — CEO ruling 2026-08-31 (Josh). READ BEFORE RUNNING.
+> Two facts changed **after** this runbook was drafted; the wholesale
+> *"promote QA's live data to prod"* premise above is **no longer valid as
+> written.**
+>
+> **1. Prod prices are AUTHORITATIVE; QA's are wrong. Do NOT promote prices.**
+> Potted Apple = **$35 prod is correct** (QA's $37 is wrong). Persimmon = **$12
+> normal / $35 grafted (Meader)** prod is correct (QA's $39 is neither). The
+> *"Persimmon $39→$12 drift"* that motivated **gate 6** is mis-framed — prod is
+> right. **Gate 6 (price parity vs QA source) is RETIRED / inverted:** as written
+> it would report PASS while overwriting 42 correct prod `list_price`s with wrong
+> QA values on a live storefront. See §6 note.
+>
+> **2. Prod checkout is LIVE and taking real orders** (GOL-1880, 2026-08-31). The
+> original design assumed prod held **zero** orders (GOL-1795), which is what made
+> a whole-DB `pg_dump`+restore lossless *for prod*. That assumption is now
+> **void**: a wholesale restore would destroy prod's real orders, invoices, and
+> correct prices. **The wholesale `promote-db.sh` restore path (§4–§7) is RETIRED
+> for the real prod cutover** until the CEO re-scopes it; it remains valid only as
+> a **scratch-restore rehearsal** (§9).
+>
+> **Corrected shape (pending CEO confirmation of the acceptance criteria).**
+> Promote **inventory state only**; prod is otherwise authoritative:
+> - `is_storable = True` on the 18 catalog templates (prod has them as
+>   non-stock-tracked `consu`, so quantities can't even be stored).
+> - on-hand quantities / `stock.quant` rows (prod: 0 rows; QA: 27 of 84 Apple
+>   variants stocked).
+> - **NOT** `list_price` / any pricing field, **NOT** orders/invoices/partners,
+>   **NOT** `rootstock` (prod already holds `M.111` on the variants; only the
+>   stale module pin `8accb943` fails to serialize it — a pin bump, not an import).
+>
+> This selective sync is a **different operation** than the wholesale restore
+> below and needs new tooling (a scoped `product.template.is_storable` +
+> `stock.quant` sync, not `promote-db.sh`). Do **not** run §4–§7 against prod
+> until the corrected acceptance criteria are confirmed.
+
 This runbook composes existing, hardened tooling — it does not replace it:
 
 | Concern | Tool | Doc |
@@ -33,9 +71,20 @@ This runbook composes existing, hardened tooling — it does not replace it:
 > the default 8.7 KB *"Your Logo"* placeholder only because it was bootstrapped
 > blank, **not** promoted from QA — this runbook is what fixes that. Two audit
 > checks below make the fix verifiable, not assumed: the §6 *branding-present*
-> gate (binary non-empty in the DB) and the §7 *asset smoke* (the served logo is
-> `image/png` at real size and products serve photos). Cross-source audit:
-> Josh, 2026-08-31 (GOL-1329).
+> gate (each branding binary the **source** held survives to the target
+> byte-for-byte) and the §7 *asset smoke* (the served logo is `image/png` at real
+> size and products serve photos). Cross-source audit: Josh, 2026-08-31
+> (GOL-1329).
+>
+> **Scope caveat (Josh byte-measurement, 2026-08-31):** only **Goldberry Grove**
+> (`website/1`, `res.company/1`) holds a real logo (~91.5 KB) in QA. **At The
+> Grove Nursery** (`/2`) and **GGG** (`/3`) hold only Odoo's generic 6,078 B
+> camera placeholder — there is nothing real to promote there. The §6 gate is
+> therefore **baseline-relative**: it requires only what the *source* actually
+> has (so it never fails on a nursery/GGG logo that exists in no environment) and
+> reports placeholder-only fields as a **NOTE**, not a failure. Supplying the
+> real nursery/GGG logos is a **prerequisite Josh owns** (tracked as the separate
+> branding issue filed 2026-08-31), independent of this promotion.
 
 ---
 
@@ -252,17 +301,38 @@ Gates:
 4. **QA-fixture/placeholder absence** *(HARD)* — no `AAA QA E2E` fixtures and no
    `Coming Soon` / `Price TBD` placeholders present on the target (launch audit
    item 3; the fail-loud backstop for the §1b pre-freeze exclusion).
-5. **branding binaries present** *(HARD)* — `res.company.logo` and website
-   logo/favicon non-empty on the target (launch audit item 1; catches the default
-   *"Your Logo"* placeholder). The served-asset check is the §7 asset smoke.
-6. **price parity vs source** — target product `list_price`s match the §2
-   baseline `product_prices` sample (launch audit item 2; catches drift like
-   Persimmon $39→$12). SKIPs if the baseline carries no price sample.
+5. **branding binaries present** *(HARD, `--baseline`)* — every `res.company.logo`
+   / website logo/favicon the **source** actually held survives to the target
+   byte-for-byte (a `pg_dump`+filestore copy is byte-identical). Baseline-relative
+   on purpose: fields the source never had (the nursery/GGG logos that exist in no
+   environment — Josh 2026-08-31) are **not required**, so the gate can't fail on
+   assets there's nothing to promote for; a source field that is only the ~6 KB
+   generic placeholder is reported as a **NOTE** (supply prerequisite), never a
+   failure. Catches the real defect: a genuine logo (~91.5 KB on `website/1`) that
+   shrank to the *"Your Logo"* default or emptied in transit. The served-asset
+   check is the §7 asset smoke.
+   > **Measured baseline (GOL-1863, 2026-08-31).** Only Goldberry Grove Farm has a
+   > real logo in any environment: on QA `website(1).logo` = 91,505 B and
+   > `res.company(1).logo` = 707,543 B. GGG and At The Grove Nursery carry Odoo
+   > placeholders on QA *and* prod (8,689 B SVG / 6,078 B / 11,445 B) — under the
+   > baseline rule above they are NOTE-only and never block the promotion. Those two
+   > marks are a **content gap Josh must supply**; they are not recoverable from QA.
+   > Real-logo enforcement is website-1-only, via the §7 smoke.
+6. **price parity vs source** — ⛔ **RETIRED per CEO ruling 2026-08-31 (see top of
+   doc).** This gate asserted target `list_price`s match the **QA** baseline
+   sample — but **prod prices are authoritative and QA's are wrong**, so the gate
+   would greenlight overwriting 42 correct prod prices with wrong QA values on a
+   live storefront (GOL-1880). The "Persimmon $39→$12 drift" it cited is prod
+   being *correct*, not drift. **Do not run this gate QA→prod.** If a price gate is
+   ever reinstated it must be **prod-authoritative** (flag QA drift to reconcile
+   *to* prod), never assert QA as truth. Until then, exclude `list_price` from the
+   promoted field set entirely.
 7. **promotion completeness** — target counts ≥ the §2 source baseline (no rows
    lost in transit).
 
-Gates 1–5 are HARD (a failure exits non-zero → do not cut over). Gates 6–7 need
-`--baseline`; without it they SKIP (not fail).
+Gates 1–4 are HARD unconditionally. Gates 5–7 need `--baseline` (the census
+`--emit-baseline` captures on the source before the freeze — now including a
+`branding` field census); without it they SKIP (not fail).
 
 ---
 
@@ -276,13 +346,21 @@ Gates 1–5 are HARD (a failure exits non-zero → do not cut over). Gates 6–7
   photo (`image_1920` count > 0):
 
   ```bash
-  BASE_URL=https://qa.gatheringatthegrove.com \
+  # BASE_URL must be the Odoo host — the storefront apex (gatheringatthegrove.com)
+  # is Next.js and 404s /web/image. Prod Odoo = https://odoo.gatheringatthegrove.com.
+  BASE_URL=https://odoo.qa.gatheringatthegrove.com \
     PRODUCT_TEMPLATE_IDS="1 2 3" \
     scripts/promotion-asset-smoke.sh     # exit 2 → placeholder/missing assets
   ```
 
   Run it against the target (scratch/prod) after restore; pass a few real
   `product.template` ids you expect to have photos.
+  > **Keep `WEBSITE_ID=1` (the default) — do NOT smoke websites 8 or 9, and do
+  > NOT lower `MIN_LOGO_BYTES` (GOL-1863).** The GGG (`8`) and Nursery (`9`) logos
+  > do not exist as real assets anywhere — a real logo lives only on `website(1)`
+  > (QA, 91,505 B). Pointing the smoke at 8/9 asserts an asset that cannot be
+  > promoted and fails the cutover on a content gap, not a promotion defect. Those
+  > marks are Josh's to supply before either brand can pass a served-logo check.
 - Run a **real end-to-end checkout** (add to cart → checkout → payment → order
   confirmation email). On the scratch rehearsal, a Stripe *test* card is fine and
   is the evidence; on prod, do a canary live order and refund it.

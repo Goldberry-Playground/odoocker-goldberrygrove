@@ -14,13 +14,15 @@ variable "cloudflare_api_token" {
 
 # === Operator inputs ===
 
-variable "admin_ip_cidr" {
-  description = "Operator IPv4 CIDR for SSH allowlist (Odoo droplet + Managed PG trusted-source). Use `curl -4 ifconfig.me`/32."
-  type        = string
-  default     = "74.47.41.38/32"
+variable "admin_ip_cidrs" {
+  description = "Operator IPv4 CIDRs for the SSH allowlist (Odoo + obs droplets) and the Managed PG trusted-source rule. A LIST so more than one operator address can be authorised at once (GOL-1842) — an ISP-rotated IP no longer locks every operator out. Each entry is a `curl -4 ifconfig.me`/32. Codify a new address by appending it here, never as a hand-added DO rule (removed by the next apply)."
+  type        = list(string)
+  # 173.84.140.152/32 = Josh's ISP-rotated operator address, kept in step with
+  # production so the same machine reaches QA droplets too (GOL-1842).
+  default = ["74.47.41.38/32", "173.84.140.152/32"]
   validation {
-    condition     = can(regex("^[0-9.]+/[0-9]+$", var.admin_ip_cidr))
-    error_message = "admin_ip_cidr must be a valid IPv4 CIDR like 74.47.41.38/32"
+    condition     = length(var.admin_ip_cidrs) > 0 && alltrue([for c in var.admin_ip_cidrs : can(regex("^[0-9.]+/[0-9]+$", c))])
+    error_message = "admin_ip_cidrs must be a non-empty list of IPv4 CIDRs like [\"74.47.41.38/32\"]."
   }
 }
 
@@ -449,6 +451,13 @@ variable "from_filter" {
   description = "Odoo from_filter (FROM_FILTER) — the authenticated Mailgun sending domain Odoo is allowed to send From."
   type        = string
   default     = "send.gatheringatthegrove.com"
+}
+
+variable "discord_orders_webhook_url" {
+  description = "Discord webhook for the dedicated order/pickup-summaries channel (Josh 2026-09-03), mirroring prod: grove_headless _notify_discord() prefers os.environ DISCORD_ORDERS_WEBHOOK_URL over DISCORD_OPS_WEBHOOK_URL (QA plumbs neither today, so empty = alerts stay a silent no-op in QA, current behavior). QA test orders posting to the REAL orders channel is intentional for the post-deploy smoke check; point TF_VAR_discord_orders_webhook_url at a QA-only webhook later if the noise bothers staff. 1P: op://Grove Prod/odoocker/DISCORD_ORDERS_WEBHOOK_URL (via .env.op). Feeds user_data — changing it REPLACES the QA odoo droplet."
+  type        = string
+  sensitive   = true
+  default     = ""
 }
 
 variable "shippo_api_key" {

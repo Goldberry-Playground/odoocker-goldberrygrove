@@ -176,6 +176,12 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Run promotion tooling tests
         run: python3 scripts/test_promotion_scripts.py
+      - name: Run provisioning script tests (CEO login + per-agent Projects roster)
+        run: |
+          python3 scripts/test_provision_ceo_user_shell.py
+          python3 scripts/test_provision_project_agents_shell.py
+      - name: Run Odoo Caddyfile routing tests (bus on the evented worker)
+        run: python3 scripts/test_caddy_odoo_routes.py
 
   validate-compose:
     name: Validate Docker Compose (Grove)
@@ -574,3 +580,35 @@ jobs:
             )
             echo "::endgroup::"
           done
+
+  ci-scripts:
+    # GOL-1919: run scripts/ci/*.test.mjs as a live gate. `scripts/` is not a
+    # Node workspace, so nothing else runs these. The load-bearing test is
+    # protected-paths-carveout.test.mjs, the behavioral test for the auto-approve
+    # carve-out (scripts/ci/protected-paths-carveout.mjs) — the module that stops
+    # the bot from auto-approving an agent PR that touches a sensitive path.
+    # (GOL-2013 removed the protected-paths guard + its AgenticOS generator; the
+    # carve-out is now a standalone, hand-maintained module.) node builtins only.
+    name: CI scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Run scripts/ci/*.test.mjs
+        run: |
+          shopt -s nullglob
+          tests=(scripts/ci/*.test.mjs)
+          if [ ${#tests[@]} -eq 0 ]; then
+            echo "::error::no scripts/ci/*.test.mjs found — expected the protected-paths carve-out test"
+            exit 1
+          fi
+          fail=0
+          for f in "${tests[@]}"; do
+            echo "::group::node $f"
+            node "$f" || fail=1
+            echo "::endgroup::"
+          done
+          exit $fail

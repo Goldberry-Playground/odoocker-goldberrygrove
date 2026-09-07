@@ -22,13 +22,19 @@ variable "spaces_secret_key" {
   sensitive   = true
 }
 
-variable "admin_ip_cidr" {
-  description = "Operator IPv4 CIDR for the blogs/Odoo SSH allowlist. Use `curl -4 ifconfig.me`/32. Default matches the value live in prod state (blogs firewall port-22 rule) and the qa-app-platform default -- keeping it here rather than in a gitignored tfvars is what makes the SSH rule reproducible from code (GOL-385)."
-  type        = string
-  default     = "74.47.41.38/32"
+variable "admin_ip_cidrs" {
+  description = "Operator IPv4 CIDRs for the blogs/Odoo SSH allowlist AND the managed-PG trusted-source rule. A LIST so more than one operator address can be authorised at once (GOL-1842): an ISP-rotated home IP no longer locks every operator out of every droplet, and a second address can be added without dropping the first. Every entry is a `curl -4 ifconfig.me`/32. Keeping the codified entry here rather than in a gitignored tfvars is what makes the SSH rule reproducible from code (GOL-385). Codify a NEW address by adding it to this list (do not replace the existing one blind); an out-of-band DO rule added by hand is silently removed by the next apply, so it must land here to be durable."
+  type        = list(string)
+  # Both addresses are live on grove-prod-odoo-fw port-22 today (verified
+  # 2026-08-31): 74.47.41.38/32 preexisting, 173.84.140.152/32 is Josh's
+  # ISP-rotated operator address, added out-of-band via the DO API and now
+  # codified here so the next apply converges onto -- rather than removes --
+  # it (GOL-1842). Append future operator CIDRs; do not replace the existing
+  # entries blind -- the recurrence this issue exists to stop.
+  default = ["74.47.41.38/32", "173.84.140.152/32"]
   validation {
-    condition     = can(regex("^[0-9.]+/[0-9]+$", var.admin_ip_cidr))
-    error_message = "admin_ip_cidr must be a valid IPv4 CIDR like 74.47.41.38/32"
+    condition     = length(var.admin_ip_cidrs) > 0 && alltrue([for c in var.admin_ip_cidrs : can(regex("^[0-9.]+/[0-9]+$", c))])
+    error_message = "admin_ip_cidrs must be a non-empty list of IPv4 CIDRs like [\"74.47.41.38/32\"]."
   }
 }
 
@@ -133,9 +139,9 @@ variable "odoo_image_tag" {
 }
 
 variable "custom_modules_ref" {
-  description = "grove-odoo-modules git ref the prod custom-modules-sync (git-sync) sidecar checks out into /workspace/current. MUST be a pinned 40-char commit SHA -- prod NEVER tracks a moving branch (a merge to grove-odoo-modules main would otherwise auto-deploy to prod within GITSYNC_PERIOD with no review gate). Same reproducible-release rationale as var.odoo_image_tag. Bumping this is a reviewed infra PR (see the 'Custom modules' section of the repo README). GOL-484 checkout go-live (board-approved 2026-08-07, interaction 5b2c6abb): bumped to 8accb94 -- the first checkout-capable grove_headless HEAD (checkout d565b58 + 3-tenant Stripe webhook verify ff8eefb/GOL-1020 + per-unit deposit split 6f62dd5/GOL-1036 + destination WV tax c44e72c/GOL-1021 + itemized line_items 56dcdf4/GOL-1057). Confirmed exposes /grove/api/v1/products|cart|shipping|stripe/webhook, which the prior pin f8ef75d1 (and the live root-compose pin 515dcb3f) predate -- live prod 404s on those routes today (GOL-484 recon). Prod grove_headless is UNINSTALLED (GOL-1258 prod-DB check), so on the go-live rebuild the entrypoint's revision-advance path runs --init=base,grove_headless (a FRESH install, not an upgrade -- GOL-1214 sign-off); no migration, no data-loss risk (bare managed PG, only default company id 1). BUMPED 2026-08-27 to 31e641e6 (+23 commits) for the 08-28 launch: ships the checkout money-path fixes merged 2026-08-24 that reach prod via no other artifact -- #93 gate checkout charging on the shipping calendar (GOL-1309), #110 in-window bareroot preorder charges the $10 deposit not 100% (GOL-1666 s1), #113 farm-pickup bareroot window derives from the FARM zone (GOL-1669); also #83 WV tax on pickup (GOL-1303), #92 fail-open shipping calendar on wrong-shape JSON (GOL-1311), #98 per-zone fulfillment in the rate feed (GOL-1386), #109 preorder-deposit email lines (GOL-1666). CORRECTION: the GOL-1258 'grove_headless is UNINSTALLED' statement above is STALE -- verified 2026-08-27 by public probe (/grove/api/v1/health, /products, /cart, /shipping/options, /zone all 200 on odoo.gatheringatthegrove.com), so the entrypoint's revision-advance path runs --update=grove_headless, NOT a fresh --init install. RETARGET 2026-08-30 (GOL-461, Josh directive): default moved 31e641e6 -> 528dc73 (grove-odoo-modules main HEAD) so the pin also carries the Shippo fixes #123 (query-token webhook auth + real ship-from street, replacing SET_AT_DEPLOY) which are NOT ancestors of 31e641e6. Reviewed HEAD at prep time; re-pin to main HEAD at apply. PRICING IMPACT: this pin also carries rate-checker refreshes #107 (08-15) and #111 (08-24) -- all 30 zone/box rates rise ~80-120% (e.g. zone_2/b32 31.00 -> 68.00). Prod verified serving the OLD rate table on 2026-08-27 (GET /grove/api/v1/shipping/rates), so merging this CHANGES LIVE CUSTOMER SHIPPING PRICES."
+  description = "grove-odoo-modules git ref the prod custom-modules-sync (git-sync) sidecar checks out into /workspace/current. MUST be a pinned 40-char commit SHA -- prod NEVER tracks a moving branch (a merge to grove-odoo-modules main would otherwise auto-deploy to prod within GITSYNC_PERIOD with no review gate). Same reproducible-release rationale as var.odoo_image_tag. Bumping this is a reviewed infra PR (see the 'Custom modules' section of the repo README). GOL-484 checkout go-live (board-approved 2026-08-07, interaction 5b2c6abb): bumped to 8accb94 -- the first checkout-capable grove_headless HEAD (checkout d565b58 + 3-tenant Stripe webhook verify ff8eefb/GOL-1020 + per-unit deposit split 6f62dd5/GOL-1036 + destination WV tax c44e72c/GOL-1021 + itemized line_items 56dcdf4/GOL-1057). Confirmed exposes /grove/api/v1/products|cart|shipping|stripe/webhook, which the prior pin f8ef75d1 (and the live root-compose pin 515dcb3f) predate -- live prod 404s on those routes today (GOL-484 recon). Prod grove_headless is UNINSTALLED (GOL-1258 prod-DB check), so on the go-live rebuild the entrypoint's revision-advance path runs --init=base,grove_headless (a FRESH install, not an upgrade -- GOL-1214 sign-off); no migration, no data-loss risk (bare managed PG, only default company id 1). BUMPED 2026-08-27 to 31e641e6 (+23 commits) for the 08-28 launch: ships the checkout money-path fixes merged 2026-08-24 that reach prod via no other artifact -- #93 gate checkout charging on the shipping calendar (GOL-1309), #110 in-window bareroot preorder charges the $10 deposit not 100% (GOL-1666 s1), #113 farm-pickup bareroot window derives from the FARM zone (GOL-1669); also #83 WV tax on pickup (GOL-1303), #92 fail-open shipping calendar on wrong-shape JSON (GOL-1311), #98 per-zone fulfillment in the rate feed (GOL-1386), #109 preorder-deposit email lines (GOL-1666). CORRECTION: the GOL-1258 'grove_headless is UNINSTALLED' statement above is STALE -- verified 2026-08-27 by public probe (/grove/api/v1/health, /products, /cart, /shipping/options, /zone all 200 on odoo.gatheringatthegrove.com), so the entrypoint's revision-advance path runs --update=grove_headless, NOT a fresh --init install. RETARGET 2026-08-30 (GOL-461, Josh directive): default moved 31e641e6 -> 528dc73 (grove-odoo-modules main HEAD) so the pin also carries the Shippo fixes #123 (query-token webhook auth + real ship-from street, replacing SET_AT_DEPLOY) which are NOT ancestors of 31e641e6. Reviewed HEAD at prep time; re-pin to main HEAD at apply. PRICING IMPACT: this pin also carries rate-checker refreshes #107 (08-15) and #111 (08-24) -- all 30 zone/box rates rise ~80-120% (e.g. zone_2/b32 31.00 -> 68.00). Prod verified serving the OLD rate table on 2026-08-27 (GET /grove/api/v1/shipping/rates), so merging this CHANGES LIVE CUSTOMER SHIPPING PRICES. BUMPED 2026-09-03 to 0f978e0d (+17 commits over 528dc73): ships the GOL-1933 post-purchase ops chain (#140 -- new-order Discord + merchant-email alerts, persisted grove_fulfillment) that prod needs for order alerting and pickup-vs-ship visibility; also carries #139 least-cost ground selection (GOL-1906) and the 2026-08-31 zone-rate refresh #129 -- live shipping rates CHANGE again, review the rate diff before apply. Re-pin to grove-odoo-modules main HEAD at apply so the fulfilment-badge follow-up (grove-odoo-modules #174) rides the same rebuild. BUMPED 2026-09-07 to 2c4b1b88 (+24 commits over 0f978e0d = grove-odoo-modules main HEAD) for the FLATWOODS promo go-live (CEO directive GOL-2088, Josh session 2026-09-07): ships #179 headless promo-code redemption (grove_headless applies sale_loyalty `with_code` at checkout) -- the backend that makes the FLATWOODS code advertised from Mon 09-07 and offered by grove-sites #700 actually redeem; also the USPS Ground Advantage sender+recipient contact fix 411bd9d3 (GOL-1906, resolves `sender_info_missing`). This delta ALSO carries: deposit-only checkout backend 8365cea1 (GOL-2052) -- INERT in prod until grove-sites #172 lands the frontend that exercises it; bareroot shared-potted-pool 396771c7 (GOL-2031); terminal fulfilment state machine 150042603f (GOL-1981); branded shipment notice abaabb27 (GOL-1975); and the 09-01/09-05 zone-rate refreshes 1f851b39/2249dfd8 -- the prior rate-change concern is RETIRED (GOL-1906 finding: the published table is already cheapest-of-both). Review the full 24-commit delta and rate diff before the board-gated droplet rebuild; re-pin to main HEAD at apply if newer QA-soaked commits have landed."
   type        = string
-  default     = "528dc73fd7d7dbb37cfb54294e84d63f84496cfa"
+  default     = "2c4b1b88473f263f96e08d5277068646c9d64681"
 
   validation {
     condition     = can(regex("^[0-9a-f]{40}$", var.custom_modules_ref))
@@ -152,9 +158,9 @@ variable "app_instance_size_slug" {
 }
 
 variable "hub_image_tag" {
-  description = "Tag of the grove-hub image on GHCR (ghcr.io/goldberry-playground/grove-hub:<tag>) that App Platform pulls. GOL-1304 Option-A ruling (ratified 2026-08-12, launch-gate Aug 20): prod pins a 40-char grove-sites commit SHA -- it NEVER tracks a moving 'latest'. Same reproducible-release rationale + validation as var.custom_modules_ref: a 'latest' retag from grove-sites CI must not silently ship to prod (and with GHCR-sourced apps deploy_on_push never even fires -- GOL-1607 -- so an unpinned 'latest' is BOTH un-gated and unobservable). Bumping this is a reviewed infra PR whose deploy step is an explicit `doctl apps create-deployment` (grove-sites do-app-redeploy primitive, PR #547). Current pin b84d7678: the grove-sites main HEAD that prod pulled on the 2026-08-17 15:44Z redeploy (GOL-1607); GHCR `latest` still resolves to this same digest across all four images, so pinning to it is a verified no-op deploy (GOL-1650 recon)."
+  description = "Tag of the grove-hub image on GHCR (ghcr.io/goldberry-playground/grove-hub:<tag>) that App Platform pulls. GOL-1304 Option-A ruling (ratified 2026-08-12, launch-gate Aug 20): prod pins a 40-char grove-sites commit SHA -- it NEVER tracks a moving 'latest'. Same reproducible-release rationale + validation as var.custom_modules_ref: a 'latest' retag from grove-sites CI must not silently ship to prod (and with GHCR-sourced apps deploy_on_push never even fires -- GOL-1607 -- so an unpinned 'latest' is BOTH un-gated and unobservable). Bumping this is a reviewed infra PR whose deploy step is an explicit `doctl apps create-deployment` (grove-sites do-app-redeploy primitive, PR #547). Current pin 2436786c: grove-sites main HEAD as of 2026-08-31 (docker.yml built+pushed all four images at this SHA, run success 2026-08-31T11:11Z). GOL-1850 promotion of record -- the grove-nursery-prod app was already rolled live to this SHA out-of-band on 2026-08-31T13:10Z to clear the P0 GOL-1822 shipping under-quote; applying this pin converges hub/goldberry/ggg to the same reviewed commit and makes nursery's live state match SoR (no-op deploy for nursery). Supersedes the never-applied e77fcb0f pin (live prod is still on the earlier b84d7678 for the three non-nursery apps)."
   type        = string
-  default     = "e77fcb0f11d260c1ffe790a9065d45b1b9d15183"
+  default     = "2436786c1b16b6d51554fd0378b3b2c754017e65"
 
   validation {
     condition     = can(regex("^[0-9a-f]{40}$", var.hub_image_tag))
@@ -163,9 +169,9 @@ variable "hub_image_tag" {
 }
 
 variable "tenant_image_tag" {
-  description = "Tag of the grove-goldberry / grove-ggg / grove-nursery images on GHCR that the tenant App Platform apps pull. One shared tag because grove-sites CI publishes all four images from the same commit -- pinning tenants to different tags would deploy skewed monorepo states. GOL-1304 Option-A: a pinned 40-char SHA, same rationale + validation as var.hub_image_tag / var.custom_modules_ref. Current pin b84d7678 == the same commit as var.hub_image_tag (verified: GHCR `latest` for grove-goldberry/grove-ggg/grove-nursery all resolve to this SHA's digest today, GOL-1650) so applying the pin is a no-op deploy."
+  description = "Tag of the grove-goldberry / grove-ggg / grove-nursery images on GHCR that the tenant App Platform apps pull. One shared tag because grove-sites CI publishes all four images from the same commit -- pinning tenants to different tags would deploy skewed monorepo states. GOL-1304 Option-A: a pinned 40-char SHA, same rationale + validation as var.hub_image_tag / var.custom_modules_ref. Current pin 2436786c == the same commit as var.hub_image_tag (grove-sites main HEAD 2026-08-31; carries the GOL-1822 Format-card per-box-floor shipping fix, PR #587). GOL-1850: grove-nursery-prod was moved to this SHA live on 2026-08-31T13:10Z to clear the P0 shipping under-quote and is ALREADY serving it -- applying this pin is a no-op for nursery and rolls goldberry/ggg forward from the live b84d7678 to the same reviewed commit."
   type        = string
-  default     = "e77fcb0f11d260c1ffe790a9065d45b1b9d15183"
+  default     = "2436786c1b16b6d51554fd0378b3b2c754017e65"
 
   validation {
     condition     = can(regex("^[0-9a-f]{40}$", var.tenant_image_tag))
@@ -363,6 +369,16 @@ variable "grove_assets_optimize_token" {
 # checkout INERT until CFO mints the live keys AND the board greenlights a
 # prod-checkout rebuild (activation replaces the droplet — board-gated per
 # GOL-920). Sensitive so the value never prints in plan/apply output.
+variable "web_base_url" {
+  description = "GOL-1859: the prod host Odoo bakes into every ABSOLUTE URL it generates — password-reset / set-password links, sale-order + customer-portal links, e-commerce/website links, and report.url. odoo/entrypoint.sh seed_web_base_url() upserts `web.base.url` + `web.base.url.freeze=True` (and report.url) from this value on every boot, so an immutable droplet rebuild (GOL-920) never silently reverts to Odoo's http://localhost:8069 default. NOT a secret; NO trailing slash (e.g. https://odoo.gatheringatthegrove.com pre-apex-cutover, or the hub apex per GOL-287 once cut over — decision pending, see GOL-1859). Empty default keeps apply/plan working and the seed inert until the launch host is confirmed and the value is populated (read via TF_VAR_web_base_url / op:// ref). user_data is in ignore_changes, so landing this is inert until a board-gated rebuild."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.web_base_url == "" || can(regex("^https?://[^/]+$", var.web_base_url))
+    error_message = "web_base_url must be empty or an absolute origin with NO trailing slash (e.g. https://odoo.gatheringatthegrove.com)."
+  }
+}
+
 variable "stripe_test_secret_key" {
   description = "Stripe LIVE-mode restricted secret key (rk_live_...) for grove_headless prod checkout — scoped to Checkout Session create + webhook ops only (live equivalent of the QA rk_test_ scope GOL-956 proved sufficient). DEDICATED backend key, never a storefront key (runbook §4). Injected into /etc/grove/.env as lowercase `stripe_test_secret_key`; grove_headless reads it via os.environ. VALUE is its own item in the `Goldberry Grove - Admin` vault (minted by CFO under GOL-973); read via TF_VAR_stripe_test_secret_key. Empty default keeps apply/plan working and checkout inert until provisioned + board-greenlit."
   type        = string
@@ -404,6 +420,18 @@ variable "stripe_webhook_secret_goldberry" {
   type        = string
   sensitive   = true
   default     = ""
+}
+
+variable "discord_orders_webhook_url" {
+  description = "Discord webhook for the DEDICATED order/pickup-summaries channel (Josh 2026-09-03): new-order and oversell alerts must land separately from the #grove-ops bot-logs/observability channel that var.discord_webhook_url pages. grove_headless _notify_discord() PREFERS os.environ DISCORD_ORDERS_WEBHOOK_URL and falls back to DISCORD_OPS_WEBHOOK_URL, so the empty default keeps plan/apply working and simply misroutes order alerts into #grove-ops (visible, prompting a fix) instead of dropping them. Create the webhook in the orders channel (Discord channel settings -> Integrations -> Webhooks), store it as field discord_orders_webhook_url on op://Grove Prod/odoocker, inject via TF_VAR_discord_orders_webhook_url. BARE url, no /slack suffix. user_data input => same droplet-replace semantics as shippo_api_key."
+  type        = string
+  sensitive   = true
+  default     = ""
+
+  validation {
+    condition     = var.discord_orders_webhook_url == "" || can(regex("^https://(discord\\.com|discordapp\\.com)/api/webhooks/[0-9]+/[A-Za-z0-9_.-]+$", var.discord_orders_webhook_url))
+    error_message = "discord_orders_webhook_url must be empty or a bare Discord webhook URL (https://discord.com/api/webhooks/<id>/<token>) with NO trailing /slack."
+  }
 }
 
 variable "shippo_api_key" {
@@ -480,4 +508,26 @@ variable "from_filter" {
   description = "Odoo from_filter (FROM_FILTER) — the authenticated Mailgun sending domain Odoo is allowed to send From. Must stay send.gatheringatthegrove.com (the DNS-verified domain), never mg.*."
   type        = string
   default     = "send.gatheringatthegrove.com"
+}
+
+variable "grove_ship_from_email" {
+  description = "Ship-from (sender) email stamped on prod USPS/UPS labels (GOL-2125, PR grove-odoo-modules#184). USPS Ground Advantage rejects a buy with `sender_info_missing` unless the sender has both email and phone; grove_headless shippo_client.ORIGIN reads it from os.environ GROVE_SHIP_FROM_EMAIL. Not a secret (it prints on every outbound label) — safe committed default matches the module default; Josh confirms/overrides via 1P (op://Grove Prod/odoocker/GROVE_SHIP_FROM_EMAIL) -> TF_VAR. user_data input: activation rides the board-gated rebuild (GOL-920), not a live apply."
+  type        = string
+  default     = "josh@goldberrygrove.farm"
+
+  validation {
+    condition     = can(regex("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$", var.grove_ship_from_email))
+    error_message = "grove_ship_from_email must be a plausible single email address with no spaces (cloud-init writes it into /etc/grove/.env, which is bash-sourced under set -euo pipefail)."
+  }
+}
+
+variable "grove_ship_from_phone" {
+  description = "Ship-from (sender) phone stamped on prod USPS/UPS labels (GOL-2125, PR grove-odoo-modules#184). USPS Ground Advantage HARD-REQUIRES it or the buy fails `sender_info_missing`; grove_headless shippo_client.ORIGIN reads os.environ GROVE_SHIP_FROM_PHONE. Default is EMPTY on purpose — a fabricated number on a real customer label is worse than a loud failure (Ada), so an unset phone fails the buy loudly instead of shipping a bogus contact. Josh supplies the REAL Grove ship-from number via 1P (op://Grove Prod/odoocker/GROVE_SHIP_FROM_PHONE) -> TF_VAR; empty default keeps plan/apply working until then. user_data input: activation rides the board-gated rebuild (GOL-920)."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.grove_ship_from_phone == "" || can(regex("^[0-9()+.\\-]{7,20}$", var.grove_ship_from_phone))
+    error_message = "grove_ship_from_phone must be empty or a plain phone number with NO spaces (digits and + ( ) . - only, 7-20 chars, e.g. +13045551212 or 304-555-1212) — cloud-init writes it UNQUOTED into the bash-sourced /etc/grove/.env, so a space or shell metacharacter would break set -euo pipefail."
+  }
 }

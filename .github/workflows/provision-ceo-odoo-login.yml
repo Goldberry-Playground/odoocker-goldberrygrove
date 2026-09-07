@@ -22,9 +22,17 @@ name: Provision CEO Odoo Login
 #   odoo-login.md, which prints a one-time link to the operator's own terminal.
 #
 # GOVERNANCE — the `production` GitHub Environment approval IS the CEO gate on
-#   this prod-credential action. Reuses the SAME PROD_SSH_PRIVATE_KEY / PROD_HOST
-#   secrets release.yml uses to deploy prod (already seeded). Dry-run needs no
-#   approval and writes nothing; live requires the environment reviewer.
+#   this prod-credential action. Dry-run needs no approval and writes nothing;
+#   live requires the environment reviewer.
+#
+# SECRETS PREREQUISITE — this workflow (and release.yml) read PROD_SSH_PRIVATE_KEY
+#   and PROD_HOST. As of 2026-08-31 NEITHER secret exists at repo level or in the
+#   `production` environment (`gh secret list` is empty), so this workflow CANNOT
+#   run yet — the "Add droplet to known hosts" step exits 1 on the empty HOST.
+#   Provisioning these two secrets is a DevOps/CEO task (owner: Terra + Josh); the
+#   private key must match an authorized_keys entry on the prod droplet and
+#   PROD_HOST is the droplet IP/host. Until then use the manual SSH path in
+#   docs/RUNBOOK-provision-ceo-odoo-login.md (Path B).
 #
 # IDEMPOTENT — find-or-create; re-running only re-ensures groups + re-sends the
 #   set-password email. Safe to re-run.
@@ -93,12 +101,13 @@ jobs:
           # LIVE -> email delivery (nothing secret printed); dry-run -> preview.
           REMOTE_ENV="-e CEO_DELIVER=email"
           [ "$DRY" = "true" ] && REMOTE_ENV="-e CEO_DRY_RUN=1"
+          # The live prod droplet runs a SINGLE docker-compose.yml under
+          # /etc/grove (no /opt/grove, no override files) — confirmed off the
+          # running container's own compose labels, 2026-08-31. DB_NAME comes
+          # from /etc/grove/.env.
           ssh -o StrictHostKeyChecking=yes "root@${HOST}" \
-            "set -a; . /opt/grove/.env; set +a; \
-             cd /opt/grove && docker compose \
-               -f docker-compose.yml \
-               -f docker-compose.override.grove.yml \
-               -f docker-compose.override.production.yml \
+            "set -a; . /etc/grove/.env; set +a; \
+             cd /etc/grove && docker compose \
                exec -T ${REMOTE_ENV} \
                odoo odoo shell -d \"\$DB_NAME\" --no-http --logfile=/dev/null" \
             < scripts/provision_ceo_user_shell.py \

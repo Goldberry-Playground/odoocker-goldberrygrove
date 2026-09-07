@@ -25,7 +25,7 @@ networks:
   # OpenObserve/OTLP/Keep reference anywhere in discord-bridge-src). Putting
   # cloudflared on grove-obs_obs would give the tunnel connector an L3 path to
   # OpenObserve (5080) and Keep (3034/8080), which main.tf firewalls to
-  # admin_ip_cidr at the DO edge. A single ingress edit in the Cloudflare
+  # admin_ip_cidrs at the DO edge. A single ingress edit in the Cloudflare
   # dashboard (config lives there, not in this repo, because the tunnel is
   # token-managed) could then publish the admin-only observability stack to the
   # internet -- with zero Terraform drift to catch it. Keeping the connector off
