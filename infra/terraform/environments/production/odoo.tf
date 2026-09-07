@@ -213,6 +213,18 @@ resource "digitalocean_droplet" "odoo" {
     # prefers this and falls back to the ops webhook above, so order alerts
     # separate from bot-logs once the webhook is provisioned.
     discord_orders_webhook_url = var.discord_orders_webhook_url
+    # Mailgun SMTP for Odoo transactional email (GOL-988). odoorc.sh substitutes
+    # these into the SMTP group of /etc/odoo/odoo.conf. Empty smtp_password =>
+    # SMTP auth inert (no send), so this scaffold is a safe no-op until the
+    # verified send.* hub credential is provided (TF_VAR_smtp_password / .env.op)
+    # and a board-gated rebuild/hand-inject activates it (user_data input).
+    smtp_server   = var.smtp_server
+    smtp_port     = var.smtp_port
+    smtp_ssl      = var.smtp_ssl
+    smtp_user     = var.smtp_user
+    smtp_password = var.smtp_password
+    email_from    = var.email_from
+    from_filter   = var.from_filter
 
     # Managed PG connection params (private VPC network). odoorc.sh substitutes
     # these into /etc/odoo/odoo.conf at container start.

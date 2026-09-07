@@ -156,6 +156,22 @@ write_files:
       # empty => order alerts visibly misroute into #grove-ops rather than drop.
       # Same bare-URL / no-/slack rule as DISCORD_OPS.
       DISCORD_ORDERS_WEBHOOK_URL=${discord_orders_webhook_url}
+      # Mailgun SMTP for Odoo transactional email (GOL-988) -- order-confirmation
+      # + shipping-notification send. odoorc.sh substitutes these into the SMTP
+      # group of /etc/odoo/odoo.conf (same image + path QA proved live under
+      # GOL-995). Sending domain is send.gatheringatthegrove.com -- NOT mg.* (an
+      # account we do not control). Empty SMTP_PASSWORD => auth can't succeed =>
+      # sending stays inert (zero regression) until the verified send.* hub cred
+      # is provided. EMAIL_FROM is double-quoted: this .env is `.`-sourced by the
+      # runcmd steps below, and a bare `Name <addr>` would break `source` on the
+      # `<` redirection metachar; odoorc.sh strips one quote layer for odoo.conf.
+      SMTP_SERVER=${smtp_server}
+      SMTP_PORT=${smtp_port}
+      SMTP_SSL=${smtp_ssl}
+      SMTP_USER=${smtp_user}
+      SMTP_PASSWORD=${smtp_password}
+      EMAIL_FROM="${email_from}"
+      FROM_FILTER=${from_filter}
 
   # Compose YAML - base64 so cloud-init's YAML parser never sees its content.
   - path: /etc/grove/docker-compose.yml
