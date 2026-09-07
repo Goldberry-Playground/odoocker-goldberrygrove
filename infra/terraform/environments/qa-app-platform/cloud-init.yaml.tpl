@@ -162,6 +162,10 @@ write_files:
       # --env-file path as stripe_test_*.
       SHIPPO_API_KEY=${shippo_api_key}
       GROVE_SHIPPO_WEBHOOK_TOKEN=${grove_shippo_webhook_token}
+      # Dedicated order/pickup-summaries Discord channel (Josh 2026-09-03).
+      # grove_headless _notify_discord() prefers this over DISCORD_OPS (QA sets
+      # neither by default => alerts silent). Bare webhook URL, no /slack.
+      DISCORD_ORDERS_WEBHOOK_URL=${discord_orders_webhook_url}
 
   # Compose YAML - base64-encoded so cloud-init's YAML parser never sees
   # its content (avoids the embedded-block-scalar parse failures we hit

@@ -196,6 +196,10 @@ resource "digitalocean_droplet" "odoo" {
     # (GOL-920) activates it. Until then the value is applied live by appending
     # it to /etc/grove/.env + recreating the odoo container (see PR notes).
     discord_ops_webhook_url = var.discord_webhook_url
+    # Dedicated order/pickup-summaries channel (Josh 2026-09-03): grove_headless
+    # prefers this and falls back to the ops webhook above, so order alerts
+    # separate from bot-logs once the webhook is provisioned.
+    discord_orders_webhook_url = var.discord_orders_webhook_url
 
     # Managed PG connection params (private VPC network). odoorc.sh substitutes
     # these into /etc/odoo/odoo.conf at container start.
