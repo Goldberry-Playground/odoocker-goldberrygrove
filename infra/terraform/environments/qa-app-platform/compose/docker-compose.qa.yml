@@ -144,6 +144,16 @@ services:
       # source as stripe_test_* above; cloud-init writes both.
       SHIPPO_API_KEY: ${SHIPPO_API_KEY:-}
       GROVE_SHIPPO_WEBHOOK_TOKEN: ${GROVE_SHIPPO_WEBHOOK_TOKEN:-}
+      # Ship-from (sender) contact on labels (GOL-2121, grove-odoo-modules#184).
+      # USPS Ground Advantage HARD-REQUIRES sender email AND phone or the buy
+      # fails `sender_info_missing`. shippo_client.ORIGIN reads these from
+      # os.environ -- and the odoo process env comes ONLY from this block (the
+      # /.env mount feeds odoorc.sh, NOT os.environ), so an unlisted var in
+      # /etc/grove/.env never reaches the container. cloud-init writes both from
+      # the TF vars; email has a safe default, empty phone keeps the buy failing
+      # loudly rather than shipping a fabricated number.
+      GROVE_SHIP_FROM_EMAIL: ${GROVE_SHIP_FROM_EMAIL:-}
+      GROVE_SHIP_FROM_PHONE: ${GROVE_SHIP_FROM_PHONE:-}
       # Dedicated order/pickup-summaries Discord channel (Josh 2026-09-03).
       # _notify_discord() prefers this over DISCORD_OPS_WEBHOOK_URL; empty =>
       # order alerts are a no-op in QA (QA plumbs no ops webhook either).
