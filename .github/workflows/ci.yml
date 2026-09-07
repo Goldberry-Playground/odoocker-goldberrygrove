@@ -29,17 +29,41 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      # GOL-2183: fetch the pinned actionlint binary from GitHub Releases
+      # (github.com, the host the checkout already uses) instead of
+      # `docker://rhysd/actionlint` off Docker Hub. Docker Hub's anonymous
+      # pull rate limit made the image-pull step a recurring ownerless-red
+      # generator on PR + merge_group runs -- run 34136083701 failed in 8s
+      # at "Pull rhysd/actionlint" (the lint step never ran), landing an
+      # ownerless CI-failure issue for a transient registry blip. The binary
+      # is checksum-pinned and the download is wrapped in the same bounded
+      # retry as the terraform-init step (GOL-938/GOL-2169). shellcheck is
+      # pre-installed on ubuntu-latest, so actionlint's shellcheck
+      # integration (SHELLCHECK_OPTS below) is unchanged.
       - name: Run actionlint
-        uses: docker://rhysd/actionlint:1.7.7
-        # actionlint shells out to shellcheck internally; shellcheck reads
-        # SHELLCHECK_OPTS from its env. `-S warning` filters out info/style
-        # findings so only warning+ gates the build — matches the threshold
-        # of the standalone `shellcheck` job below. Dial down to `-S style`
-        # once the codebase is style-clean.
         env:
           SHELLCHECK_OPTS: -S warning
-        with:
-          args: -color
+          ACTIONLINT_VERSION: 1.7.7
+          ACTIONLINT_SHA256: 023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757
+        run: |
+          set -euo pipefail
+          tarball="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          url="https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${tarball}"
+          attempt=1 max=5 delay=5
+          until curl -fsSL "$url" -o "$tarball"; do
+            if [ "$attempt" -ge "$max" ]; then
+              echo "::error::actionlint download failed after $max attempts"
+              exit 1
+            fi
+            echo "::warning::actionlint download attempt $attempt failed; retrying in ${delay}s"
+            sleep "$delay"
+            attempt=$((attempt + 1))
+            delay=$((delay * 2))
+            [ "$delay" -gt 60 ] && delay=60
+          done
+          echo "${ACTIONLINT_SHA256}  ${tarball}" | sha256sum -c -
+          tar -xzf "$tarball" actionlint
+          ./actionlint -color
 
   # Audit 2026-06-29 #5: shellcheck the operator scripts we rely on
   # (qa-l3-teardown, cleanup-acme-txts, caddy-prefer-prod-cert, etc).
