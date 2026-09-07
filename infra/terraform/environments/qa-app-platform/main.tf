@@ -437,6 +437,13 @@ resource "digitalocean_droplet" "odoo" {
     shippo_api_key             = var.shippo_api_key
     grove_shippo_webhook_token = var.grove_shippo_webhook_token
 
+    # Ship-from (sender) contact on labels (GOL-2121, grove-odoo-modules#184).
+    # Email defaults to josh@goldberrygrove.farm; phone default-empty => the
+    # USPS-GA buy fails loudly (`sender_info_missing`) rather than shipping a
+    # fabricated number. Mirrors the production env chain (PR #623).
+    grove_ship_from_email = var.grove_ship_from_email
+    grove_ship_from_phone = var.grove_ship_from_phone
+
     # Dedicated order/pickup-summaries Discord channel (Josh 2026-09-03),
     # mirrors prod. Empty default = order alerts stay silent in QA.
     discord_orders_webhook_url = var.discord_orders_webhook_url

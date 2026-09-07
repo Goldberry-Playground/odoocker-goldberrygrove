@@ -162,6 +162,15 @@ write_files:
       # --env-file path as stripe_test_*.
       SHIPPO_API_KEY=${shippo_api_key}
       GROVE_SHIPPO_WEBHOOK_TOKEN=${grove_shippo_webhook_token}
+      # Ship-from (sender) contact on labels (GOL-2121, grove-odoo-modules#184).
+      # USPS Ground Advantage rejects a buy with `sender_info_missing` unless the
+      # sender has BOTH email and phone; shippo_client.ORIGIN reads these from
+      # os.environ. Consumed via the compose environment: block, same --env-file
+      # path as shippo_api_key. Written UNQUOTED (bash-sourced /etc/grove/.env) --
+      # the TF-var validation forbids spaces/shell metachars. Email defaults safe;
+      # empty phone keeps the buy failing loudly rather than shipping a bogus #.
+      GROVE_SHIP_FROM_EMAIL=${grove_ship_from_email}
+      GROVE_SHIP_FROM_PHONE=${grove_ship_from_phone}
       # Dedicated order/pickup-summaries Discord channel (Josh 2026-09-03).
       # grove_headless _notify_discord() prefers this over DISCORD_OPS (QA sets
       # neither by default => alerts silent). Bare webhook URL, no /slack.
