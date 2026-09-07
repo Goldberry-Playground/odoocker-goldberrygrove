@@ -76,7 +76,19 @@ services:
       # Idempotent + rev-gated in odoo/entrypoint.sh (marker on the durable
       # /mnt/odoo-filestore volume). Fails loud on a bad migration rather than
       # serving a half-migrated DB.
-      AUTO_UPGRADE_MODULES: grove_headless
+      # GOL-2039: append grove_support (Grove Support Chat glue, GOL-2022) so the
+      # rev-gated boot upgrade installs it. Deps im_livechat / crm / sale
+      # auto-install transitively via --init=base,<mods>.
+      #
+      # GATE (was: do NOT ship this list to a prod pin whose SHA lacks
+      # grove_support, or entrypoint's --init=base,grove_support crash-loops odoo
+      # with the module absent from addons_path). SATISFIED 2026-09-07: PR #171
+      # merged as f10c789, and var.custom_modules_ref is pinned to 2c4b1b88, whose
+      # tree carries grove_support/__manifest__.py (f10c789 verified an ancestor).
+      # The pin and this compose file are rendered by the SAME cloud-init apply, so
+      # they cannot skew -- a rebuild takes both or neither. Re-check this if the
+      # pin is ever moved BACKWARDS to a SHA predating f10c789.
+      AUTO_UPGRADE_MODULES: grove_headless,grove_support
       # Stripe LIVE-mode prod checkout (GOL-973). grove_headless reads these
       # from os.environ (LOWERCASE names, controllers/main.py). The odoo process
       # env comes ONLY from this compose environment block -- the /.env mount
