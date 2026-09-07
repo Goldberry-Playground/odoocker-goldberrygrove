@@ -132,6 +132,16 @@ write_files:
       # empty). Same --env-file -> compose environment: path as stripe_test_*.
       SHIPPO_API_KEY=${shippo_api_key}
       GROVE_SHIPPO_WEBHOOK_TOKEN=${grove_shippo_webhook_token}
+      # Ship-from contact (GOL-2125, PR grove-odoo-modules#184). USPS Ground
+      # Advantage rejects a buy with `sender_info_missing` unless the sender has
+      # BOTH email and phone; grove_headless shippo_client.ORIGIN reads these from
+      # os.environ (compose environment: block -> here). Email has a safe default;
+      # phone is empty until Josh provides the real number (fabricating one is
+      # worse than a loud failure -- Ada). Written UNQUOTED like the URLs above:
+      # the TF var validation forbids spaces/metacharacters so bash-sourcing this
+      # file under set -euo pipefail stays safe.
+      GROVE_SHIP_FROM_EMAIL=${grove_ship_from_email}
+      GROVE_SHIP_FROM_PHONE=${grove_ship_from_phone}
       # Discord #grove-ops alerting (GOL-1935, parent GOL-1933). grove_headless
       # _notify_discord() reads this from os.environ (compose environment: block)
       # and POSTs a Discord-native payload to the BARE webhook -- do NOT add the
@@ -141,6 +151,11 @@ write_files:
       # metacharacters). Sourced from TF var discord_webhook_url, the same bare
       # webhook DO already pages on -- so this is populated (not empty-default).
       DISCORD_OPS_WEBHOOK_URL=${discord_ops_webhook_url}
+      # Dedicated order/pickup-summaries channel (Josh 2026-09-03).
+      # _notify_discord() prefers this and falls back to DISCORD_OPS above, so
+      # empty => order alerts visibly misroute into #grove-ops rather than drop.
+      # Same bare-URL / no-/slack rule as DISCORD_OPS.
+      DISCORD_ORDERS_WEBHOOK_URL=${discord_orders_webhook_url}
 
   # Compose YAML - base64 so cloud-init's YAML parser never sees its content.
   - path: /etc/grove/docker-compose.yml
