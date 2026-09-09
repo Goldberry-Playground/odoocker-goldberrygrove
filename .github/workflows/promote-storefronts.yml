@@ -300,6 +300,19 @@ jobs:
 
       # --- Step 3: the actual roll. One deployment per app, single-fire,
       # via the shared primitive (GOL-1607 Lessons 1 + 2 live here).
+      # do-app-redeploy.sh shells out to `doctl` (apps list / create-deployment /
+      # list-deployments). The runner image does not ship it, so every promote
+      # run before this step died at "doctl: command not found" AFTER the
+      # targeted apply had already moved the spec pin (2026-09-01, runs
+      # 33501483015 / 33501512921) -- leaving prod declared-but-not-rolled and
+      # the drift alarm red until someone redeployed by hand. Same install the
+      # grove-sites docker.yml QA-redeploy step uses; the token is the one the
+      # 1Password step loaded above.
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ env.DIGITALOCEAN_TOKEN }}
+
       - name: Redeploy all four storefronts
         env:
           DIGITALOCEAN_ACCESS_TOKEN: ${{ env.DIGITALOCEAN_TOKEN }}
