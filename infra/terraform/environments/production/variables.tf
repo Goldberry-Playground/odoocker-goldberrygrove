@@ -511,9 +511,9 @@ variable "from_filter" {
 }
 
 variable "grove_ship_from_email" {
-  description = "Ship-from (sender) email stamped on prod USPS/UPS labels (GOL-2125, PR grove-odoo-modules#184). USPS Ground Advantage rejects a buy with `sender_info_missing` unless the sender has both email and phone; grove_headless shippo_client.ORIGIN reads it from os.environ GROVE_SHIP_FROM_EMAIL. Not a secret (it prints on every outbound label) — safe committed default matches the module default; Josh confirms/overrides via 1P (op://Grove Prod/odoocker/GROVE_SHIP_FROM_EMAIL) -> TF_VAR. user_data input: activation rides the board-gated rebuild (GOL-920), not a live apply."
+  description = "Ship-from (sender) email stamped on prod USPS/UPS labels (GOL-2125, PR grove-odoo-modules#184). USPS Ground Advantage rejects a buy with `sender_info_missing` unless the sender has both email and phone; grove_headless shippo_client.ORIGIN reads it from os.environ GROVE_SHIP_FROM_EMAIL. Not a secret (it prints on every outbound label). VALUE CONFIRMED by CEO (Josh) 2026-09-09 on GOL-2125 confirmation card 6810743e: sales@atthegrovenursery.com is the correct label contact (the sales inbox), NOT the josh@ personal default it replaces. Committed as the reproducible default; a 1P override (op://Grove Prod/odoocker/GROVE_SHIP_FROM_EMAIL) -> TF_VAR remains available for future changes. user_data input: activation rides the board-gated rebuild (GOL-920), not a live apply."
   type        = string
-  default     = "josh@goldberrygrove.farm"
+  default     = "sales@atthegrovenursery.com"
 
   validation {
     condition     = can(regex("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$", var.grove_ship_from_email))
@@ -522,9 +522,9 @@ variable "grove_ship_from_email" {
 }
 
 variable "grove_ship_from_phone" {
-  description = "Ship-from (sender) phone stamped on prod USPS/UPS labels (GOL-2125, PR grove-odoo-modules#184). USPS Ground Advantage HARD-REQUIRES it or the buy fails `sender_info_missing`; grove_headless shippo_client.ORIGIN reads os.environ GROVE_SHIP_FROM_PHONE. Default is EMPTY on purpose — a fabricated number on a real customer label is worse than a loud failure (Ada), so an unset phone fails the buy loudly instead of shipping a bogus contact. Josh supplies the REAL Grove ship-from number via 1P (op://Grove Prod/odoocker/GROVE_SHIP_FROM_PHONE) -> TF_VAR; empty default keeps plan/apply working until then. user_data input: activation rides the board-gated rebuild (GOL-920)."
+  description = "Ship-from (sender) phone stamped on prod USPS/UPS labels (GOL-2125, PR grove-odoo-modules#184). USPS Ground Advantage HARD-REQUIRES it or the buy fails `sender_info_missing`; grove_headless shippo_client.ORIGIN reads os.environ GROVE_SHIP_FROM_PHONE. Default was EMPTY on purpose while no real number existed — a fabricated number on a real customer label is worse than a loud failure (Ada). RESOLVED: CEO (Josh) supplied the REAL Grove ship-from number 2026-09-09 on GOL-2125 confirmation card 6810743e, so the safety-against-fabrication rationale for the empty default no longer applies; the number is committed here as the reproducible default (it prints on every outbound label — not a secret). A 1P override (op://Grove Prod/odoocker/GROVE_SHIP_FROM_PHONE) -> TF_VAR remains available for future changes. user_data input: activation rides the board-gated rebuild (GOL-920)."
   type        = string
-  default     = ""
+  default     = "4457875140"
 
   validation {
     condition     = var.grove_ship_from_phone == "" || can(regex("^[0-9()+.\\-]{7,20}$", var.grove_ship_from_phone))
