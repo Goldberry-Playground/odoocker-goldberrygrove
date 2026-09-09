@@ -83,8 +83,10 @@ services:
       # GATE (was: do NOT ship this list to a prod pin whose SHA lacks
       # grove_support, or entrypoint's --init=base,grove_support crash-loops odoo
       # with the module absent from addons_path). SATISFIED 2026-09-07: PR #171
-      # merged as f10c789, and var.custom_modules_ref is pinned to 2c4b1b88, whose
-      # tree carries grove_support/__manifest__.py (f10c789 verified an ancestor).
+      # merged as f10c789, and var.custom_modules_ref is pinned to 34cc4548 (GOL-2230
+      # default-catch-up bump from 2c4b1b88; 34cc4548 is 9 commits AHEAD of 2c4b1b88,
+      # a forward move), whose tree carries grove_support/__manifest__.py (f10c789
+      # verified an ancestor of 34cc4548: compare f10c789...34cc4548 = 17 ahead, 0 behind).
       # The pin and this compose file are rendered by the SAME cloud-init apply, so
       # they cannot skew -- a rebuild takes both or neither. Re-check this if the
       # pin is ever moved BACKWARDS to a SHA predating f10c789.
