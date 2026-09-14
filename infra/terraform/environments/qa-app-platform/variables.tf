@@ -474,6 +474,44 @@ variable "grove_shippo_webhook_token" {
   default     = ""
 }
 
+# --- Carrier tracking poll — UPS Track + USPS Tracking v3 (GOL-2296) ---------
+# Pirate Ship C (grove-odoo-modules#232). carrier_tracking.build_clients() reads
+# these four UPPERCASE names from os.environ and builds a carrier client only
+# when its ID *and* secret are both non-empty; otherwise that carrier is skipped
+# and the poll_carrier_tracking cron no-ops for it. Empty defaults keep the QA
+# droplet valid until Josh vaults the QA credentials and says go (guardrail: the
+# cron may only advance real QA orders once Josh provisions creds). Feed
+# user_data — changing any REPLACES the QA odoo droplet. Base URLs are NOT
+# wired: carrier_tracking defaults UPS_API_BASE/USPS_API_BASE to the LIVE
+# endpoints (required to track a real label from Pirate Ship B).
+variable "ups_client_id" {
+  description = "UPS Track API OAuth2 client id (client-credentials grant) for QA carrier-event polling (GOL-2296). carrier_tracking.py reads os.environ UPS_CLIENT_ID; empty => UPS client not built, poll skips UPS. 1P: op://Grove QA/UPS Track API/client_id. Feeds user_data — changing it REPLACES the QA odoo droplet."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "ups_client_secret" {
+  description = "UPS Track API OAuth2 client secret paired with ups_client_id (GOL-2296). carrier_tracking.py reads os.environ UPS_CLIENT_SECRET; empty => UPS client not built. 1P: op://Grove QA/UPS Track API/client_secret. Feeds user_data — changing it REPLACES the QA odoo droplet."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "usps_client_id" {
+  description = "USPS Tracking v3 OAuth2 client id (client-credentials grant) for QA carrier-event polling (GOL-2296; Web Tools is retired). carrier_tracking.py reads os.environ USPS_CLIENT_ID; empty => USPS client not built, poll skips USPS. 1P: op://Grove QA/USPS Tracking API/client_id. Feeds user_data — changing it REPLACES the QA odoo droplet."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "usps_client_secret" {
+  description = "USPS Tracking v3 OAuth2 client secret paired with usps_client_id (GOL-2296). carrier_tracking.py reads os.environ USPS_CLIENT_SECRET; empty => USPS client not built. 1P: op://Grove QA/USPS Tracking API/client_secret. Feeds user_data — changing it REPLACES the QA odoo droplet."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 variable "grove_ship_from_email" {
   description = "Ship-from (sender) email stamped on QA USPS/UPS labels (GOL-2121, PR grove-odoo-modules#184). USPS Ground Advantage rejects a buy with `sender_info_missing` unless the sender has both email and phone; grove_headless shippo_client.ORIGIN reads it from os.environ GROVE_SHIP_FROM_EMAIL. Not a secret (it prints on every outbound label) — safe committed default matches the module default; override via 1P (op://Grove QA/Shippo Key/ship_from_email) -> TF_VAR. Feeds cloud-init user_data — changing it REPLACES the QA odoo droplet."
   type        = string

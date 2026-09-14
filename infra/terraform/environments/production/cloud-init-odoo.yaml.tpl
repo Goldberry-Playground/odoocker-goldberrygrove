@@ -132,6 +132,17 @@ write_files:
       # empty). Same --env-file -> compose environment: path as stripe_test_*.
       SHIPPO_API_KEY=${shippo_api_key}
       GROVE_SHIPPO_WEBHOOK_TOKEN=${grove_shippo_webhook_token}
+      # Carrier tracking poll (GOL-2296 Pirate Ship C). UPS Track + USPS
+      # Tracking v3 OAuth2 client-credentials; carrier_tracking.build_clients()
+      # reads all four from os.environ and builds a client only when ID+secret
+      # are both non-empty (else that carrier is skipped, cron no-ops). Empty
+      # default => safe no-op scaffold until Josh vaults the live creds per
+      # stage (.env.op) and the board greenlights the rebuild. Same --env-file
+      # -> compose environment: path as SHIPPO_* above.
+      UPS_CLIENT_ID=${ups_client_id}
+      UPS_CLIENT_SECRET=${ups_client_secret}
+      USPS_CLIENT_ID=${usps_client_id}
+      USPS_CLIENT_SECRET=${usps_client_secret}
       # Ship-from contact (GOL-2125, PR grove-odoo-modules#184). USPS Ground
       # Advantage rejects a buy with `sender_info_missing` unless the sender has
       # BOTH email and phone; grove_headless shippo_client.ORIGIN reads these from
