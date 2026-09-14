@@ -91,6 +91,33 @@ even if odoo is crash-looping (the marker is on the host bind-mount).
 the droplet's `/etc/grove` compose env (comma-separated) and run the script; then
 fold the addition back into the repo compose so it survives a replace.
 
+## Reconcile the committed default after a hand-edit (GOL-2281)
+
+When you hand-edit `/etc/grove/.env`'s `CUSTOM_MODULES_REF` on the running prod
+droplet (an incident fix — `ignore_changes` keeps `terraform apply` off the box),
+the **live** pin moves but the **committed** default
+(`var.custom_modules_ref` in `infra/terraform/environments/production/variables.tf`)
+does not. The next droplet **rebuild** would then roll prod back onto the stale
+committed SHA. Bringing the committed default back in line used to be a manual
+PR (GOL-2232 #640, GOL-2273 #650, GOL-2280 #652 — three in one week).
+
+End the ssh pin recipe with one line — it opens the reconcile PR as the bot:
+
+```bash
+# after: ssh prod droplet, edit CUSTOM_MODULES_REF=<sha> in /etc/grove/.env, restart odoo
+gh workflow run reconcile-modules-pin.yml \
+  --repo Goldberry-Playground/odoocker-goldberrygrove \
+  -f modules_sha=<the 40-hex sha you pinned> \
+  -f note='<optional context, e.g. GOL-2134 incident hand-edit>'
+```
+
+`reconcile-modules-pin.yml` edits `variables.tf` (value + a dated
+`RECONCILE …` note appended to the description, drift-only, **no** roll-forward),
+opens the PR, and does the wrong-block guard from GOL-1708. It **never** touches
+prod. Merge the PR through the SHA-bound protected-paths-guard to un-drift `main`.
+Idempotent: if the committed default already matches, it opens no PR. See the
+workflow header for the GITHUB_TOKEN-checks caveat (GOL-2114).
+
 ## Verify
 
 ```bash
