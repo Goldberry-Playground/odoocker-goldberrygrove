@@ -206,6 +206,8 @@ jobs:
           python3 scripts/test_provision_project_agents_shell.py
       - name: Run Odoo Caddyfile routing tests (bus on the evented worker)
         run: python3 scripts/test_caddy_odoo_routes.py
+      - name: Run modules-pin reconcile tests (GOL-2281)
+        run: python3 scripts/test_reconcile_modules_pin.py
 
   validate-compose:
     name: Validate Docker Compose (Grove)

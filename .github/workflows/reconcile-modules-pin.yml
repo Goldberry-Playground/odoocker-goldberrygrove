@@ -1,0 +1,155 @@
+name: Reconcile prod modules pin
+
+# GOL-2281. Turns the recurring manual "reconcile the committed custom_modules_ref
+# default onto the live git-sync pin" chore (GOL-2232 #640, GOL-2273 #650,
+# GOL-2280 #652 — three in one week) into one `gh workflow run` line, the same
+# way promote-storefronts.yml auto-opens the storefront reconcile PR.
+#
+# The prod droplet's RUNNING modules pin is `/etc/grove/.env`'s
+# CUSTOM_MODULES_REF, which is hand-edited during incidents while
+# `ignore_changes` keeps `terraform apply` off the box. That moves the live pin
+# without any commit, so the committed default in
+# infra/terraform/environments/production/variables.tf drifts behind — and the
+# NEXT droplet rebuild would silently roll prod BACK onto the stale committed
+# SHA. Each reconcile is the identical mechanical edit; this workflow performs
+# it (scripts/reconcile_modules_pin.py) and opens the reconcile PR.
+#
+# DRIFT-ONLY — this NEVER touches prod. No terraform plan/apply, no doctl, no
+# droplet SSH. It only rewrites committed HCL and opens a PR. The PR is reviewed
+# + merged through the normal SHA-bound protected-paths-guard (an
+# allowlisted-human APPROVED review, GOL-1478) — this workflow cannot merge it.
+# So the ssh pin recipe ends with:  gh workflow run reconcile-modules-pin.yml -f modules_sha=<sha>
+#
+# NOTE ON CHECKS (GOL-2114): the PR is opened with the default GITHUB_TOKEN, so
+# GitHub does NOT auto-fire `on: pull_request` workflows for it (a deliberate
+# recursion guard). The change is drift-only HCL, and merge already requires a
+# human SHA-bound approval through the guard; when the reviewer adds it to the
+# merge queue the `merge_group`-triggered required checks (ci.yml,
+# prod-plan-guard.yml) run and gate the merge. If you want checks on the PR
+# itself before queueing, close→reopen it once. A future upgrade is to open the
+# PR with a GitHub App token (would fire pull_request checks) — that needs an
+# app installation secret, which is Terra's to provision.
+
+on:
+  workflow_dispatch:
+    inputs:
+      modules_sha:
+        description: "grove-odoo-modules commit SHA now live on prod (40-char lowercase hex). The committed default is converged onto THIS — drift reconcile, never a roll-forward."
+        required: true
+        type: string
+      note:
+        description: "Optional extra context appended after the standard reconcile note (e.g. 'GOL-2134 incident hand-edit'). No double-quotes."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  # Serialize reconciles so two dispatches can't open racing branches/PRs.
+  group: reconcile-modules-pin
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    name: Open modules-pin reconcile PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write      # push the reconcile branch (a feature branch, not protected main)
+      pull-requests: write # open the reconcile PR
+    env:
+      TF_FILE: infra/terraform/environments/production/variables.tf
+      MODULES_SHA: ${{ inputs.modules_sha }}
+      RECONCILE_NOTE: ${{ inputs.note }}
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+
+      # Fail fast on a bad SHA BEFORE we branch/commit, with the same 40-hex
+      # shape var.custom_modules_ref's own validation block enforces (GOL-892).
+      - name: Validate input SHA
+        run: |
+          if ! [[ "$MODULES_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::modules_sha '$MODULES_SHA' is not a 40-char lowercase hex commit SHA — prod never tracks a moving ref (GOL-892)."
+            exit 1
+          fi
+
+      - name: Apply the reconcile edit
+        id: edit
+        run: |
+          DATE="$(date -u +%Y-%m-%d)"
+          # Prints "changed: <old> -> <new>" or "nochange: default already at <sha>".
+          OUT="$(python3 scripts/reconcile_modules_pin.py \
+            --sha "$MODULES_SHA" --date "$DATE" --note "$RECONCILE_NOTE" --file "$TF_FILE")"
+          echo "$OUT"
+          if git diff --quiet -- "$TF_FILE"; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Nothing to reconcile
+        if: steps.edit.outputs.changed == 'false'
+        run: |
+          {
+            echo "## Modules pin already reconciled"
+            echo ""
+            echo "The committed \`custom_modules_ref\` default already equals \`$MODULES_SHA\`."
+            echo "No branch pushed, no PR opened — re-running this workflow is safe."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Commit + open reconcile PR
+        if: steps.edit.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BRANCH="reconcile-modules-pin-${MODULES_SHA:0:12}-${GITHUB_RUN_ID}"
+          # Belt-and-suspenders (GOL-1708 wrong-block trap): the helper is
+          # block-scoped + unit-tested, but confirm the ONLY 40-hex `default =`
+          # line that moved is a single pin — exactly one removed + one added
+          # line. A stray rewrite of odoo_image_tag / hub_image_tag /
+          # tenant_image_tag (a different repo's SHA) would show 4. We match on
+          # `default =` lines specifically, NOT the whole diff: the
+          # custom_modules_ref *description* text itself mentions
+          # `var.odoo_image_tag`, so a naive grep for "image_tag" over the diff
+          # would false-positive on the annotated description line.
+          CHANGED_DEFAULTS=$(git diff -- "$TF_FILE" \
+            | grep -cE '^[+-][[:space:]]*default[[:space:]]*=[[:space:]]*"[0-9a-f]{40}"' || true)
+          if [ "$CHANGED_DEFAULTS" -ne 2 ]; then
+            echo "::error::expected exactly one 40-hex \`default\` to change (2 diff lines: -old +new), saw $CHANGED_DEFAULTS — aborting (wrong-block guard, GOL-1708)."
+            exit 1
+          fi
+          if [ "$(grep -c "$MODULES_SHA" "$TF_FILE")" -ne 1 ]; then
+            echo "::error::target SHA appears more than once in $TF_FILE after edit — aborting."
+            exit 1
+          fi
+          git -c user.name="grove-reconcile-bot" -c user.email="actions@github.com" checkout -b "$BRANCH"
+          git -c user.name="grove-reconcile-bot" -c user.email="actions@github.com" \
+            commit -am "infra(prod): reconcile custom_modules_ref default -> ${MODULES_SHA} (GOL-2281, reconcile-modules-pin.yml)"
+          git push origin "HEAD:$BRANCH"
+
+          RUN_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          BODY="$(printf 'Auto-opened by `reconcile-modules-pin.yml` (run: %s).\n\n**Drift-only reconcile — no apply.** Converges the committed prod `custom_modules_ref` default onto the live git-sync pin `%s` (what prod is already serving via `/etc/grove/.env`), so the next droplet rebuild does not roll prod back onto a stale pin. This is NOT a roll-forward and touches no infrastructure.\n\nDo NOT run an untargeted prod plan/apply on this (GOL-385 / blogs.tf). Review + merge through the normal SHA-bound protected-paths-guard (allowlisted-human APPROVED review, GOL-1478). Same reconcile pattern as #650 (GOL-2273).' "$RUN_URL" "$MODULES_SHA")"
+          PR_URL="$(gh pr create --base main --head "$BRANCH" \
+            --title "infra(prod): reconcile custom_modules_ref default -> ${MODULES_SHA}" \
+            --body "$BODY")" || {
+            echo "::error::Branch pushed but opening the reconcile PR FAILED. Open a PR from '$BRANCH' by hand."
+            exit 1
+          }
+          echo "Reconcile PR opened: $PR_URL"
+          {
+            echo "## Modules pin reconcile PR opened"
+            echo ""
+            echo "- Target pin: \`$MODULES_SHA\`"
+            echo "- PR: $PR_URL"
+            echo ""
+            echo "Merge it through the SHA-bound protected-paths-guard to un-drift \`main\`. See this workflow's header for the GITHUB_TOKEN-checks caveat (GOL-2114)."
+          } >> "$GITHUB_STEP_SUMMARY"
