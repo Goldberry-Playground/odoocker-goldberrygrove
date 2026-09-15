@@ -437,6 +437,14 @@ resource "digitalocean_droplet" "odoo" {
     shippo_api_key             = var.shippo_api_key
     grove_shippo_webhook_token = var.grove_shippo_webhook_token
 
+    # Carrier tracking poll (GOL-2296 Pirate Ship C, grove-odoo-modules#232).
+    # Default-empty => each carrier client is not built and the
+    # poll_carrier_tracking cron no-ops. Feeds user_data (droplet replace).
+    ups_client_id      = var.ups_client_id
+    ups_client_secret  = var.ups_client_secret
+    usps_client_id     = var.usps_client_id
+    usps_client_secret = var.usps_client_secret
+
     # Ship-from (sender) contact on labels (GOL-2121, grove-odoo-modules#184).
     # Email defaults to josh@goldberrygrove.farm; phone default-empty => the
     # USPS-GA buy fails loudly (`sender_info_missing`) rather than shipping a

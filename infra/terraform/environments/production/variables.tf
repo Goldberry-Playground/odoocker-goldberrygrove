@@ -448,6 +448,47 @@ variable "grove_shippo_webhook_token" {
   default     = ""
 }
 
+# === Carrier tracking poll — UPS Track + USPS Tracking v3 (GOL-2296) =========
+# Pirate Ship C (grove-odoo-modules#232). carrier_tracking.build_clients() reads
+# these four UPPERCASE names from os.environ and builds a carrier client only
+# when its ID *and* secret are both non-empty; otherwise that carrier is skipped
+# and the poll_carrier_tracking cron no-ops for it. Empty defaults keep
+# plan/apply working and tracking inert until Josh vaults the live OAuth
+# client-credentials per stage (see .env.op) and the board greenlights the
+# rebuild that carries them. Both feed cloud-init user_data => activating
+# requires a droplet REPLACE (rides the board-approved go-live rebuild, same
+# semantics as shippo_api_key), and user_data is in ignore_changes so landing
+# this scaffold does NOT touch the running droplet. Base URLs are NOT wired:
+# carrier_tracking defaults UPS_API_BASE/USPS_API_BASE to the LIVE endpoints
+# (required to track real labels).
+variable "ups_client_id" {
+  description = "UPS Track API OAuth2 client id (client-credentials grant) for prod carrier-event polling (GOL-2296). carrier_tracking.py reads os.environ UPS_CLIENT_ID; empty => UPS client not built, poll skips UPS. 1P: op://Grove Prod/UPS Track API/client_id (Josh mints under the prod UPS developer app). user_data input — droplet-REPLACE semantics like shippo_api_key."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "ups_client_secret" {
+  description = "UPS Track API OAuth2 client secret paired with ups_client_id (GOL-2296). carrier_tracking.py reads os.environ UPS_CLIENT_SECRET; empty => UPS client not built. 1P: op://Grove Prod/UPS Track API/client_secret. user_data input — droplet-REPLACE semantics like shippo_api_key."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "usps_client_id" {
+  description = "USPS Tracking v3 OAuth2 client id (client-credentials grant) for prod carrier-event polling (GOL-2296; Web Tools is retired). carrier_tracking.py reads os.environ USPS_CLIENT_ID; empty => USPS client not built, poll skips USPS. 1P: op://Grove Prod/USPS Tracking API/client_id. user_data input — droplet-REPLACE semantics like shippo_api_key."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "usps_client_secret" {
+  description = "USPS Tracking v3 OAuth2 client secret paired with usps_client_id (GOL-2296). carrier_tracking.py reads os.environ USPS_CLIENT_SECRET; empty => USPS client not built. 1P: op://Grove Prod/USPS Tracking API/client_secret. user_data input — droplet-REPLACE semantics like shippo_api_key."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 # === Mailgun SMTP — Odoo transactional email (GOL-988) =======================
 # Order-confirmation + shipping-notification email for the storefront. Prod Odoo
 # reads these from /etc/grove/.env (SMTP_SERVER/PORT/SSL/USER/PASSWORD +

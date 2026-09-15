@@ -144,6 +144,20 @@ services:
       # source as stripe_test_* above; cloud-init writes both.
       SHIPPO_API_KEY: ${SHIPPO_API_KEY:-}
       GROVE_SHIPPO_WEBHOOK_TOKEN: ${GROVE_SHIPPO_WEBHOOK_TOKEN:-}
+      # Carrier tracking poll (GOL-2296 Pirate Ship C, grove-odoo-modules#232).
+      # carrier_tracking.build_clients() reads these four UPPERCASE names from
+      # os.environ; a client is built only when its ID *and* secret are both
+      # non-empty, else that carrier is skipped and poll_carrier_tracking no-ops.
+      # Default-empty => tracking inert until Josh vaults the QA UPS/USPS OAuth
+      # client-credentials (.env.op). Same --env-file -> compose environment: ->
+      # os.environ path as SHIPPO_* above. UPS_API_BASE/USPS_API_BASE are left
+      # UNSET: carrier_tracking defaults them to the LIVE endpoints (needed to
+      # track a real label from Pirate Ship B), and an empty passthrough would
+      # override that default with "" and break the base URL.
+      UPS_CLIENT_ID: ${UPS_CLIENT_ID:-}
+      UPS_CLIENT_SECRET: ${UPS_CLIENT_SECRET:-}
+      USPS_CLIENT_ID: ${USPS_CLIENT_ID:-}
+      USPS_CLIENT_SECRET: ${USPS_CLIENT_SECRET:-}
       # Ship-from (sender) contact on labels (GOL-2121, grove-odoo-modules#184).
       # USPS Ground Advantage HARD-REQUIRES sender email AND phone or the buy
       # fails `sender_info_missing`. shippo_client.ORIGIN reads these from

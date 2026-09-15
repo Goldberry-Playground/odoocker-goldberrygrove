@@ -118,6 +118,23 @@ services:
       # fail-closed when empty). Same --env-file source as stripe_test_*.
       SHIPPO_API_KEY: ${SHIPPO_API_KEY:-}
       GROVE_SHIPPO_WEBHOOK_TOKEN: ${GROVE_SHIPPO_WEBHOOK_TOKEN:-}
+      # Carrier tracking poll (GOL-2296 Pirate Ship C, grove-odoo-modules#232).
+      # carrier_tracking.build_clients() reads these four UPPERCASE names from
+      # os.environ; a client is built only when its ID *and* secret are both
+      # non-empty, else that carrier is skipped and the poll_carrier_tracking
+      # cron no-ops for it. Default-empty here => the tracking poll is inert
+      # until Josh vaults the live UPS/USPS OAuth client-credentials (.env.op)
+      # and the board greenlights the rebuild that carries them. Same
+      # --env-file -> compose environment: -> os.environ path as SHIPPO_* above;
+      # the /.env mount feeds odoorc.sh's odoo.conf ONLY, so an unlisted var
+      # never reaches the process. UPS_API_BASE/USPS_API_BASE are left UNSET on
+      # purpose: carrier_tracking defaults them to the LIVE endpoints (required
+      # to track real labels), and an empty-string passthrough would override
+      # that default with "" and break the base URL.
+      UPS_CLIENT_ID: ${UPS_CLIENT_ID:-}
+      UPS_CLIENT_SECRET: ${UPS_CLIENT_SECRET:-}
+      USPS_CLIENT_ID: ${USPS_CLIENT_ID:-}
+      USPS_CLIENT_SECRET: ${USPS_CLIENT_SECRET:-}
       # Ship-from contact (GOL-2125, PR grove-odoo-modules#184). USPS Ground
       # Advantage HARD-REQUIRES sender email AND phone or the buy fails
       # `sender_info_missing`. grove_headless shippo_client.ORIGIN reads these
