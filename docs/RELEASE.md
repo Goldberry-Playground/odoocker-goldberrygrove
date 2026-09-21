@@ -262,3 +262,16 @@ You can trigger a release without pushing a new tag:
 
 This is useful for re-deploying an existing tag (e.g. after a Droplet rebuild)
 without creating a new tag.
+
+---
+
+## Release Trains
+
+Grove ships production changes on a biweekly **release train** (EPIC GOL-2324):
+a QA window → promote → teardown cycle bundling a fixed set of `grove-sites`
+PRs, one `grove-odoo-modules` ref, and a promote/teardown plan. Each train's
+bundle is captured in an explicit, auditable manifest — never reconstructed
+from memory. Open the next train from
+[`docs/release-train-manifest.md`](release-train-manifest.md) (portable
+Paperclip template + Train #1 worked example) or the `Release Train` GitHub
+issue form (`.github/ISSUE_TEMPLATE/release-train.yml`).

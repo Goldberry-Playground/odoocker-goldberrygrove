@@ -1,0 +1,129 @@
+name: Release Train
+description: Open the bundle manifest for a biweekly Grove release train (child of GOL-2324).
+title: "Release Train #<N> — week of <YYYY-MM-DD>"
+labels: ["release-train"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Structured manifest for one release train. See
+        [`docs/release-train-manifest.md`](../../docs/release-train-manifest.md)
+        for how to use this, the portable Paperclip-issue version, and the
+        Train #1 worked example. Fill **every** field — an unfillable field is a
+        gap to close before the train departs, not a field to delete.
+  - type: input
+    id: train_number
+    attributes:
+      label: Train number
+      placeholder: "2"
+    validations:
+      required: true
+  - type: input
+    id: week
+    attributes:
+      label: Week (Monday of the QA window)
+      placeholder: "2026-10-06"
+    validations:
+      required: true
+  - type: input
+    id: qa_up_date
+    attributes:
+      label: QA-up date
+      description: "Date `make qa-l3-up` runs."
+      placeholder: "2026-10-06"
+    validations:
+      required: true
+  - type: input
+    id: promote_date
+    attributes:
+      label: Promote date (prod deploy — Josh env-approval required)
+      placeholder: "2026-10-08"
+    validations:
+      required: true
+  - type: input
+    id: teardown_date
+    attributes:
+      label: Teardown date (`make qa-l3-teardown`, Option A compute-only)
+      placeholder: "2026-10-09"
+    validations:
+      required: true
+  - type: textarea
+    id: grove_sites_prs
+    attributes:
+      label: Bundle — grove-sites PRs
+      description: "One row per PR. Image tag = the ghcr.io tag CI published for that PR head."
+      value: |
+        | grove-sites PR | Title / purpose | Storefront image tag |
+        |----------------|-----------------|----------------------|
+        | #    |    |    |
+    validations:
+      required: true
+  - type: input
+    id: modules_ref
+    attributes:
+      label: Bundle — grove-odoo-modules ref (SHA)
+      description: "40-char SHA, bound by the odoocker reconcile PR that carries the authoritative pin (cite it below)."
+      placeholder: "0b36ecfa… (odoocker #NNN)"
+    validations:
+      required: true
+  - type: input
+    id: modules_delta
+    attributes:
+      label: Modules delta vs current prod pin
+      placeholder: "default catch-up only — or short-sha…short-sha, N commits"
+    validations:
+      required: true
+  - type: checkboxes
+    id: qa_gates
+    attributes:
+      label: QA gate targets (all green before promote)
+      options:
+        - label: "`test:e2e:gate` — Playwright E2E gate green on QA L3"
+        - label: "`@stripe` — Stripe-tagged checkout suite green"
+        - label: "`make qa-l3-seed-e2e` ran (E2E inventory fixture seeded)"
+        - label: "`make qa-test-data-cleanup` DRY-RUN reviewed → `…-apply` after QA"
+    validations:
+      required: true
+  - type: checkboxes
+    id: promote_plan
+    attributes:
+      label: Promote plan
+      options:
+        - label: "odoocker storefront pin bump PR(s) opened & merged"
+        - label: "odoocker `custom_modules_ref` reconcile PR(s) (if modules moved)"
+        - label: "Production deploy run (`make tf-apply env=production CONFIRM=yes` / create-deployment)"
+        - label: "**Josh environment approval** recorded on the prod deploy"
+        - label: "Rollback ref (previous prod pin) noted"
+    validations:
+      required: true
+  - type: input
+    id: reconcile_prs
+    attributes:
+      label: odoocker pin-bump / reconcile PR(s)
+      placeholder: "odoocker #NNN (storefront), #NNN (modules)"
+    validations:
+      required: true
+  - type: input
+    id: rollback_ref
+    attributes:
+      label: Rollback ref (previous prod pin)
+      placeholder: "393b7696"
+    validations:
+      required: true
+  - type: checkboxes
+    id: teardown_plan
+    attributes:
+      label: Teardown plan
+      options:
+        - label: "`make qa-l3-teardown` (compute only; PG data / DNS / certs survive — NOT `-all`)"
+        - label: "Confirmed Managed PG / volumes / DNS zone not destroyed (Option A)"
+    validations:
+      required: true
+  - type: checkboxes
+    id: reup_verification
+    attributes:
+      label: Re-up verification (next train)
+      options:
+        - label: "Next train `make qa-l3-up` brings QA back clean from cloud-init alone"
+    validations:
+      required: true
