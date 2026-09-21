@@ -252,7 +252,10 @@ MONITORING_ENV_FILE  ?= .env.monitoring
 .PHONY: monitoring-setup
 monitoring-setup:
 	@test -f "$(MONITORING_ENV_FILE)" || { echo "missing $(MONITORING_ENV_FILE) — populate it from 1Password first (see docs/RUNBOOK-prod-synthetics-golive.md)"; exit 1; }
-	set -a; . ./$(MONITORING_ENV_FILE); set +a; python3 scripts/setup-monitoring.py
+	@case "$(MONITORING_ENV_FILE)" in \
+		*/*) set -a; . "$(MONITORING_ENV_FILE)"; set +a; python3 scripts/setup-monitoring.py ;; \
+		*) set -a; . ./"$(MONITORING_ENV_FILE)"; set +a; python3 scripts/setup-monitoring.py ;; \
+	esac
 
 ## monitoring-up: bring up the monitoring stack — seeds first, so the runner never fires without seed records
 .PHONY: monitoring-up
