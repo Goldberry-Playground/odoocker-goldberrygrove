@@ -44,6 +44,26 @@ Managed Postgres has no kernel access; its stats come from the `postgresql`
 receiver). Needs a Linux host + compatible kernel; if it can't attach it logs
 and produces no metrics (never crashes the stack).
 
+**`beyla-config.yml` (route grouping — GOL-2332).** The `routes:` block is
+config-file-only in Beyla; without it every id-like path (`…/products/1234`)
+becomes its own series and the per-endpoint p95 the RED alerts query
+(`odoo-orders-latency`, `odoo-products-latency`) never forms. `unmatched:
+heuristic` collapses id segments to `*`; the explicit `/grove/api/v1/*`
+patterns pin canonical names for the money paths. Mount it at
+`/etc/beyla/beyla-config.yml` and point Beyla at it via `BEYLA_CONFIG_PATH`.
+
+**`docker-compose.apm.yml` (spec §3 canonical overlay — GOL-2332).** The
+independently-deployable Beyla + Collector layer, separate from the obs-plane
+`docker-compose.monitoring.yml`, with the `beyla-config.yml` mount wired. It is
+the spec-§3 extraction of the collector+beyla currently inlined in
+`docker-compose.monitoring.app-plane.yml` (which also carries the
+synthetic-runner). **Deploy exactly one of {`apm.yml`, `app-plane.yml`} per
+droplet** — both define an `otel-collector` on `grove_grove` and running both
+double-scrapes/double-exports USE metrics. Prod (greenfield) uses `apm.yml`;
+consolidating QA onto it is a tracked follow-up. **Prod apply is CEO/Josh-gated:
+a privileged/`pid:host` sidecar changes `user_data` → droplet REPLACE (filestore
+must be on the `LABEL=` volume, GOL-93/-99).**
+
 ## The `postgresql` receiver (app-plane — GOL-335, LIVE on QA)
 
 The receiver lives in the **app-plane overlay fragment**

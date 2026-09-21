@@ -1,0 +1,54 @@
+###############################################################################
+# Beyla eBPF config — Odoo RED metrics (GOL-2332, spec §3 "APM eBPF-first").
+#
+# Beyla attaches eBPF uprobes to the Odoo WSGI process (discovered by its listen
+# port) and emits RED metrics (Rate / Errors / Duration p50/p95/p99) per HTTP
+# route, with ZERO Odoo code. It exports OTLP to the local otel-collector, which
+# forwards to OpenObserve (see otel/otelcol-config.yaml).
+#
+# WHY A CONFIG FILE (not pure env like the older inline services): the `routes`
+# block below is config-file-only in Beyla. Without route grouping, high-
+# cardinality paths (…/products/1234) each become their own series and the
+# per-endpoint p95 the alerts query (odoo-orders-latency, odoo-products-latency)
+# never forms. `unmatched: heuristic` collapses id-like path segments to `*`, so
+# every endpoint gets ONE low-cardinality route series automatically; the
+# explicit `patterns` just guarantee clean canonical names for the money paths.
+#
+# PENDING LIVE VALIDATION (same convention as alerts.json / otelcol-config.yaml):
+# the `/grove/api/v1/*` patterns encode the documented grove_headless surface
+# (orders/products/cart/checkout — the paths the RED alerts reference). Confirm
+# them against the first real prod traffic in OpenObserve and adjust if the live
+# route labels differ; `unmatched: heuristic` is the safety net until then.
+###############################################################################
+
+# Discover the Odoo process by its listen port (WSGI on 8069) and label its
+# telemetry. Env (OTEL_SERVICE_NAME / BEYLA_SERVICE_NAMESPACE) still applies and
+# takes precedence; kept here so the file is self-describing.
+discovery:
+  services:
+    - open_ports: "8069"
+      name: odoo
+      namespace: grove
+
+# Per-route RED grouping. `heuristic` is the active fallback for every route;
+# the explicit patterns pin canonical names for the endpoints the alerts watch.
+routes:
+  unmatched: heuristic
+  patterns:
+    - /grove/api/v1/orders
+    - /grove/api/v1/orders/*
+    - /grove/api/v1/products
+    - /grove/api/v1/products/*
+    - /grove/api/v1/cart
+    - /grove/api/v1/cart/*
+    - /grove/api/v1/checkout
+
+# OTLP metrics export → local collector. Endpoint/protocol are also set via env
+# in the compose service (OTEL_EXPORTER_OTLP_ENDPOINT/_PROTOCOL); env wins, this
+# documents the intent. `application` gives RED HTTP metrics; `application_span`
+# gives the trace spans that stitch into the Next.js → Odoo trace.
+otel_metrics_export:
+  features:
+    - application
+    - application_span
+  interval: 30s
