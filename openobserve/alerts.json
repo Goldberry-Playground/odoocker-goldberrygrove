@@ -1540,6 +1540,18 @@
         "conditions": {
           "and": [
             {
+              "column": "service_name",
+              "operator": "=",
+              "value": "odoo",
+              "ignore_case": false
+            },
+            {
+              "column": "http_route",
+              "operator": "=",
+              "value": "/grove/api/v1/orders",
+              "ignore_case": false
+            },
+            {
               "column": "value",
               "operator": ">",
               "value": "3",
@@ -1574,7 +1586,7 @@
         "tenant": "shared"
       },
       "row_template": "",
-      "description": "RED — Odoo /orders p95 >3s over 5m. Check Postgres connections + slow query log. Runbook: docs/RUNBOOKS.md#odoo-latency  [intent: p95(http_server_request_duration) where url_path='/grove/api/v1/orders' > 3s over 5m]  [note: RED metric from Beyla eBPF (Odoo). Metric stream/field names (http_server_request_duration, url_path) pending live validation on first Beyla run.]",
+      "description": "RED — Odoo /orders p95 >3s over 5m. Check Postgres connections + slow query log. Runbook: docs/RUNBOOKS.md#odoo-latency  [intent: p95(http_server_request_duration) where service_name='odoo' AND http_route='/grove/api/v1/orders' > 3s over 5m]  [note: RED metric from Beyla eBPF (Odoo). Metric stream/field names (http_server_request_duration, http_route, service_name) pending live validation on first Beyla run.]",
       "enabled": true,
       "tz_offset": 0
     },
@@ -1587,6 +1599,18 @@
         "type": "custom",
         "conditions": {
           "and": [
+            {
+              "column": "service_name",
+              "operator": "=",
+              "value": "odoo",
+              "ignore_case": false
+            },
+            {
+              "column": "http_route",
+              "operator": "=",
+              "value": "/grove/api/v1/orders",
+              "ignore_case": false
+            },
             {
               "column": "value",
               "operator": ">",
@@ -1622,7 +1646,7 @@
         "tenant": "shared"
       },
       "row_template": "",
-      "description": "RED — Odoo /orders p95 >8s — orders timing out. Check Postgres locks; restart Odoo if no DB cause. Runbook: docs/RUNBOOKS.md#odoo-latency  [intent: p95(http_server_request_duration) where url_path='/grove/api/v1/orders' > 8s over 5m]",
+      "description": "RED — Odoo /orders p95 >8s — orders timing out. Check Postgres locks; restart Odoo if no DB cause. Runbook: docs/RUNBOOKS.md#odoo-latency  [intent: p95(http_server_request_duration) where service_name='odoo' AND http_route='/grove/api/v1/orders' > 8s over 5m]",
       "enabled": true,
       "tz_offset": 0
     },
@@ -1635,6 +1659,18 @@
         "type": "custom",
         "conditions": {
           "and": [
+            {
+              "column": "service_name",
+              "operator": "=",
+              "value": "odoo",
+              "ignore_case": false
+            },
+            {
+              "column": "http_route",
+              "operator": "=",
+              "value": "/grove/api/v1/products",
+              "ignore_case": false
+            },
             {
               "column": "value",
               "operator": ">",
@@ -1670,7 +1706,7 @@
         "tenant": "shared"
       },
       "row_template": "",
-      "description": "RED — Odoo /products p95 >1s. Cache miss or Postgres scan; check KeyDB hit rate. Runbook: docs/RUNBOOKS.md#odoo-latency  [intent: p95(http_server_request_duration) where url_path='/grove/api/v1/products' > 1s over 5m]",
+      "description": "RED — Odoo /products p95 >1s. Cache miss or Postgres scan; check KeyDB hit rate. Runbook: docs/RUNBOOKS.md#odoo-latency  [intent: p95(http_server_request_duration) where service_name='odoo' AND http_route='/grove/api/v1/products' > 1s over 5m]",
       "enabled": true,
       "tz_offset": 0
     },
@@ -1683,6 +1719,12 @@
         "type": "custom",
         "conditions": {
           "and": [
+            {
+              "column": "service_name",
+              "operator": "=",
+              "value": "odoo",
+              "ignore_case": false
+            },
             {
               "column": "http_response_status_code",
               "operator": ">=",

@@ -15,10 +15,10 @@
 # explicit `patterns` just guarantee clean canonical names for the money paths.
 #
 # PENDING LIVE VALIDATION (same convention as alerts.json / otelcol-config.yaml):
-# the `/grove/api/v1/*` patterns encode the documented grove_headless surface
-# (orders/products/cart/checkout — the paths the RED alerts reference). Confirm
-# them against the first real prod traffic in OpenObserve and adjust if the live
-# route labels differ; `unmatched: heuristic` is the safety net until then.
+# the `/grove/api/v1/*` patterns are taken from the grove_headless controllers
+# (verified against grove-odoo-modules main 2026-09-21). What still needs live
+# confirmation is the OpenObserve column naming (http_route / service_name) on
+# the first real prod Beyla traffic; `unmatched: heuristic` covers new routes.
 ###############################################################################
 
 # Discover the Odoo process by its listen port (WSGI on 8069) and label its
@@ -32,16 +32,28 @@ discovery:
 
 # Per-route RED grouping. `heuristic` is the active fallback for every route;
 # the explicit patterns pin canonical names for the endpoints the alerts watch.
+# Pattern list = the grove_headless controller surface (grove-odoo-modules
+# `@http.route('/grove/api/v1/...')`), with Odoo `<int:x>` converters written as
+# Beyla `{x}` path params (a bare `*` is a literal in Beyla, not a wildcard).
+# The alerts match http_route EXACTLY ('/grove/api/v1/orders', '/products'), so
+# keep those two entries byte-identical to openobserve/alerts.json.
 routes:
   unmatched: heuristic
   patterns:
-    - /grove/api/v1/orders
-    - /grove/api/v1/orders/*
+    - /grove/api/v1/health
+    - /grove/api/v1/zone
     - /grove/api/v1/products
-    - /grove/api/v1/products/*
+    - /grove/api/v1/products/{product_id}
     - /grove/api/v1/cart
-    - /grove/api/v1/cart/*
-    - /grove/api/v1/checkout
+    - /grove/api/v1/checkout/session
+    - /grove/api/v1/orders
+    - /grove/api/v1/orders/{order_id}
+    - /grove/api/v1/orders/{order_id}/mark-shipped
+    - /grove/api/v1/shipping/options
+    - /grove/api/v1/shipping/rates
+    - /grove/api/v1/shipping/webhook
+    - /grove/api/v1/stripe/webhook
+    - /grove/api/v1/newsletter/subscribe
 
 # OTLP metrics export → local collector. Endpoint/protocol are also set via env
 # in the compose service (OTEL_EXPORTER_OTLP_ENDPOINT/_PROTOCOL); env wins, this
