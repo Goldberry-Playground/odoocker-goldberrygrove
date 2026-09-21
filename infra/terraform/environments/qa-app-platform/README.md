@@ -59,6 +59,51 @@ Phase 2 adds 4 × $5 basic App Platform apps (~$20/mo) → **~$59/mo full env** 
 
 During the Phase 3 parallel-cutover validation window, expect ~$83/mo total (monolith QA $24 + Level 3 $59). The monolith retires in Phase 5.
 
+## Release-train teardown: App Platform apps (park/scale leg — GOL-2327)
+
+The [Grove Release Train](../../../../docs/RELEASE.md) (epic GOL-2324, CEO-ratified
+2026-09-20) runs QA compute **only inside biweekly train windows**: Mon `qa-l3-up`
+→ Wed promote → **Thu `qa-l3-teardown.sh compute`**. The 4 App Platform apps are
+part of that teardown, not exempt from it.
+
+**Decision: Option A — destroy the apps each train** (`-target=digitalocean_app.hub
+-target=digitalocean_app.tenant`). Already wired in `scripts/qa-l3-teardown.sh`
+compute mode; the apps only "run 24/7" today because teardown has never been run
+(Train #1's teardown Thu 2026-09-25 is the first ever). `make qa-l3-up` rebuilds
+them from the pinned GHCR image.
+
+| | Option A — **destroy** (chosen) | Option B — park/scale (rejected) |
+|---|---|---|
+| Cost while "down" | **$0** — no app resource billed | ~$20/mo — App Platform has **no scale-to-zero for services**; min billable is 1 × `apps-s-1vcpu-0.5gb` basic (~$5/mo) × 4 apps |
+| Re-up latency | ~2 min/app (PoC: app ACTIVE + HTTP 200 within ~2 min of apply, `apps.tf`), 4 apply in parallel | near-instant (resize back up) |
+| Deploy history | reset each train | preserved |
+
+Option A maximizes the ~70% compute reduction the epic targets; the ~2-min re-up
+is a negligible price for zeroing the "down" spend. Deploy history is disposable
+in QA. If re-up latency or domain re-binding ever proves painful in practice,
+revisit Option B.
+
+**What survives a compute teardown** (so re-up is clean, not a from-scratch rebuild):
+
+- **DNS**: the DO-managed `qa` zone (`digitalocean_domain.qa`) + its Cloudflare NS
+  delegation — NOT targeted. The per-app CNAME lives *inside* that zone and is
+  written by App Platform, so it drops with the app and is re-written on re-up.
+- **Reserved IP** (`digitalocean_reserved_ip.odoo`) — droplet DNS keeps pointing
+  at a stable IP across the droplet replace.
+- **Managed PG** + all Odoo data, **caddy_data** (LE cert) and **odoo_filestore**
+  volumes — see the script header for the full survives/destroys inventory.
+
+**LE-cert budget note:** each app has a *distinct* hostname
+(`hub`/`goldberry`/`ggg`/`nursery`.qa), so a re-up issues 4 *distinct* App-Platform
+certs, not duplicates. At biweekly cadence that's 4 issuances / 2 weeks — far under
+Let's Encrypt's 50-certs-per-registered-domain/week. Unlike the droplet's Caddy
+multi-hostname exposure (ADR-005), Option A does **not** stress the LE budget.
+
+**Verification status:** the destroy leg is coded and covered. End-to-end
+(teardown → re-up → all 4 apps healthy) is verified at the **first re-up, Oct 6
+week train** per the epic — the Thu 2026-09-25 teardown is destroy-only; there is
+no re-up until the next Monday window.
+
 ## Applying
 
 NOT YET APPLIED. The Phase 1.5 PR (next) adds the obs droplet so we don't ship half the failure-domain story. After Phase 1.5 merges:

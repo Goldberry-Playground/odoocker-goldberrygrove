@@ -93,6 +93,13 @@ EOF
 
 TARGETS=""
 if [ "$MODE" = "compute" ]; then
+  # App Platform park/scale leg (GOL-2327): Option A = DESTROY the 4 apps each
+  # train. App Platform has no scale-to-zero for services, so parking would
+  # still bill 4 x ~$5/mo min-tier while "down"; destroying zeroes that. Re-up
+  # rebuilds from the pinned GHCR image (~2 min/app to ACTIVE+HTTP 200, apply in
+  # parallel). The qa DNS zone, the per-app CNAME's parent zone, the reserved
+  # IP, PG and both volumes SURVIVE -- see the header inventory and the
+  # env README ("Release-train teardown: App Platform apps") for rationale.
   # -target on the bare for_each address (digitalocean_app.tenant)
   # covers all its instances.
   TARGETS="-target=digitalocean_app.hub -target=digitalocean_app.tenant -target=digitalocean_volume_attachment.caddy_data -target=digitalocean_droplet.odoo -target=digitalocean_droplet.obs"
