@@ -17,6 +17,11 @@ assignees: []
   4. A fully worked example (Train #1) is in the collapsed section at the very
      bottom — use it as the reference for what "good" looks like.
 
+  CADENCE (canon: vault [[Software/Grove Release Train (QA Cadence)]], CEO-ratified
+  2026-09-20). QA compute runs ONLY inside train windows:
+    biweekly Mon qa-l3-up → Mon–Wed bundle+gate → Wed promote (Josh env-approval)
+    → Thu qa-l3-teardown.sh compute.  (~70% QA compute reduction.)
+
   INVARIANTS (don't relearn these the hard way — see docs/ + CLAUDE.md):
   - "Merged to main" ≠ "applied". qa-app-platform / production applies are
     MANUAL. Verify with lsblk / DO volumes / doctl, not the PR badge.
@@ -26,6 +31,8 @@ assignees: []
     this repo's `.github/workflows/promote-storefronts.yml` (production-gated).
   - grove-odoo-modules ref MUST be an immutable 40-char SHA, never a moving tag.
   - Every promote needs Josh's GitHub `production` environment approval.
+  - TEARDOWN tears down COMPUTE ONLY. qa-l3-teardown.sh keeps PG / filestore /
+    reserved-IP / DNS. NEVER run the DNS script in a teardown.
 -->
 
 ## Train identity
@@ -104,13 +111,16 @@ List every grove-sites PR that is bundled into this train's storefront images.
       (drift alarm quiet).
 - Verification notes / links: `<fill>`
 
-## Teardown (`<teardown date>`)
+## Teardown (`<teardown date>`) — COMPUTE ONLY
 
-- [ ] QA droplet(s) / preview resources torn down (no idle droplets billing).
-- [ ] QA volumes / snapshots handled per policy (durable data retained, ephemeral gone).
-- [ ] **Re-up verification:** QA can be stood back up from code alone before
-      next train's QA-up date (reproducibility check — no snowflake).
-  - re-up check: `<fill: date + result>`
+- [ ] `qa-l3-teardown.sh` run — tears down QA **compute** only.
+      **Keeps** PG / filestore / reserved-IP / DNS. **NEVER** run the DNS script.
+- [ ] QA App Platform apps parked/scaled down (they otherwise run 24/7 — see
+      GOL-2324 automation child (b)).
+- [ ] No idle droplets / preview resources still billing (verify via `doctl` / DO console).
+- [ ] **Re-up verification:** QA stands back up from code alone at the **next**
+      train's Mon qa-l3-up (reproducibility check — no snowflake).
+  - re-up check: `<fill: next-train date + result>`
 
 ## Sign-off
 
@@ -121,37 +131,39 @@ List every grove-sites PR that is bundled into this train's storefront images.
 ---
 
 <details>
-<summary><b>Worked example — Train #1 (week of 2026-09-21)</b> · seed reference, do not edit</summary>
+<summary><b>Worked example — Train #1 (immediate; QA up since 2026-09-08)</b> · seed reference from GOL-2324, do not edit</summary>
 
-> Seeded from the GOL-2324 EPIC as the first worked bundle. Cross-check any
-> values marked ⚠ against the canonical GOL-2324 body before reusing verbatim.
+> Seeded verbatim from the GOL-2324 EPIC body (CEO-ratified 2026-09-20) as the
+> first worked bundle. Train #1's QA was already up since 09-08, so it has no
+> distinct Mon qa-l3-up — the biweekly Mon-up cadence starts from Train #2.
 
 | Field | Value |
 |---|---|
 | **Train #** | 1 |
-| **Week** | week of 2026-09-21 |
-| **QA-up date** | ~2026-09-22 (QA env is the Grove system-of-record since 2026-07-09) |
+| **Week** | week of 2026-09-21 (QA already up since 2026-09-08) |
+| **QA-up date** | 2026-09-08 (pre-cadence; QA is the Grove system-of-record) |
 | **Promote date** | 2026-09-24 (Wed) |
-| **Teardown date** | 2026-09-25 (Thu) — first teardown |
-| **Conductor (DevOps)** | DevOps (Terra) |
-| **App reviewer (Eng)** | Engineering (Alice) |
+| **Teardown date** | 2026-09-25 (Thu) — **first ever** teardown |
 | **Parent EPIC** | GOL-2324 |
 
-**Bundle**
-- grove-sites: RCE-bump build → storefront tag `68f4e5c5…` ⚠ (grove-sites#758, per GOL-2316 reconcile).
-- grove-odoo-modules ref: prod-live main HEAD `0b36ecfa…` ⚠ (GOL-2307 catch-up).
-- Reconcile PRs: odoocker #653 (reconcile automation, GOL-2286), #666 (storefront-tag reconcile, GOL-2316).
+**Bundle — grove-sites PRs**
+- `#737` — FL mirror (resolve per the GOL-2235 semantic addendum: `zone_6`=FL rates, delete stale `zone_7`, map FL).
+- `#770` — estimator zone-map fix.
+- verify `#750` (PDP copy) + `#748` (gate) on QA.
 
-**Gate targets:** `test:e2e:gate` + `@stripe` green on QA head.
+**Bundle — grove-odoo-modules ref:** `main` HEAD — carries the FULL GOL-2132
+compliance stack (`#214`/`#215`/`#217`), so FL ships in prod with this train,
+correctly substituted.
 
-**Pre-freeze:** `qa-test-data-cleanup` before the 09-25 teardown
-(`docs/RUNBOOK-qa-test-data-cleanup.md`).
+**Gate targets:** `test:e2e:gate` + `@stripe` on QA; `qa-test-data-cleanup`
+before verdicts.
 
-**Promote (09-24):** pin bump → targeted `terraform apply` → per-app
-`doctl apps create-deployment` (or `promote-storefronts.yml`), gated on Josh's
-GitHub `production` environment approval (SHA-bound).
+**Promote (Wed 2026-09-24):** odoocker pin bump + default-catch-up reconcile
+(**dedupe the competing `#666`/`#667` reconciles first**) + `promote-storefronts.yml`
+(Josh approves the GitHub `production` environment).
 
-**Teardown (09-25):** tear down QA preview resources; verify QA re-ups from code
-before Train #2 (week of 2026-10-06).
+**Teardown (Thu 2026-09-25) — first ever:** `qa-l3-teardown.sh` compute only —
+keep PG / filestore / reserved-IP / DNS; **NEVER** the DNS script. Verify re-up
+works at the NEXT train (Oct 6 week).
 
 </details>
