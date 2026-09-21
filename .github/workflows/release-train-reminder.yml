@@ -120,7 +120,7 @@ jobs:
           set -euo pipefail
           if [ "$LEG" = "up" ]; then
             TITLE="🚂 Release Train — train-up (Mon)"
-            DESC=$'It'"'"'s train week. Bring the QA window up:\n```\nmake train-up\n```\nIdempotent terraform apply of the L3 QA env; injects creds via `op run` from the **Goldberry Grove - Admin** vault. Safe to re-run.\n\nRunbook: `docs/RUNBOOK-release-train.md` · Epic: GOL-2324'
+            DESC=$'It\'s train week. Bring the QA window up:\n```\nmake train-up\n```\nIdempotent terraform apply of the L3 QA env; injects creds via `op run` from the **Goldberry Grove - Admin** vault. Safe to re-run.\n\nRunbook: `docs/RUNBOOK-release-train.md` · Epic: GOL-2324'
             COLOR=3066993      # green
           else
             TITLE="🚂 Release Train — train-teardown (Thu)"
