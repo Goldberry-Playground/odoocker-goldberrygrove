@@ -184,6 +184,24 @@ qa-l3-teardown:
 qa-l3-teardown-all:
 	bash scripts/qa-l3-teardown.sh all
 
+# ── Release Train cadence aliases (GOL-2326 / GOL-2324) ──────────────────────
+# The biweekly Grove Release Train's two spend-bracketing legs, named to match
+# the epic vocabulary. Thin aliases over the qa-l3 targets so "one command"
+# lines up with "train-up" / "train-teardown". Both stay LOCAL + human-run by
+# design (creds live in the Goldberry Grove - Admin / Grove QA vaults, not CI;
+# teardown needs a delete-scoped token CI deliberately lacks). A scheduled
+# Discord reminder (.github/workflows/release-train-reminder.yml) nudges the
+# cadence; the human running it IS the approval on spend. See
+# docs/RUNBOOK-release-train.md.
+
+## train-up: (Mon) bring the biweekly QA window up — alias for qa-l3-up (idempotent apply)
+.PHONY: train-up
+train-up: qa-l3-up
+
+## train-teardown: (Thu) tear the QA compute down — alias for qa-l3-teardown (typed-confirm)
+.PHONY: train-teardown
+train-teardown: qa-l3-teardown
+
 # ── QA E2E test-inventory fixture seed (GOL-1152) ────────────────────────────
 # Idempotently seed the Playwright E2E test-inventory fixture (a Potted-only,
 # in-stock nursery product) into the QA Odoo so a rebuilt QA comes up
