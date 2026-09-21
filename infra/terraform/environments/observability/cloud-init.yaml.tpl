@@ -54,6 +54,20 @@ write_files:
     permissions: "0600"
     content: ${cf_origin_key_b64}
 
+%{ if otlp_ingest_enabled ~}
+  # Public OTLP ingest vhost cert (GOL-2330): CF Origin Certificate scoped to
+  # otlp_ingest_host. Only written once the OTLP ingest vars are all set.
+  - path: /etc/grove-obs/caddy/certs/otlp.crt
+    encoding: b64
+    permissions: "0644"
+    content: ${otlp_origin_cert_b64}
+
+  - path: /etc/grove-obs/caddy/certs/otlp.key
+    encoding: b64
+    permissions: "0600"
+    content: ${otlp_origin_key_b64}
+
+%{ endif ~}
 %{ if discord_bridge_enabled ~}
   # -- Discord bridge interactions endpoint overlay (GOL-593 / GOL-598) --------
   # This template must stay ASCII-only (see header): a non-ASCII byte here breaks

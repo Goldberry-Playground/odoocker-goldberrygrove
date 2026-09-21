@@ -68,3 +68,43 @@ ${rum_public_host}:443 {
 		respond "grove-obs: not found" 404
 	}
 }
+%{ if otlp_ingest_enabled ~}
+
+# grove-obs PUBLIC OTLP ingest vhost (GOL-2330) -- AUTHORED-BUT-INERT until
+# var.otlp_ingest_* are all set (the %%{ if } above drops this whole block, so
+# the rendered Caddyfile -- and therefore user_data -- is byte-identical while
+# disabled and no droplet replace is planned).
+#
+# Off-droplet OTLP shippers (tier-2 GitHub-Actions Playwright journeys) POST to:
+#   https://${otlp_ingest_host}/api/default/v1/{traces,metrics,logs}
+#   with `Authorization: Bearer <otlp-ingest-token>`.
+# Three layers:
+#   1. Cloudflare WAF (cloudflare-policy env) 403s any request to this host that
+#      lacks the exact Bearer, BEFORE origin-pull.
+#   2. This vhost RE-CHECKS the same Bearer. :443 is CF-IP-locked, but CF IPs
+#      are shared by every CF customer -- anyone could point their own zone at
+#      this origin and skip our WAF. The origin check closes that bypass.
+#   3. The client Bearer is REPLACED with OpenObserve's own Basic credential
+#      (header_up), so the shipper never holds an OpenObserve credential and the
+#      ingest token rotates independently of OpenObserve.
+# Path+method-restricted to OTLP/HTTP ingest POSTs; everything else 403s.
+${otlp_ingest_host}:443 {
+	tls /etc/caddy/certs/otlp.crt /etc/caddy/certs/otlp.key
+
+	@otlp_authorized {
+		method POST
+		path_regexp otlp ^/api/[A-Za-z0-9_-]+/v1/(traces|metrics|logs)$
+		header Authorization "Bearer ${otlp_ingest_bearer_token}"
+	}
+	handle @otlp_authorized {
+		reverse_proxy openobserve:5080 {
+			header_up Authorization "Basic ${otlp_upstream_basic_b64}"
+			header_up X-Real-IP {remote_host}
+		}
+	}
+
+	handle {
+		respond "grove-obs: forbidden" 403
+	}
+}
+%{ endif ~}
