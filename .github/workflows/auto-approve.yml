@@ -63,9 +63,17 @@ on:
   pull_request_review:
     types: [submitted]
 
-# Least privilege: only what's needed to review + enable auto-merge.
+# Least privilege: only what's needed to review + enqueue.
+# GOL-2408: `contents: write` is REQUIRED to hand a PR to the merge queue.
+# `gh pr merge` enqueues via the enablePullRequestAutoMerge GraphQL mutation,
+# which a `contents: read` token is refused ("Resource not accessible by
+# integration") -> every agent PR sat APPROVED/CLEAN until a human enqueued it
+# (#672, #673, #675). Same fix grove-sites already carries. Safe here: this job
+# runs only the base-branch definition, checks out `main` with
+# persist-credentials: false, and never executes PR-supplied code; the queue
+# still enforces every required check + the review rule before merging.
 permissions:
-  contents: read
+  contents: write
   pull-requests: write
 
 jobs:
@@ -262,11 +270,22 @@ jobs:
             echo "Enable auto-merge failed: $merge_err"
             echo "PR may already be mergeable (clean status); attempting a direct squash merge..."
             if direct_err=$(gh pr merge "$PR" --repo "$REPO" --squash 2>&1); then
-              echo "PR #$PR merged directly."
+              echo "PR #$PR merged directly (or enqueued, when the merge queue is active)."
             else
-              echo "::warning::Could not enable auto-merge OR merge PR #$PR directly."
-              echo "::warning::auto-merge error: $merge_err"
-              echo "::warning::direct-merge error: $direct_err"
-              echo "::warning::Approval still stands; a maintainer must merge (check 'Allow auto-merge' + branch is up to date)."
+              # A concurrent trigger (check_run + workflow_run + review all
+              # fire for one PR) may have enqueued it first — that's success.
+              case "$direct_err" in
+                *[Aa]lready*[Qq]ueue*|*[Aa]lready*merg*)
+                  echo "PR #$PR already queued/merged by a concurrent trigger; nothing to do."
+                  exit 0 ;;
+              esac
+              # GOL-2408: this used to be ::warning:: + exit 0, so the job went
+              # GREEN while the PR sat APPROVED/CLEAN un-enqueued (#675). Fail
+              # loudly so the stall is visible in the run list, not silent.
+              echo "::error::Could not enable auto-merge OR merge/enqueue PR #$PR."
+              echo "::error::auto-merge error: $merge_err"
+              echo "::error::direct-merge error: $direct_err"
+              echo "::error::Approval still stands; a maintainer must enqueue (check token permissions, 'Allow auto-merge', branch up to date)."
+              exit 1
             fi
           fi
