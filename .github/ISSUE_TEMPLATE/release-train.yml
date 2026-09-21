@@ -1,0 +1,61 @@
+name: Release Train manifest
+description: Open one per biweekly Grove Release Train (canon: vault "Software/Grove Release Train (QA Cadence)", epic GOL-2324)
+title: "Release Train #N — week of YYYY-MM-DD"
+labels: ["release-train"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        QA compute runs ONLY inside train windows (biweekly). Fill this out per train;
+        it is the train's system of record. Reference: `docs/release-train-manifest.md`.
+        Cadence: Mon `make qa-l3-up` -> Mon-Wed bundle+gate -> Wed promote (Josh env-approval)
+        -> Thu `qa-l3-teardown.sh compute` (keep PG/filestore/reserved-IP/DNS; NEVER `all`).
+  - type: input
+    id: dates
+    attributes:
+      label: Window dates
+      description: QA-up (Mon) / Promote (Wed) / Teardown (Thu)
+      placeholder: "up 2026-10-05 / promote 2026-10-07 / teardown 2026-10-08"
+    validations:
+      required: true
+  - type: textarea
+    id: grove_sites
+    attributes:
+      label: grove-sites PRs bundled
+      description: One line each — PR number, what it changes, verify note.
+      placeholder: "#___ — <change> (verify: ...)"
+    validations:
+      required: true
+  - type: input
+    id: modules_ref
+    attributes:
+      label: grove-odoo-modules ref (backend)
+      description: main HEAD @ SHA — list the money/compliance PRs this SHA carries.
+      placeholder: "main HEAD @ <sha> (carries #___ ...)"
+    validations:
+      required: true
+  - type: checkboxes
+    id: gate
+    attributes:
+      label: Gate (on QA)
+      options:
+        - label: scripts/qa-test-data-cleanup.sh run BEFORE recording verdicts
+        - label: test:e2e:gate green
+        - label: "@stripe suite green"
+  - type: checkboxes
+    id: promote
+    attributes:
+      label: Promote (Wed — Josh approves production environment)
+      options:
+        - label: Reconcile PRs deduped (no competing storefront pins); loser closed
+        - label: odoocker pin bump + default-catch-up reconcile of custom_modules_ref -> backend SHA
+        - label: promote-storefronts.yml run green with Josh env-approval
+        - label: Prod verified (rate probe / health-check)
+  - type: checkboxes
+    id: teardown
+    attributes:
+      label: Teardown (Thu — compute-down)
+      options:
+        - label: bash scripts/qa-l3-teardown.sh compute
+        - label: Survivors confirmed (Managed PG, filestore + LE-cert volumes, reserved IP, DNS zone + CF delegation)
+        - label: Re-up verified at NEXT train (make qa-l3-up -> health green)
