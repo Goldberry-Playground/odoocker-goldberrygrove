@@ -93,8 +93,29 @@ services:
       OPENOBSERVE_ROOT_EMAIL: ${OPENOBSERVE_ROOT_EMAIL}
       OPENOBSERVE_ROOT_PASSWORD: ${OPENOBSERVE_ROOT_PASSWORD}
       SYNTHETIC_UPTIME_ENABLED: "true"
-      SYNTHETIC_CANARY_ENABLED: "false"
-      SYNTHETIC_GHOST_ENABLED: "false"
+      # GOL-2325: canary + ghost are opt-in per env (default off). Prod turns
+      # these on via the deploy's --env-file so the money-path + blog journeys
+      # run against production. Kept off in QA/local unless explicitly set.
+      SYNTHETIC_CANARY_ENABLED: ${SYNTHETIC_CANARY_ENABLED:-false}
+      SYNTHETIC_GHOST_ENABLED: ${SYNTHETIC_GHOST_ENABLED:-false}
+      # checkout-canary XML-RPC creds (GOL-2325) — consumed by canary.py for
+      # seed/resolve/cleanup. The API key doubles as the HTTP bearer and the
+      # XML-RPC password; scope it to a least-privilege Odoo user (create
+      # order/product + unlink sale.order). Unset ⇒ canary.py no-ops even if
+      # SYNTHETIC_CANARY_ENABLED were true (fail-closed). Resolve from 1Password
+      # in the deploy's --env-file (see scripts/prod-monitoring.env.op).
+      ODOO_XMLRPC_URL: ${ODOO_XMLRPC_URL:-http://odoo:8069}
+      ODOO_DB: ${ODOO_DB:-}
+      ODOO_LOGIN: ${ODOO_LOGIN:-}
+      SYNTHETIC_ODOO_API_KEY: ${SYNTHETIC_ODOO_API_KEY:-}
+      # ghost-content per-tenant Content API url+key (GOL-2325). Missing a
+      # tenant's pair just skips that tenant's ghost journey (run.py).
+      GHOST_URL_GOLDBERRY: ${GHOST_URL_GOLDBERRY:-}
+      GHOST_KEY_GOLDBERRY: ${GHOST_KEY_GOLDBERRY:-}
+      GHOST_URL_GGG: ${GHOST_URL_GGG:-}
+      GHOST_KEY_GGG: ${GHOST_KEY_GGG:-}
+      GHOST_URL_NURSERY: ${GHOST_URL_NURSERY:-}
+      GHOST_KEY_NURSERY: ${GHOST_KEY_NURSERY:-}
       # GOL-334: per-target endpoint overrides — real qa endpoints. Values come
       # from .env.monitoring (the deploy's --env-file) via interpolation; an
       # explicit passthrough is used because this host's docker-compose build
