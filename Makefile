@@ -235,6 +235,38 @@ qa-test-data-cleanup:
 qa-test-data-cleanup-apply:
 	bash scripts/qa-test-data-cleanup.sh --apply $(ARGS)
 
+# ── Monitoring / synthetics (GOL-2325) ───────────────────────────────────────
+# Config-as-code bring-up for the observability stack + Tier-1 synthetic runner.
+# `monitoring-up` depends on `monitoring-setup` so the runner is NEVER started
+# without its seed records (canary product + monitors/alerts uploaded) — spec
+# docs/specs/2026-06-26-grove-observability-design.md §1.
+#
+# Secrets: the deploy's --env-file (.env.monitoring) holds RESOLVED values on
+# the droplet; populate it from 1Password with `op run` (see the prod go-live
+# runbook, docs/RUNBOOK-prod-synthetics-golive.md). Override the file/compose on
+# the CLI: make monitoring-up MONITORING_ENV_FILE=.env.monitoring.prod
+MONITORING_COMPOSE   ?= docker-compose.monitoring.yml
+MONITORING_ENV_FILE  ?= .env.monitoring
+
+## monitoring-setup: seed the $0 canary + upload monitors/alerts/dashboards (idempotent)
+.PHONY: monitoring-setup
+monitoring-setup:
+	@test -f "$(MONITORING_ENV_FILE)" || { echo "missing $(MONITORING_ENV_FILE) — populate it from 1Password first (see docs/RUNBOOK-prod-synthetics-golive.md)"; exit 1; }
+	@case "$(MONITORING_ENV_FILE)" in \
+		*/*) set -a; . "$(MONITORING_ENV_FILE)"; set +a; python3 scripts/setup-monitoring.py ;; \
+		*) set -a; . ./"$(MONITORING_ENV_FILE)"; set +a; python3 scripts/setup-monitoring.py ;; \
+	esac
+
+## monitoring-up: bring up the monitoring stack — seeds first, so the runner never fires without seed records
+.PHONY: monitoring-up
+monitoring-up: monitoring-setup
+	docker compose -f $(MONITORING_COMPOSE) --env-file $(MONITORING_ENV_FILE) up -d
+
+## monitoring-down: stop the monitoring stack (keeps volumes)
+.PHONY: monitoring-down
+monitoring-down:
+	docker compose -f $(MONITORING_COMPOSE) --env-file $(MONITORING_ENV_FILE) down
+
 # ── Help ─────────────────────────────────────────────────────────────────────
 
 .PHONY: help
