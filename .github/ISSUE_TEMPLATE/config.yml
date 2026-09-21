@@ -1,0 +1,4 @@
+# Preserve the pre-existing behaviour: blank issues stay allowed.
+# Before this dir existed, every issue was a blank issue; adding a template
+# must not silently force the form on unrelated issues.
+blank_issues_enabled: true
