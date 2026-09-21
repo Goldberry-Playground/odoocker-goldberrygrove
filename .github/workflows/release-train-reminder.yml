@@ -1,0 +1,142 @@
+name: Release Train Reminder
+
+###############################################################################
+# GOL-2326 / GOL-2324 — the biweekly Grove Release Train cadence heartbeat.
+#
+# This workflow does NOT create or destroy any infrastructure. It posts a
+# Discord reminder to run the one-command local target for each leg of the
+# train, on the train's cadence, so the ~70% QA-compute reduction depends on a
+# nudge that fires on time rather than on someone remembering.
+#
+#   Mon  → "train-up":       make train-up        (= make qa-l3-up)
+#   Thu  → "train-teardown": make train-teardown  (= make qa-l3-teardown)
+#
+# WHY reminder-only and not a CI apply/destroy (design decision, GOL-2326):
+#   * The spend-creating apply and the delete both need creds this CI plane
+#     deliberately does not hold. The only CI 1Password token is the read-only
+#     `grove-ci-prod-ro` SA, scoped to the Grove Prod vault. `make qa-l3-up`
+#     resolves op:// refs across the `Goldberry Grove - Admin` AND `Grove QA`
+#     vaults (see qa-app-platform/.env.op) — neither is reachable from CI.
+#   * Teardown needs a DELETE-scoped DO token; the drift/CI token deliberately
+#     can't delete (see scripts/qa-l3-teardown.sh header). Putting a
+#     delete-capable token + the Admin-vault SA in CI would expand the CI
+#     blast radius to the master DO token that can destroy all Grove spend —
+#     a worse trade than a human running a typed-confirm local command.
+#   * Josh approval on the spend step is intrinsic: he is the human who holds
+#     the Admin-vault access and runs the command. No unattended spend.
+#   Full rationale + one-command runbook: docs/RUNBOOK-release-train.md
+#
+# The ONLY secret this workflow reads is DISCORD_OPS_WEBHOOK_URL (Grove Prod
+# vault, already read by qa-health.yml / terraform-drift.yml via the same
+# read-only SA). No new token, no blast-radius expansion.
+###############################################################################
+
+on:
+  schedule:
+    # Every Monday and Thursday; the biweekly parity guard below drops the
+    # off-train weeks so only train weeks fire. Times are UTC (≈09:00 ET / EDT).
+    - cron: '0 13 * * 1'   # Monday      → train-up reminder
+    - cron: '0 13 * * 4'   # Thursday    → train-teardown reminder
+  workflow_dispatch:
+    inputs:
+      leg:
+        description: 'Force a reminder leg (bypasses the day/parity guard for testing)'
+        required: false
+        default: 'auto'
+        type: choice
+        options: [auto, up, down]
+
+permissions: {}
+
+concurrency:
+  group: release-train-reminder
+  cancel-in-progress: false
+
+jobs:
+  remind:
+    name: Post release-train reminder
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read   # no id-token: 1Password uses a service-account token, not OIDC
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        timeout-minutes: 2
+
+      # Decide whether THIS run is a train leg, and which one.
+      #   * Biweekly cadence is anchored to Train #1 (Mon 2026-09-21). Weeks
+      #     since the anchor / 7; an EVEN week index is a train week. This is
+      #     self-correcting (no stored state) and survives skipped runs.
+      #   * workflow_dispatch with leg=up|down forces the leg and skips the
+      #     guard so the reminder can be exercised on demand.
+      - name: Resolve train leg
+        id: leg
+        timeout-minutes: 1
+        env:
+          FORCE_LEG: ${{ github.event.inputs.leg }}
+        run: |
+          set -euo pipefail
+          ANCHOR="2026-09-21"                       # Train #1 Monday
+          NOW_EPOCH=$(date -u +%s)
+          ANCHOR_EPOCH=$(date -u -d "$ANCHOR" +%s)
+          DAYS=$(( (NOW_EPOCH - ANCHOR_EPOCH) / 86400 ))
+          WEEK_IDX=$(( DAYS / 7 ))
+          DOW=$(date -u +%u)                         # 1=Mon .. 7=Sun
+          PARITY=$(( WEEK_IDX % 2 ))                 # 0 on train weeks
+
+          LEG="none"
+          if [ "${FORCE_LEG:-auto}" = "up" ] || [ "${FORCE_LEG:-auto}" = "down" ]; then
+            LEG="${FORCE_LEG}"
+            echo "forced leg=$LEG via workflow_dispatch"
+          elif [ "$PARITY" -ne 0 ]; then
+            echo "week index $WEEK_IDX is an off-train week (parity=$PARITY) — no reminder"
+          elif [ "$DOW" = "1" ]; then
+            LEG="up"
+          elif [ "$DOW" = "4" ]; then
+            LEG="down"
+          else
+            echo "day-of-week $DOW is neither Mon nor Thu — no reminder"
+          fi
+          echo "leg=$LEG" >> "$GITHUB_OUTPUT"
+
+      - name: Load Discord webhook from 1Password
+        if: steps.leg.outputs.leg != 'none'
+        uses: 1password/load-secrets-action@v2
+        timeout-minutes: 2
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_CI_SA_TOKEN }}
+          DISCORD_OPS_WEBHOOK_URL:  op://Grove Prod/odoocker/DISCORD_OPS_WEBHOOK_URL
+        with:
+          export-env: true
+
+      - name: Post reminder to Discord
+        if: steps.leg.outputs.leg != 'none'
+        timeout-minutes: 1
+        env:
+          LEG: ${{ steps.leg.outputs.leg }}
+        run: |
+          set -euo pipefail
+          if [ "$LEG" = "up" ]; then
+            TITLE="🚂 Release Train — train-up (Mon)"
+            DESC=$'It'"'"'s train week. Bring the QA window up:\n```\nmake train-up\n```\nIdempotent terraform apply of the L3 QA env; injects creds via `op run` from the **Goldberry Grove - Admin** vault. Safe to re-run.\n\nRunbook: `docs/RUNBOOK-release-train.md` · Epic: GOL-2324'
+            COLOR=3066993      # green
+          else
+            TITLE="🚂 Release Train — train-teardown (Thu)"
+            DESC=$'Train window is over. Tear the QA **compute** down to reclaim spend:\n```\nmake train-teardown\n```\nTyped-confirm (`destroy-qa-l3-compute`) required. Managed PG data, LE certs, DNS, and the reserved IP all survive — rebuild next train with `make train-up`.\n\nRunbook: `docs/RUNBOOK-release-train.md` · Epic: GOL-2324'
+            COLOR=15105570     # amber
+          fi
+          PAYLOAD=$(jq -n \
+            --arg title "$TITLE" \
+            --arg desc "$DESC" \
+            --argjson color "$COLOR" \
+            '{
+              username: "🚂 Release Train",
+              embeds: [{ title: $title, description: $desc, color: $color }]
+            }')
+          curl -fsS -X POST \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            "$DISCORD_OPS_WEBHOOK_URL"
+          echo "posted $LEG reminder"
