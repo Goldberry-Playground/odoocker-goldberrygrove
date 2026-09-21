@@ -255,3 +255,49 @@ variable "cloudflare_ingress_cidrs" {
     "2c0f:f248::/32",
   ]
 }
+
+# ── Public OTLP ingest vhost (GOL-2330) ──────────────────────────────────────
+# Off-droplet OTLP shippers (tier-2 GitHub-Actions Playwright journeys) reach
+# OpenObserve through https://<otlp_ingest_host>, Cloudflare-proxied and gated
+# by a CF WAF Bearer rule (cloudflare-policy env) that is RE-CHECKED here at the
+# origin. ALL FIVE inputs below default empty => the vhost + cert files are not
+# rendered and user_data is unchanged (no droplet replace). Fill all five from
+# 1Password to activate; that apply DOES replace the droplet (user_data change).
+
+variable "otlp_ingest_host" {
+  description = "Cloudflare-proxied hostname for the public OTLP ingest vhost (host only, no scheme). Must equal cloudflare-policy's var.otlp_ingest_host so the WAF Bearer rule guards it."
+  type        = string
+  default     = "otlp-ingest.gatheringatthegrove.com"
+}
+
+variable "otlp_ingest_bearer_token" {
+  description = "Bearer token the Caddy OTLP vhost requires (same value as the CF WAF rule's, 1P Grove Infra/otlp_ingest_bearer_token). Empty => vhost inert. Restricted charset so it can't break out of the Caddyfile/CF expression."
+  type        = string
+  sensitive   = true
+  default     = ""
+
+  validation {
+    condition     = can(regex("^([A-Za-z0-9._~-]{32,})?$", var.otlp_ingest_bearer_token))
+    error_message = "otlp_ingest_bearer_token must be empty or >=32 chars of [A-Za-z0-9._~-] (e.g. `openssl rand -hex 32`)."
+  }
+}
+
+variable "otlp_upstream_credentials" {
+  description = "OpenObserve credential the OTLP vhost injects upstream as `Authorization: Basic base64(<this>)`, in `email:secret` form. Use a least-privilege ingestion credential (an OpenObserve service account or the org ingestion passcode), NOT the root password. 1P Grove Infra/obs_otlp_upstream_credentials. Empty => vhost inert."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "otlp_origin_cert_pem" {
+  description = "Cloudflare Origin Certificate (PEM) whose SAN covers otlp_ingest_host (the RUM cert covers rum.* only), so CF connects Full(strict). 1P Grove Infra/obs_otlp_origin_cert. Empty => vhost inert."
+  type        = string
+  default     = ""
+}
+
+variable "otlp_origin_key_pem" {
+  description = "Private key (PEM) paired with otlp_origin_cert_pem. Written 0600. 1P Grove Infra/obs_otlp_origin_key. Empty => vhost inert."
+  type        = string
+  sensitive   = true
+  default     = ""
+}

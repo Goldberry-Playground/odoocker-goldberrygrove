@@ -108,6 +108,21 @@ data "digitalocean_ssh_key" "obs_admin" {
 # Obs droplet via the shared droplet module (droplet + optional volume). No
 # attached volume: OpenObserve Parquet lives in Spaces; Keep's SQLite is small
 # and fits local disk.
+# Public OTLP ingest (GOL-2330) renders ONLY when every input is present, so a
+# partial 1Password fill can't ship a half-configured vhost. While false the
+# Caddyfile + cloud-init render byte-identical to before => no droplet replace.
+locals {
+  otlp_ingest_enabled = alltrue([
+    for v in [
+      var.otlp_ingest_host,
+      var.otlp_ingest_bearer_token,
+      var.otlp_upstream_credentials,
+      var.otlp_origin_cert_pem,
+      var.otlp_origin_key_pem,
+    ] : trimspace(v) != ""
+  ])
+}
+
 module "obs_droplet" {
   source = "../../modules/droplet"
 
@@ -146,9 +161,20 @@ module "obs_droplet" {
     caddyfile_rum_b64 = base64encode(templatefile("${path.module}/compose/Caddyfile-rum.tpl", {
       rum_public_host   = var.rum_public_host
       cors_origin_regex = var.cors_allowed_origin_regex
+
+      # Public OTLP ingest vhost (GOL-2330). Inert (block not rendered) until
+      # every otlp_* input is set -- see local.otlp_ingest_enabled.
+      otlp_ingest_enabled      = local.otlp_ingest_enabled
+      otlp_ingest_host         = var.otlp_ingest_host
+      otlp_ingest_bearer_token = var.otlp_ingest_bearer_token
+      otlp_upstream_basic_b64  = base64encode(var.otlp_upstream_credentials)
     }))
     cf_origin_cert_b64 = base64encode(var.cf_origin_cert_pem)
     cf_origin_key_b64  = base64encode(var.cf_origin_key_pem)
+
+    otlp_ingest_enabled  = local.otlp_ingest_enabled
+    otlp_origin_cert_b64 = base64encode(var.otlp_origin_cert_pem)
+    otlp_origin_key_b64  = base64encode(var.otlp_origin_key_pem)
 
     # ── Discord bridge overlay (GOL-593 / GOL-598) ──────────────────────────
     # When enabled, ship the digest-pinned overlay compose, the two 0600 env

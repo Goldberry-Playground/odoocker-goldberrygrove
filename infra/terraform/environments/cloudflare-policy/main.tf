@@ -54,6 +54,34 @@ resource "cloudflare_ruleset" "geo_block" {
     description = "Block ${join("+", sort(tolist(var.blocked_countries)))} traffic (bot/scanner noise; no legitimate audience)"
     enabled     = true
   }
+
+  # ── OTLP ingest Bearer gate (GOL-2330) ───────────────────────────────────
+  # Off-droplet OTLP shippers (tier-2 GitHub-Actions Playwright journeys +
+  # browser RUM) send metrics/traces to OpenObserve from DYNAMIC IPs that can't
+  # be pinned to a /32 on the obs firewall (see observability/main.tf). Instead,
+  # the ingest host is Cloudflare-proxied and this rule blocks any request to it
+  # lacking a valid `Authorization: Bearer <token>` -- a hard 403 at the edge
+  # BEFORE origin-pull, so unauthenticated traffic never reaches the droplet.
+  #
+  # Why a rule INSIDE geo_block, not a new ruleset: Cloudflare allows exactly ONE
+  # ruleset per zone PER PHASE, and geo_block already owns
+  # http_request_firewall_custom for this zone. A second firewall_custom ruleset
+  # would collide, so the Bearer rule is an additional ordered rule here. It is
+  # HUB-ZONE-ONLY (the ingest host lives in gatheringatthegrove.com) and renders
+  # only once the token var is set -- authored-but-inert otherwise, exactly like
+  # the odoo_image_cache blocker below. Rule order: geo-block first (CN/RU
+  # dropped everywhere), then Bearer (US GH-Actions runners pass geo, still need
+  # the token). Token comes from var.otlp_ingest_bearer_token (1P-backed,
+  # sensitive) -- never hardcoded. See docs/RUNBOOK-otlp-ingest-GOL-2330.md.
+  dynamic "rules" {
+    for_each = (each.key == "gatheringatthegrove.com" && trimspace(var.otlp_ingest_bearer_token) != "") ? [1] : []
+    content {
+      action      = "block"
+      expression  = "(http.host eq \"${var.otlp_ingest_host}\" and not any(http.request.headers[\"authorization\"][*] == \"Bearer ${var.otlp_ingest_bearer_token}\"))"
+      description = "OTLP ingest: block unless Authorization: Bearer <ingest-token> (GOL-2330)"
+      enabled     = true
+    }
+  }
 }
 
 ###############################################################################
@@ -123,4 +151,22 @@ resource "cloudflare_ruleset" "odoo_image_cache" {
     description = "Cache /web/image/* at edge for 30d; browser TTL respects origin"
     enabled     = true
   }
+}
+
+###############################################################################
+# OTLP ingest hostname (GOL-2330). Proxied A record -> grove-obs droplet, whose
+# :443 is CF-IP-locked and serves the Bearer-rechecking OTLP vhost (observability
+# env, Caddyfile-rum.tpl). count=0 until var.otlp_ingest_origin_ip is set, so the
+# committed default plans a clean no-op. Proxied => TLS is Full(strict) against
+# the CF Origin Certificate mounted on the obs droplet (zone mode per GOL-1551).
+###############################################################################
+resource "cloudflare_record" "otlp_ingest" {
+  count   = var.otlp_ingest_origin_ip != "" ? 1 : 0
+  zone_id = data.cloudflare_zone.zones["gatheringatthegrove.com"].id
+  name    = trimsuffix(var.otlp_ingest_host, ".gatheringatthegrove.com")
+  type    = "A"
+  value   = var.otlp_ingest_origin_ip
+  proxied = true
+  ttl     = 1 # 1 = auto (required when proxied)
+  comment = "GOL-2330 OTLP ingest -> grove-obs (CF WAF Bearer-gated)"
 }
