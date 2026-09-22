@@ -26,6 +26,14 @@ any sale.order / res.partner hanging off such an address is test data and only
 test data. We delete on THAT, plus the well-known SYNTHETIC-CANARY product code.
 We NEVER key on dates, amounts, state, or "looks like a test" heuristics.
 
+ONE EXACT-ADDRESS EXCEPTION (GOL-2410): the grove-sites e2e gate checks out as
+`e2e@goldberrygrove.farm` / `e2e+<tag>@goldberrygrove.farm` ("E2E Test Buyer")
+and each @stripe run CONFIRMS orders against the QA bareroot fixture. That is
+our own domain and a mailbox no customer can hold, so it is matched by an exact
+anchored regex (E2E_GATE_EMAIL_RE) — never a domain-wide `@goldberrygrove.farm`
+sweep. Left alone, those orders reserve the fixture's stock until it reads sold
+out and the gate goes false-red.
+
 HOW IT DELETES
 --------------
 Through Odoo's ORM over XML-RPC (same client shape as synthetic/canary.py) —
@@ -79,6 +87,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import xmlrpc.client
 
@@ -99,6 +108,14 @@ RESERVED_TEST_SUFFIXES = (
     "@example.org",
 )
 
+# grove-sites e2e gate buyer (apps/nursery/e2e/helpers.ts). EXACT local-part
+# `e2e` with an optional `+<alnum tag>` — anything else at goldberrygrove.farm
+# (staff, josh@, orders@, e2e.real@) is NOT matched. The server-side search uses
+# the looser ILIKE patterns below (ILIKE has no regex), and plan() re-filters
+# every hit through is_test_email(), so the regex is the authority.
+E2E_GATE_EMAIL_RE = re.compile(r"^e2e(\+[a-z0-9]+)?@goldberrygrove\.farm$")
+E2E_GATE_ILIKE_PATTERNS = ("e2e@goldberrygrove.farm", "e2e+%@goldberrygrove.farm")
+
 
 def _log(*args: object) -> None:
     print(*args, file=sys.stderr, flush=True)
@@ -107,23 +124,29 @@ def _log(*args: object) -> None:
 # ── pure selectors (unit-tested in synthetic/test_qa_cleanup.py) ──────────────
 
 def is_test_email(email: object) -> bool:
-    """True iff `email` is at an RFC-reserved test domain (never a real customer)."""
+    """True iff `email` is at an RFC-reserved test domain, or is the e2e gate buyer."""
     if not isinstance(email, str):
         return False
     e = email.strip().lower()
     if not e or "@" not in e:
         return False
+    if E2E_GATE_EMAIL_RE.match(e):
+        return True
     return any(e.endswith(suffix) for suffix in RESERVED_TEST_SUFFIXES)
 
 
 def test_partner_email_domain() -> list:
-    """Odoo domain (OR of 'email =ilike' clauses) selecting reserved-test-domain partners."""
-    clauses: list = ["|"] * (len(RESERVED_TEST_SUFFIXES) - 1)
-    for suffix in RESERVED_TEST_SUFFIXES:
+    """Odoo domain (OR of 'email =ilike' clauses) selecting test partners.
+
+    Candidate set only — plan() re-filters hits through is_test_email().
+    """
+    patterns = [f"%{suffix}" for suffix in RESERVED_TEST_SUFFIXES] + list(E2E_GATE_ILIKE_PATTERNS)
+    clauses: list = ["|"] * (len(patterns) - 1)
+    for pattern in patterns:
         # '=ilike' → SQL ILIKE (case-INSENSITIVE); '=like' → LIKE is case-SENSITIVE,
         # so an email stored as 'QA@Example.com' would escape a '=like' match.
         # '%'+suffix matches the address tail.
-        clauses.append(["email", "=ilike", f"%{suffix}"])
+        clauses.append(["email", "=ilike", pattern])
     return clauses
 
 
@@ -196,9 +219,13 @@ def _read(client, model: str, ids: list, fields: list) -> list:
 
 def plan(client) -> dict:
     """Enumerate every test-data target WITHOUT deleting. Returns a structured plan."""
-    # 1. Partners at reserved test domains.
-    partner_ids = _search(client, "res.partner", test_partner_email_domain())
-    partners = _read(client, "res.partner", partner_ids, ["id", "name", "email"])
+    # 1. Partners at reserved test domains + the e2e gate buyer. The ILIKE search
+    #    is a superset (e.g. 'e2e+%' also hits 'e2e+a.b@'), so keep only exact
+    #    is_test_email() matches before anything is selected for deletion.
+    candidate_ids = _search(client, "res.partner", test_partner_email_domain())
+    partners = [p for p in _read(client, "res.partner", candidate_ids, ["id", "name", "email"])
+                if is_test_email(p.get("email"))]
+    partner_ids = [p["id"] for p in partners]
 
     # 2. sale.orders owned by those partners (ANY state — a reserved-TLD email
     #    cannot be a real confirmed sale). Belt-and-suspenders: also match the
@@ -265,17 +292,22 @@ def _cancel_orders(client, ids: list) -> None:
     action_cancel can itself refuse (e.g. an order with a posted invoice); that's
     fine — the order simply stays and is surfaced-and-skipped by _safe_unlink.
     Per-record fallback so one un-cancellable order doesn't strand the rest.
+
+    `disable_cancel_warning`: without it, action_cancel on a confirmed order just
+    RETURNS the sale.order.cancel wizard action (nothing cancelled) — over XML-RPC
+    that is a silent no-op and the order keeps its stock reservation (GOL-2410).
     """
     if not ids:
         return
+    ctx = {"context": {"disable_cancel_warning": True}}
     try:
-        client.call("sale.order", "action_cancel", [ids])
+        client.call("sale.order", "action_cancel", [ids], ctx)
         return
     except xmlrpc.client.Fault as exc:
         _log(f"  sale.order: bulk cancel blocked ({exc.faultString.splitlines()[0]}); cancelling per-record")
     for oid in ids:
         try:
-            client.call("sale.order", "action_cancel", [[oid]])
+            client.call("sale.order", "action_cancel", [[oid]], ctx)
         except xmlrpc.client.Fault as inner:
             _log(f"  sale.order#{oid}: cancel failed, will be skipped ({inner.faultString.splitlines()[0]})")
 
@@ -302,7 +334,7 @@ def _safe_unlink(client, model: str, ids: list) -> int:
 def render_human(plan_data: dict, removed: dict | None, include_canary_product: bool) -> None:
     _log("== QA test-data cleanup ==")
     p, o, prod = plan_data["test_partners"], plan_data["test_orders"], plan_data["canary_products"]
-    _log(f"  test partners (reserved-domain email): {len(p)}")
+    _log(f"  test partners (reserved/e2e email):     {len(p)}")
     for row in p[:10]:
         _log(f"      partner#{row['id']}  {row.get('email')!r}  {row.get('name')!r}")
     _log(f"  test sale.orders:                       {len(o)}")
