@@ -34,6 +34,15 @@ anchored regex (E2E_GATE_EMAIL_RE) — never a domain-wide `@goldberrygrove.farm
 sweep. Left alone, those orders reserve the fixture's stock until it reads sold
 out and the gate goes false-red.
 
+That selector is keyed on the BUYER, never on the product — which is what makes
+it survive new fixtures. GOL-2463 adds a third seeded fixture
+(`E2E-BAREROOT-PLANT`, the Plants-categorised one the volume-tier specs buy);
+its orders are swept by the same rule with no change here, and the fixture
+PRODUCT itself is never a deletion candidate (only CANARY_CODE is). Keep it that
+way: narrowing the order selector to a product default_code would strand every
+future fixture's orders on the next fixture we add. Pinned by
+test_plan_sweeps_gate_orders_against_any_fixture_product.
+
 HOW IT DELETES
 --------------
 Through Odoo's ORM over XML-RPC (same client shape as synthetic/canary.py) —

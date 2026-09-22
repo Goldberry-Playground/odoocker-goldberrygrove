@@ -338,6 +338,52 @@ def test_apply_cancels_confirmed_e2e_orders_releasing_stock() -> None:
     assert p2["test_partners"] == [] and p2["test_orders"] == []
 
 
+def _seed_multi_fixture():
+    """The e2e buyer with orders against BOTH seeded bareroot fixtures.
+
+    205/797 `E2E-BAREROOT-INSTOCK` is the deterministic-cart fixture; the
+    Plants-categorised `E2E-BAREROOT-PLANT` (GOL-2463) is the one the volume-tier
+    specs buy. The sweep must not care which.
+    """
+    return {
+        "res.partner": {
+            1: {"name": "Josh", "email": "josh@goldberrygrove.farm"},
+            2: {"name": "E2E Test Buyer", "email": "e2e+v0l1@goldberrygrove.farm"},
+        },
+        "sale.order": {
+            10: {"name": "SO-JOSH", "partner_id": 1, "state": "sale", "amount_total": 40.0, "website_id": 7},
+            # 6 units of the plant fixture — the volume-tier cart.
+            11: {"name": "SO-TIER", "partner_id": 2, "state": "sale", "amount_total": 226.8, "website_id": 7},
+            # the original non-plant fixture, unchanged behaviour
+            12: {"name": "SO-FLAT", "partner_id": 2, "state": "sale", "amount_total": 42.0, "website_id": 7},
+        },
+        "product.template": {
+            50: {"name": "AAA QA E2E Bareroot Tree", "default_code": "E2E-BAREROOT-INSTOCK"},
+            51: {"name": "AAA QA E2E Volume Tier Plant", "default_code": "E2E-BAREROOT-PLANT"},
+        },
+    }
+
+
+def test_plan_sweeps_gate_orders_against_any_fixture_product() -> None:
+    # GOL-2463: the selector is BUYER-keyed, so a newly seeded fixture needs no
+    # change here. If someone ever narrows it to a product default_code, the
+    # volume-tier orders stop being swept and the plant fixture silently drains.
+    p = cleanup.plan(FakeOdoo(_seed_multi_fixture()))
+    assert {r["id"] for r in p["test_orders"]} == {11, 12}, p["test_orders"]
+
+
+def test_seeded_fixture_products_are_never_deletion_candidates() -> None:
+    # Only SYNTHETIC-CANARY is a product candidate. The e2e fixtures are seeded
+    # by grove-odoo-modules scripts/seed_e2e_test_inventory.py and must survive
+    # every cleanup — including --include-canary-product — or the next gate run
+    # has nothing to buy.
+    fake = FakeOdoo(_seed_multi_fixture())
+    plan_data = cleanup.plan(fake)
+    assert plan_data["canary_products"] == []
+    cleanup.apply_cleanup(fake, plan_data, include_canary_product=True)
+    assert set(fake.records["product.template"]) == {50, 51}
+
+
 def test_cancel_passes_disable_cancel_warning() -> None:
     fake = FakeOdoo({"sale.order": {1: {"state": "sale"}}})
     cleanup._cancel_orders(fake, [1])

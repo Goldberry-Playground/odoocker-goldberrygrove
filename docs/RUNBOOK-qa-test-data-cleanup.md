@@ -36,6 +36,14 @@ cancelled with `disable_cancel_warning`, which releases the stock reservation,
 and are then deleted. If the gate goes red on a promo/deposit 400, check
 `free_qty` of product 797 and run this cleanup.
 
+That rule keys on the **buyer, never the product**, so it already covers every
+fixture the gate buys — including `E2E-BAREROOT-PLANT` (`AAA QA E2E Volume Tier
+Plant`), the Plants-categorised fixture the volume-tier specs use (GOL-2463).
+Don't narrow it to a product code: the next fixture we seed would stop being
+swept. The fixtures themselves are **never deleted** — only `SYNTHETIC-CANARY`
+is a product candidate — and all of them are re-seedable from
+`grove-odoo-modules scripts/seed_e2e_test_inventory.py`.
+
 Deletes go through Odoo's **ORM over XML-RPC**, never raw SQL, so FK cascades,
 access rules, and record rules are respected — a delete that would corrupt
 referential integrity is refused by Odoo, not silently orphaned.
