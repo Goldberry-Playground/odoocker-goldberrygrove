@@ -62,11 +62,17 @@ if [ "$MODE" = "all" ]; then
   echo "!! 'all' destroys Managed PG (ALL Odoo data), the LE cert volume,"
   echo "!! the qa DNS zone, and the Cloudflare NS delegation."
 else
-  echo "'compute' destroys 15 resources: 4 App Platform apps, 2 droplets,"
+  echo "'compute' destroys: 4 App Platform apps, the Odoo droplet,"
   echo "2 volume attachments (caddy_data + odoo_filestore), plus their"
-  echo "DEPENDENTS terraform pulls in via -target: droplet firewalls, the"
-  echo "odoo/oo/keep/apex DNS records, and the PG trusted-sources firewall"
-  echo "(re-verified via plan -destroy 2026-07-15, GOL-418)."
+  echo "DEPENDENTS terraform pulls in via -target: the Odoo droplet firewall,"
+  echo "the odoo/apex DNS records, and the PG trusted-sources firewall."
+  if [ "${QA_L3_TEARDOWN_OBS:-0}" = "1" ]; then
+    echo "QA_L3_TEARDOWN_OBS=1: ALSO the grove-qa-l3-obs droplet + its firewall"
+    echo "and oo/keep DNS records (15 resources total, GOL-418 inventory)."
+  else
+    echo "grove-qa-l3-obs is EXEMPT (GOL-2333) and survives; set"
+    echo "QA_L3_TEARDOWN_OBS=1 to include it. Check the plan count below."
+  fi
   echo "Survives: Managed PG cluster+data, the LE-cert + filestore volumes,"
   echo "the reserved IP, the qa DNS zone + CF delegation. NOTE: with the PG"
   echo "firewall destroyed the DB endpoint is password-only until rebuild."
@@ -102,7 +108,15 @@ if [ "$MODE" = "compute" ]; then
   # env README ("Release-train teardown: App Platform apps") for rationale.
   # -target on the bare for_each address (digitalocean_app.tenant)
   # covers all its instances.
-  TARGETS="-target=digitalocean_app.hub -target=digitalocean_app.tenant -target=digitalocean_volume_attachment.caddy_data -target=digitalocean_droplet.odoo -target=digitalocean_droplet.obs"
+  TARGETS="-target=digitalocean_app.hub -target=digitalocean_app.tenant -target=digitalocean_volume_attachment.caddy_data -target=digitalocean_droplet.odoo"
+  # grove-qa-l3-obs is EXEMPT from the release-train teardown (GOL-2323 EPIC /
+  # GOL-2333) until the CEO ratifies its fate in docs/ADR/010. Opt in with
+  # QA_L3_TEARDOWN_OBS=1. NB: this is only the QA obs box -- the canonical obs
+  # plane (grove-obs, environments/observability/) has its own state and is
+  # never touched by this script.
+  if [ "${QA_L3_TEARDOWN_OBS:-0}" = "1" ]; then
+    TARGETS="$TARGETS -target=digitalocean_droplet.obs"
+  fi
 fi
 
 echo "==> terraform destroy ($MODE)..."

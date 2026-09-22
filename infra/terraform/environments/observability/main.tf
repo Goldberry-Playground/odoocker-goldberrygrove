@@ -243,6 +243,17 @@ resource "digitalocean_firewall" "obs" {
     }
   }
 
+  # App-plane collectors on 5080, matched by droplet TAG so an immutable rebuild
+  # (new egress IP) keeps ingest flowing with no firewall edit (GOL-2333).
+  dynamic "inbound_rule" {
+    for_each = length(var.ingest_source_tags) > 0 ? [1] : []
+    content {
+      protocol    = "tcp"
+      port_range  = "5080"
+      source_tags = var.ingest_source_tags
+    }
+  }
+
   # Keep webhook/API on 8080 — admin-only. Published so OpenObserve's alert
   # destination can POST to Keep via the droplet's PUBLIC IP: OO v0.91.1's SSRF
   # guard REJECTS a destination whose URL resolves to a private IP (Keep's

@@ -36,6 +36,13 @@ variable "admin_ssh_key_name" {
 variable "admin_ip_cidrs" {
   description = "CIDRs allowed to reach SSH (22) and the OpenObserve/Keep UIs (5080/3034). A LIST so more than one operator address can be authorised at once (GOL-1842) — an ISP-rotated IP no longer locks admin access to grove-obs. Never 0.0.0.0/0 in a real tfvars. NOTE: this env's tfvars now supplies `admin_ip_cidrs = [\"x/32\"]` (list), not the old scalar `admin_ip_cidr`."
   type        = list(string)
+  # Codified in step with production/ + qa-app-platform/ (GOL-2333) so a clean
+  # apply never drops operator access — same reproducible-from-code rule as
+  # GOL-385; refresh via docs/RUNBOOK-refresh-admin-ip-cidrs.md. Do NOT also set
+  # admin_ip_cidrs in the local terraform.tfvars: a tfvars value silently wins
+  # over this default (that is how grove-obs-fw drifted to the lone stale
+  # 74.47.41.38/32 while prod/QA carried Josh's rotated address).
+  default = ["74.47.41.38/32", "173.84.140.152/32"]
   validation {
     condition     = length(var.admin_ip_cidrs) > 0 && alltrue([for c in var.admin_ip_cidrs : can(regex("^[0-9.]+/[0-9]+$", c))])
     error_message = "admin_ip_cidrs must be a non-empty list of IPv4 CIDRs like [\"203.0.113.4/32\"]."
@@ -45,13 +52,24 @@ variable "admin_ip_cidrs" {
 variable "ingest_source_cidrs" {
   description = "Extra CIDRs allowed to reach OpenObserve OTLP ingest on 5080 — cross-plane collectors like the agenticos droplet (/32 each). Kept distinct from admin_ip_cidrs so ingest never widens admin/UI access. Empty = admin-only."
   type        = list(string)
-  default     = []
+  # agenticos droplet (GOL-54). The former second entry 167.71.109.184/32 was
+  # grove-qa-l3-odoo's egress IP BEFORE its 2026-09-08 rebuild — no longer ours,
+  # so it is dropped (GOL-2333). App-plane droplets are matched by tag instead
+  # (ingest_source_tags) so a rebuild can't strand their collectors again.
+  default = ["159.223.171.231/32"]
+}
+
+variable "ingest_source_tags" {
+  description = "DO droplet tags allowed to reach OpenObserve OTLP ingest on 5080 — the app-plane collectors (otel-collector/beyla/synthetic-runner). Tag-matched, NOT /32-matched, because app-plane droplets are rebuilt immutably and get a fresh egress IP each time (a /32 went stale on the 2026-09-08 QA rebuild). role-odoo = grove-prod-odoo only; env-qa-l3 = the QA Odoo + QA obs droplets. Tags are account-scoped, so only our own droplets match. Empty = CIDR-only."
+  type        = list(string)
+  default     = ["role-odoo", "env-qa-l3"]
 }
 
 variable "automation_ssh_cidrs" {
   description = "Extra CIDRs allowed SSH (22) for obs ops automation — the agenticos droplet runs setup-monitoring.py + collector wiring (/32 each). Authed by the obs-specific CI key. Empty = admin-only."
   type        = list(string)
-  default     = []
+  # agenticos droplet — matches the live grove-obs-fw rule (GOL-2333).
+  default = ["159.223.171.231/32"]
 }
 
 # ── Observability stack config (flows into cloud-init → .env.monitoring) ──────
