@@ -1,0 +1,118 @@
+###############################################################################
+# APM overlay — Beyla (eBPF, Odoo RED) + OTel Collector (USE/infra) — GOL-2332
+#
+# Spec §3 "APM eBPF-first" / §3 Compose: the eBPF/privileged layer as its OWN
+# overlay, separate from docker-compose.monitoring.yml (the obs-plane OO/Keep
+# stack), so it is INDEPENDENTLY DEPLOYABLE on the Odoo droplet and survives
+# Odoo upgrades with zero Odoo code. Runs on the app/Odoo droplet only (Beyla
+# needs pid:host to find the Odoo WSGI process; the Collector needs /proc +
+# the Docker socket). Managed Postgres has no kernel access → single Beyla
+# sidecar targets Odoo only; PG USE metrics come from the Collector's
+# `postgresql` receiver (GOL-335).
+#
+# ── Relationship to docker-compose.monitoring.app-plane.yml ─────────────────
+# app-plane.yml currently INLINES an equivalent collector+beyla PLUS the
+# synthetic-runner (GOL-334) and is what runs LIVE on grove-qa-l3-odoo. This
+# file is the spec-§3 canonical extraction of just the Beyla+Collector layer,
+# and adds the piece app-plane's beyla lacks: the `otel/beyla-config.yml`
+# mount, whose `routes:` grouping collapses high-cardinality paths so the
+# per-endpoint p95 series the RED alerts query (odoo-orders-latency,
+# odoo-products-latency) actually form. On any single droplet deploy EXACTLY
+# ONE of {this file, app-plane.yml} — both define an otel-collector on the
+# shared grove network and running both double-scrapes docker_stats/hostmetrics
+# and double-exports USE metrics. Prod (greenfield, never ran app-plane) uses
+# THIS file; consolidating QA onto it is a tracked follow-up (see GOL-2332).
+#
+# ── PROD DEPLOY IS GATED (CLAUDE.md deploy invariant + GOL-99) ──────────────
+# Adding a privileged/pid:host sidecar to the prod Odoo droplet changes
+# user_data/compose → droplet REPLACE. Root-disk state is destroyed on replace;
+# the Odoo filestore MUST already live on the LABEL= block volume (GOL-93/-99
+# gate). Requires CEO approval + Josh SHA-bound apply. NOT deadline-critical for
+# the 2026-10-10 'up and running' cut (that is children 1/2 — synthetics +
+# Keep→Discord); this is the depth/APM axis.
+#
+# Image tags: pinned defaults here (env-overridable). Spec §7 wants these
+# pinned in release-manifest.yaml alongside the 4 frontend SHAs; that manifest
+# does not exist on main yet (GOL-2328) — pinning Beyla/Collector into it is a
+# coordinated follow-up once GOL-2328 lands the file.
+#
+# Deploy (Odoo droplet; env from /etc/grove/.env.monitoring — REMOTE OO
+# endpoint, not a local one):
+#   docker compose --project-name grove-apm \
+#     --env-file /etc/grove/.env.monitoring \
+#     -f /etc/grove/docker-compose.apm.yml up -d
+#
+# Required env vars in .env.monitoring (same set app-plane.yml consumes):
+#   OPENOBSERVE_OTLP_BASE        e.g. http://159.65.46.198:5080/api/default
+#   OPENOBSERVE_ROOT_EMAIL       OO root user email
+#   OPENOBSERVE_ROOT_PASSWORD    OO root password
+#   COST_ENV                     qa | prod
+#   POSTGRES_ENDPOINT            Managed PG host:25060 (ADR-007)
+#   POSTGRES_MONITOR_USER        read-only otel_monitor
+#   POSTGRES_MONITOR_PASSWORD    op://Grove Infra/pg_otel_monitor_password
+###############################################################################
+
+name: grove-apm
+
+networks:
+  grove:
+    name: grove_grove
+    external: true
+
+services:
+  # ── otel-collector — the single auth'd egress to OpenObserve ──────────────
+  # hostmetrics (/hostfs) + docker_stats (socket) USE metrics + the postgresql
+  # receiver (2nd --config, GOL-335) + OTLP-in from Beyla. Adds OpenObserve
+  # basicauth once so Beyla can export plain over the internal network.
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:${OTELCOL_TAG:-0.115.0}
+    restart: unless-stopped
+    command:
+      - "--config=/etc/otelcol/config.yaml"
+      - "--config=/etc/otelcol/config.postgres.yaml"
+    environment:
+      OPENOBSERVE_OTLP_BASE: ${OPENOBSERVE_OTLP_BASE}
+      OPENOBSERVE_ROOT_EMAIL: ${OPENOBSERVE_ROOT_EMAIL}
+      OPENOBSERVE_ROOT_PASSWORD: ${OPENOBSERVE_ROOT_PASSWORD}
+      COST_ENV: ${COST_ENV:-qa}
+      POSTGRES_ENDPOINT: ${POSTGRES_ENDPOINT}
+      POSTGRES_MONITOR_USER: ${POSTGRES_MONITOR_USER}
+      POSTGRES_MONITOR_PASSWORD: ${POSTGRES_MONITOR_PASSWORD}
+    group_add:
+      # docker.sock group on the Odoo droplet (GOL-335 verified value).
+      - "988"
+    volumes:
+      - /etc/grove/otel/otelcol-config.yaml:/etc/otelcol/config.yaml:ro
+      - /etc/grove/otel/otelcol-config.postgres.yaml:/etc/otelcol/config.postgres.yaml:ro
+      - /:/hostfs:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - grove
+
+  # ── beyla — eBPF RED metrics for Odoo (zero-code) ─────────────────────────
+  # Attaches eBPF probes to the Odoo WSGI process (BEYLA_OPEN_PORT=8069, via
+  # pid:host) and emits RED per HTTP route. The beyla-config.yml mount supplies
+  # the `routes:` block (config-file-only in Beyla) that groups id-like path
+  # segments to `*` so per-endpoint p95 forms cleanly. eBPF needs a Linux host
+  # + compatible kernel; if it can't attach it logs and produces no metrics
+  # (never crashes the stack). Exports OTLP → local otel-collector.
+  beyla:
+    image: grafana/beyla:${BEYLA_TAG:-1.9.4}
+    restart: unless-stopped
+    privileged: true
+    pid: host
+    depends_on:
+      - otel-collector
+    environment:
+      BEYLA_CONFIG_PATH: /etc/beyla/beyla-config.yml
+      BEYLA_OPEN_PORT: "8069" # instrument the Odoo WSGI listener
+      OTEL_SERVICE_NAME: odoo
+      BEYLA_SERVICE_NAMESPACE: grove
+      BEYLA_METRICS_INTERVAL: 30s
+      BEYLA_OTEL_METRICS_FEATURES: application,application_span
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+    volumes:
+      - /etc/grove/otel/beyla-config.yml:/etc/beyla/beyla-config.yml:ro
+    networks:
+      - grove
