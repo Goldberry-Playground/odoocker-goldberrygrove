@@ -186,6 +186,18 @@ write_files:
       # grove_headless _notify_discord() prefers this over DISCORD_OPS (QA sets
       # neither by default => alerts silent). Bare webhook URL, no /slack.
       DISCORD_ORDERS_WEBHOOK_URL=${discord_orders_webhook_url}
+      # Perenual plant-facts enrichment (GOL-2507, parent GOL-2383).
+      # grove_headless services/plant_data/perenual.py reads this from
+      # os.environ (compose environment: block -> here), so it MUST also be
+      # listed in the odoo service's environment: block -- the /.env mount only
+      # feeds odoorc.sh's odoo.conf substitution, not the process env. Empty
+      # default => PerenualProvider.configured is false, _cron_process_enrich_
+      # jobs() returns early and queued jobs are left queued (the "queue now,
+      # drain when keyed" contract), so this scaffold is a true no-op until
+      # Josh vaults the key (.env.op). Written UNQUOTED like the tokens above;
+      # the TF-var validation forbids whitespace and shell metacharacters so
+      # bash-sourcing this file under set -euo pipefail stays safe.
+      PERENUAL_API_KEY=${perenual_api_key}
 
   # Compose YAML - base64-encoded so cloud-init's YAML parser never sees
   # its content (avoids the embedded-block-scalar parse failures we hit

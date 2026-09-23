@@ -222,6 +222,14 @@ resource "digitalocean_droplet" "odoo" {
     # prefers this and falls back to the ops webhook above, so order alerts
     # separate from bot-logs once the webhook is provisioned.
     discord_orders_webhook_url = var.discord_orders_webhook_url
+
+    # Perenual plant-facts enrichment (GOL-2507, parent GOL-2383). The
+    # grove.enrich.job cron only drains when PerenualProvider.configured is
+    # true, i.e. os.environ PERENUAL_API_KEY is non-empty; default-empty here
+    # => jobs stay queued (never faked done) and the cron is a no-op.
+    # user_data is in ignore_changes (below), so landing this does NOT touch
+    # the running droplet; activation rides Josh's -target'ed rebuild.
+    perenual_api_key = var.perenual_api_key
     # Mailgun SMTP for Odoo transactional email (GOL-988). odoorc.sh substitutes
     # these into the SMTP group of /etc/odoo/odoo.conf. Empty smtp_password =>
     # SMTP auth inert (no send), so this scaffold is a safe no-op until the
