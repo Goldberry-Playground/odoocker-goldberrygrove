@@ -585,6 +585,16 @@ jobs:
       # backoff cap (~135s window) after registry.terraform.io returned a
       # sustained 504 Gateway Timeout that outlasted the old window and
       # reddened main-CI as an ownerless flake (run 34130853077).
+      # GOL-2510: the retry was INERT for its whole purpose until now. An
+      # `until` loop returns the status of the LAST command run in its body,
+      # and that was `[ "$delay" -gt 60 ] && delay=60` -- false (status 1) for
+      # every delay below the cap. So the moment `terraform init` actually
+      # healed on attempt 2, the loop exited 1, `set -e` killed the subshell
+      # and CI went red ANYWAY (run 35922400378: one `connection reset by
+      # peer` on terraform-provider-archive, "attempt 1/5 ... retrying", then
+      # exit 1 six seconds later with no attempt-2 line). Ending the body in
+      # an `if` (status 0 when the condition is false) plus an explicit
+      # `return 0` makes a healed retry report success.
       - name: terraform validate (every env + module)
         run: |
           set -e
@@ -600,8 +610,9 @@ jobs:
               sleep "$delay"
               attempt=$((attempt + 1))
               delay=$((delay * 2))
-              [ "$delay" -gt 60 ] && delay=60
+              if [ "$delay" -gt 60 ]; then delay=60; fi
             done
+            return 0
           }
 
           for d in infra/terraform/environments/*/ infra/terraform/modules/*/; do
