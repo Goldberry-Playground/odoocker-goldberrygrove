@@ -6,6 +6,19 @@ on:
   merge_group:
   push:
     branches: [main]
+  # GOL-2504: PRs opened by the promote/reconcile workflows are authored by the
+  # default GITHUB_TOKEN, so GitHub's anti-recursion guard never fires the
+  # `on: pull_request` run for them -- the three required CI contexts (Lint
+  # Python, Validate Docker Compose, Validate Nginx Config) are created as
+  # `action_required` and never execute, wedging the PR at "Expected -- waiting
+  # for status". Those workflows re-dispatch THIS workflow at the reconcile
+  # branch ref (`gh workflow run ci.yml --ref <branch>`) so the required
+  # contexts report a real check-run at the PR head SHA. Dispatchable only
+  # because this trigger lives on the default branch. Every job here is a
+  # read-only validator/linter/test -- there is no deploy or publish job -- so
+  # running them on a manual dispatch is safe. See prod-plan-guard.yml for the
+  # fourth required context's matching dispatch handling.
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
