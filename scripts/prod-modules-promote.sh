@@ -82,6 +82,29 @@
 # into a documented no-op). A resumed/retried run converges; it does not
 # accrete.
 #
+# ACTIVATING A NEW CONTAINER ENV VAR IN THE SAME TOUCH (GOL-2507)
+# ---------------------------------------------------------------------------
+# A secret that grove_headless reads from `os.environ` needs BOTH the droplet's
+# /etc/grove/.env line AND the odoo service's compose `environment:`
+# passthrough -- the /.env mount only feeds odoorc.sh's odoo.conf, so a var
+# present only there NEVER reaches the process (the GOL-1935 footgun). Both
+# points are rendered from `user_data`, which prod's droplet carries in
+# `lifecycle { ignore_changes = [...] }` -- so merging the Terraform chain is a
+# provable no-op and the running box only picks the var up on a REBUILD.
+#
+# Rather than make that a second hand-edited prod touch on promote day, pass
+# the value in and this script converges both points in place and recreates
+# odoo (a plain `restart` would keep the OLD container env). It is a bridge,
+# not a snowflake: the committed cloud-init already renders both lines, so the
+# next rebuild reproduces the box without this step.
+#
+#   PERENUAL_API_KEY="$(op read 'op://Goldberry Grove - Admin/perenual_api_key/credential')" \
+#     TARGET_REF=<sha> CONFIRM=PROMOTE scripts/prod-modules-promote.sh
+#
+# Unset => the whole converge is skipped and the promote behaves exactly as it
+# did before. The value travels to the droplet on STDIN, never in argv (so it
+# is never in either machine's process list), and is never echoed.
+#
 # Usage:
 #   TARGET_REF=<40-char sha> scripts/prod-modules-promote.sh            # pre-flight only
 #   TARGET_REF=<40-char sha> CONFIRM=PROMOTE scripts/prod-modules-promote.sh
@@ -114,6 +137,9 @@ TAX_MIGRATION="${TAX_MIGRATION:-19.0.1.47.0}"
 # is a one-line edit here plus the module.
 WV_TAX_NAME="${WV_TAX_NAME:-WV State Sales Tax 6%}"
 WV_TAX_AMOUNT="${WV_TAX_AMOUNT:-6.0}"
+# Optional: the Perenual plant-facts key to activate in the SAME touch
+# (GOL-2507). Empty => no converge at all, byte-for-byte the old behaviour.
+PERENUAL_API_KEY="${PERENUAL_API_KEY:-}"
 
 die() { echo "ERROR: $*" >&2; exit 2; }
 
@@ -130,6 +156,21 @@ if [ -n "${CONFIRM}" ] && [ "${CONFIRM}" != "PROMOTE" ]; then
   die "CONFIRM must be exactly PROMOTE to mutate production (got: ${CONFIRM})"
 fi
 
+# Validate the optional key LOCALLY, before we reach the droplet, against the
+# same contract var.perenual_api_key's own validation block enforces: cloud-init
+# writes it UNQUOTED into /etc/grove/.env, which is bash-sourced under
+# `set -euo pipefail`, so a space/quote/$ would break the NEXT boot -- long
+# after this run looked successful. The error deliberately does not echo the
+# value.
+PERENUAL_CONVERGE=0
+if [ -n "${PERENUAL_API_KEY}" ]; then
+  printf '%s' "${PERENUAL_API_KEY}" | grep -Eq '^[A-Za-z0-9._~+/=:-]{8,200}$' \
+    || die "PERENUAL_API_KEY must be a plain API token with NO whitespace or shell
+       metacharacters (A-Za-z0-9 and . _ ~ + / = : - only, 8-200 chars). Value not
+       echoed. cloud-init writes it unquoted into the bash-sourced /etc/grove/.env."
+  PERENUAL_CONVERGE=1
+fi
+
 # Explicit if/then rather than `A && B` (repo shell audit 2026-06-29): under
 # `set -e` an AND-list whose left side is false is exempt from errexit, but the
 # explicit form is the one this repo reads consistently.
@@ -142,15 +183,26 @@ echo "== prod modules promote (${MODE}) =="
 echo "   host:       ${PROD_HOST}"
 echo "   deploy dir: ${DEPLOY_DIR}"
 echo "   target ref: ${TARGET_REF}"
+if [ "${PERENUAL_CONVERGE}" = "1" ]; then
+  echo "   also converging: PERENUAL_API_KEY (GOL-2507) -- value read from the"
+  echo "                    environment, sent on stdin, never printed"
+fi
 if [ "${MODE}" = "preflight" ]; then
   echo "   NOTE: read-only pre-flight. Nothing will be written."
   echo "         Re-run with CONFIRM=PROMOTE to execute."
 fi
 echo
 
+# The optional secret goes over STDIN, not argv: the remote payload is visible
+# in the droplet's process list while it runs, so interpolating a key into it
+# would leak it there (and into the local `ps` too). First line of the payload
+# consumes it; `|| true` keeps `set -e` happy on an empty send.
 # shellcheck disable=SC2029  # we WANT the local vars expanded here, not on the droplet.
+printf '%s\n' "${PERENUAL_API_KEY}" |
 ssh -o StrictHostKeyChecking=yes "${PROD_HOST}" "
   set -euo pipefail
+  IFS= read -r PERENUAL_WANT || PERENUAL_WANT=''
+  PERENUAL_CONVERGE='${PERENUAL_CONVERGE}'
   cd '${DEPLOY_DIR}'
   # DB_NAME lives in the deploy env file; the tax reads below need it to pick
   # the database. Same \`set -a; . ./.env\` shape scripts/qa-module-upgrade.sh
@@ -253,7 +305,56 @@ PY
       echo '   -> recorded version unreadable; the post-upgrade guard reads the database directly anyway.' ;;
   esac
 
-  if [ \"\$CURRENT\" = \"\$TARGET\" ] && [ \"\$SYNCED\" = \"\$TARGET\" ] && [ \"\$LAST\" = \"\$TARGET\" ]; then
+  # --- pre-flight 7: PERENUAL_API_KEY activation state (GOL-2507) ----------
+  # Reported on EVERY run, converge requested or not, so the pre-flight always
+  # answers 'is the Perenual half live on prod?'. The VALUE is never printed --
+  # only set / empty / unset.
+  PERENUAL_ENV_COUNT=\"\$(grep -c '^PERENUAL_API_KEY=' '${DEPLOY_DIR}/.env' || true)\"
+  PERENUAL_ENV_VALUE=\"\$(sed -n 's/^PERENUAL_API_KEY=//p' '${DEPLOY_DIR}/.env' | tail -1 | tr -d '\r')\"
+  PERENUAL_COMPOSE='no'
+  if grep -Eq '^[[:space:]]*PERENUAL_API_KEY:' '${DEPLOY_DIR}/docker-compose.yml' 2>/dev/null; then
+    PERENUAL_COMPOSE='yes'
+  fi
+  if [ -n \"\$PERENUAL_ENV_VALUE\" ]; then
+    PERENUAL_ENV_STATE='set'
+  elif [ \"\$PERENUAL_ENV_COUNT\" != '0' ]; then
+    PERENUAL_ENV_STATE='empty'
+  else
+    PERENUAL_ENV_STATE='unset'
+  fi
+  # What the RUNNING container actually has -- the only thing perenual.py reads.
+  # Non-EMPTY, not merely present: \`printenv\` exits 0 on a var that compose
+  # interpolated to the empty string, which is exactly the unkeyed state
+  # PerenualProvider.configured treats as 'not configured'.
+  PERENUAL_RUNTIME='no'
+  if [ -n \"\$(dc exec -T odoo printenv PERENUAL_API_KEY 2>/dev/null | tr -d '\r\n' || true)\" ]; then
+    PERENUAL_RUNTIME='yes'
+  fi
+  echo \">> PERENUAL_API_KEY (GOL-2507): /etc/grove/.env = \$PERENUAL_ENV_STATE, deployed compose passthrough = \$PERENUAL_COMPOSE, odoo process env = \$PERENUAL_RUNTIME\"
+
+  # Pending only when a converge was actually requested. Any of the three
+  # points being wrong means the enrich cron still no-ops, so all three gate.
+  PERENUAL_PENDING='no'
+  if [ \"\$PERENUAL_CONVERGE\" = '1' ]; then
+    if [ \"\$PERENUAL_ENV_VALUE\" != \"\$PERENUAL_WANT\" ] \\
+       || [ \"\$PERENUAL_ENV_COUNT\" != '1' ] \\
+       || [ \"\$PERENUAL_COMPOSE\" != 'yes' ] \\
+       || [ \"\$PERENUAL_RUNTIME\" != 'yes' ]; then
+      PERENUAL_PENDING='yes'
+    fi
+  fi
+  if [ \"\$PERENUAL_PENDING\" = 'yes' ]; then
+    echo '   -> converge PENDING: will write the .env line, add the compose passthrough if'
+    echo '      missing, and RECREATE odoo (a plain restart keeps the old container env).'
+  elif [ \"\$PERENUAL_CONVERGE\" = '1' ]; then
+    echo '   -> already converged; nothing to do for Perenual.'
+  fi
+
+  # The NO-OP shortcut must account for the converge too: a droplet already on
+  # TARGET but still missing the key would otherwise exit 0 here and silently
+  # skip the activation this run was asked to do.
+  if [ \"\$CURRENT\" = \"\$TARGET\" ] && [ \"\$SYNCED\" = \"\$TARGET\" ] && [ \"\$LAST\" = \"\$TARGET\" ] \\
+     && [ \"\$PERENUAL_PENDING\" = 'no' ]; then
     echo
     echo \">> NO-OP: env pin, git-sync checkout and upgrade marker are all already \$TARGET.\"
     echo '>> Nothing to promote. (Re-running is safe; this is the idempotent path.)'
@@ -264,6 +365,10 @@ PY
     echo
     echo '>> Pre-flight only -- stopping here, nothing written.'
     echo \">> Would set CUSTOM_MODULES_REF \${CURRENT:-<unset>} -> \$TARGET, resync, and restart odoo.\"
+    if [ \"\$PERENUAL_PENDING\" = 'yes' ]; then
+      echo '>> Would also converge PERENUAL_API_KEY into /etc/grove/.env + the deployed compose'
+      echo '   and recreate odoo instead of restarting it (GOL-2507).'
+    fi
     echo '>> Re-run with CONFIRM=PROMOTE to execute.'
     exit 0
   fi
@@ -314,12 +419,89 @@ PY
   fi
   echo \">> git-sync checkout confirmed at \$TARGET\"
 
+  ###########################################################################
+  # OPTIONAL ENV CONVERGE (GOL-2507) -- runs BEFORE the odoo start so the one
+  # restart below both migrates the code and activates the key. Ordered after
+  # git-sync so a converge can never leave prod on half-synced code.
+  ###########################################################################
+  RECREATE_ODOO='no'
+  if [ \"\$PERENUAL_PENDING\" = 'yes' ]; then
+    echo '>> converging PERENUAL_API_KEY (GOL-2507)'
+
+    # Point 1 -- /etc/grove/.env. Delete-then-append so a pre-existing EMPTY
+    # line (what cloud-init renders before the key is vaulted) or an accidental
+    # duplicate collapses to exactly one. printf is a shell builtin, so the
+    # value never appears in the droplet's process list. .env is already backed
+    # up to \$BACKUP above; that backup is the rollback source for this too.
+    sed -i '/^PERENUAL_API_KEY=/d' '${DEPLOY_DIR}/.env'
+    printf 'PERENUAL_API_KEY=%s\n' \"\$PERENUAL_WANT\" >> '${DEPLOY_DIR}/.env'
+    [ \"\$(grep -c '^PERENUAL_API_KEY=' '${DEPLOY_DIR}/.env')\" = '1' ] \\
+      || { echo 'ERROR: duplicate PERENUAL_API_KEY lines in .env -- refusing to continue' >&2; exit 5; }
+    [ \"\$(sed -n 's/^PERENUAL_API_KEY=//p' '${DEPLOY_DIR}/.env' | tail -1 | tr -d '\r')\" = \"\$PERENUAL_WANT\" ] \\
+      || { echo 'ERROR: PERENUAL_API_KEY upsert did not take (value not echoed)' >&2; exit 5; }
+    echo '   /etc/grove/.env line written (value not echoed)'
+
+    # Point 2 -- the deployed compose passthrough. Without it the var stops at
+    # odoorc.sh and never reaches os.environ. Anchored on AUTO_UPGRADE_MODULES,
+    # which pre-flight 4 has already proven is present in the odoo service's
+    # environment block, and only the \${...} interpolation is written here --
+    # the secret itself never touches this file.
+    if [ \"\$PERENUAL_COMPOSE\" != 'yes' ]; then
+      COMPOSE_BACKUP=\"${DEPLOY_DIR}/docker-compose.yml.bak.\$STAMP\"
+      cp -p '${DEPLOY_DIR}/docker-compose.yml' \"\$COMPOSE_BACKUP\"
+      cat > /tmp/grove-compose-perenual.py <<'PY'
+import re
+import sys
+
+path = sys.argv[1]
+lines = open(path).readlines()
+if any(re.match(r'^\s*PERENUAL_API_KEY:', line) for line in lines):
+    print('COMPOSE|already-present')
+    raise SystemExit(0)
+for i, line in enumerate(lines):
+    m = re.match(r'^(\s*)AUTO_UPGRADE_MODULES:', line)
+    if m:
+        lines.insert(i + 1, m.group(1) + 'PERENUAL_API_KEY: \${PERENUAL_API_KEY:-}\n')
+        open(path, 'w').writelines(lines)
+        print('COMPOSE|inserted-after-AUTO_UPGRADE_MODULES')
+        raise SystemExit(0)
+print('COMPOSE|no-anchor: AUTO_UPGRADE_MODULES not found', file=sys.stderr)
+raise SystemExit(1)
+PY
+      if ! python3 /tmp/grove-compose-perenual.py '${DEPLOY_DIR}/docker-compose.yml'; then
+        cp -p \"\$COMPOSE_BACKUP\" '${DEPLOY_DIR}/docker-compose.yml'
+        echo 'ERROR: could not add the compose passthrough; compose restored from backup.' >&2
+        exit 10
+      fi
+      # Fail closed on a compose the daemon can no longer parse -- restoring
+      # here is the difference between a bad edit and an outage.
+      if ! dc config -q >/dev/null 2>&1; then
+        cp -p \"\$COMPOSE_BACKUP\" '${DEPLOY_DIR}/docker-compose.yml'
+        echo 'ERROR: edited docker-compose.yml failed \`docker compose config\`; restored from' >&2
+        echo \"       \$COMPOSE_BACKUP. Nothing was recreated.\" >&2
+        exit 10
+      fi
+      echo \"   compose passthrough added (backup: \$COMPOSE_BACKUP)\"
+    else
+      echo '   compose passthrough already present'
+    fi
+
+    # A \`restart\` reuses the EXISTING container, whose env was fixed at create
+    # time -- the whole converge would be invisible to the process. Recreate.
+    RECREATE_ODOO='yes'
+  fi
+
   # The blocking upgrade runs in the entrypoint on boot: the revision advanced,
   # so it fires --init=base,<mods> --update=<mods> --stop-after-init BEFORE the
   # server starts, and writes the marker only on success (a failed migration
   # aborts boot and retries -- it never serves a half-migrated DB).
-  echo '>> restarting odoo (entrypoint runs the blocking GOL-1009 upgrade pass)'
-  dc restart odoo
+  if [ \"\$RECREATE_ODOO\" = 'yes' ]; then
+    echo '>> recreating odoo (env converged; entrypoint runs the blocking GOL-1009 upgrade pass)'
+    dc up -d --force-recreate --no-deps odoo
+  else
+    echo '>> restarting odoo (entrypoint runs the blocking GOL-1009 upgrade pass)'
+    dc restart odoo
+  fi
 
   echo \">> waiting up to ${UPGRADE_TIMEOUT}s for the upgrade marker to reach \$TARGET\"
   deadline=\$(( \$(date +%s) + ${UPGRADE_TIMEOUT} ))
@@ -336,6 +518,29 @@ PY
     exit 7
   fi
   echo \">> upgrade marker recorded \$TARGET -- migrations ran\"
+
+  # The converge is only real if the var reached the PROCESS. Checked against
+  # the value we sent, but never printed: a mismatch here means compose
+  # interpolated something else (stale container, second env file).
+  if [ \"\$PERENUAL_CONVERGE\" = '1' ]; then
+    echo
+    echo '>> verifying PERENUAL_API_KEY reached the odoo process (GOL-2507)'
+    GOT=\"\$(dc exec -T odoo printenv PERENUAL_API_KEY 2>/dev/null | tr -d '\r\n' || true)\"
+    if [ -z \"\$GOT\" ]; then
+      echo 'ERROR: odoo has no PERENUAL_API_KEY in its process env after the recreate.' >&2
+      echo '       The enrich cron will keep no-opping and every Perenual job stays queued.' >&2
+      echo '       The module promote itself SUCCEEDED -- this is the Perenual half only.' >&2
+      echo \"       Check the odoo service environment: block in ${DEPLOY_DIR}/docker-compose.yml.\" >&2
+      exit 10
+    fi
+    if [ \"\$GOT\" != \"\$PERENUAL_WANT\" ]; then
+      echo 'ERROR: odoo has a DIFFERENT PERENUAL_API_KEY than the one supplied (values not' >&2
+      echo '       echoed). Something else is interpolating it -- do not assume either is' >&2
+      echo '       the vaulted key.' >&2
+      exit 10
+    fi
+    echo \"   OK -- odoo process env carries the supplied key (\${#GOT} chars)\"
+  fi
 
   ###########################################################################
   # THE MONEY GUARD -- see this file's header.
@@ -489,4 +694,14 @@ if [ "${MODE}" = "promote" ]; then
    the PR needs SHA-bound human review. Merge != deploy -- prod is ALREADY on
    this SHA; the PR only stops the next rebuild rolling prod backward.
 EOF
+  if [ "${PERENUAL_CONVERGE}" = "1" ]; then
+    cat <<'EOF'
+3. Perenual (GOL-2507) is now live on prod. Confirm it drains rather than
+   assuming it: press "Fetch facts" on a plant product, then check that the
+   grove.enrich.job row reaches `done` and that
+   ir.config_parameter `grove_headless.perenual_calls.<UTC-today>` increments.
+   Prod's daily budget stays 80 (`grove_headless.perenual_daily_budget`); QA
+   holds the other 20 of the shared vendor quota.
+EOF
+  fi
 fi
