@@ -150,6 +150,13 @@ jobs:
         timeout-minutes: 2
         with:
           fetch-depth: 0
+          # GOL-2504: persist a NON-GITHUB_TOKEN credential so the reconcile
+          # branch push below (and any later push to it) is attributed to a real
+          # identity -- a GITHUB_TOKEN push fires no `pull_request` event, which
+          # is what wedges the 4 required contexts at `action_required`. Falls
+          # back to github.token so this stays a no-op until Josh provisions the
+          # secret (see docs/RUNBOOK-reconcile-pr-token.md).
+          token: ${{ secrets.RECONCILE_PR_TOKEN || github.token }}
 
       # The redeploy primitive is grove-sites' -- single source of truth
       # (do NOT copy/duplicate it here; that's exactly the split-runbook
@@ -345,7 +352,20 @@ jobs:
       - name: Open reconcile PR (bring committed pin up to what's now live)
         if: steps.bump.outputs.changed == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          # GOL-2504: opening the PR under GITHUB_TOKEN makes the author
+          # `github-actions[bot]`, and GitHub's anti-recursion guard then
+          # suppresses every `on: pull_request` workflow for it -- CI,
+          # prod-plan-guard, Security Scans and Infracost are created as
+          # `action_required` and never run, so the 4 required contexts have no
+          # check-run at all and the PR wedges at "Expected - waiting for
+          # status" (GOL-2503 / #720 needed a manual empty commit). Opening it
+          # under a real (non-GITHUB_TOKEN) identity fires `opened` normally.
+          #
+          # The identity MUST NOT be `agenticos-developer` or
+          # `EngineeringMoonBear`: auto-approve.yml classifies by PR author and
+          # those two get auto-approve + auto-merge. This PR bumps the PRODUCTION
+          # storefront pin and must stay human-gated (Josh/CEO).
+          GH_TOKEN: ${{ secrets.RECONCILE_PR_TOKEN || github.token }}
           BRANCH: ${{ steps.bump.outputs.branch }}
         run: |
           git push origin "HEAD:$BRANCH"

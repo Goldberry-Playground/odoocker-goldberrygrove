@@ -20,15 +20,28 @@ name: Reconcile prod modules pin
 # allowlisted-human APPROVED review, GOL-1478) — this workflow cannot merge it.
 # So the ssh pin recipe ends with:  gh workflow run reconcile-modules-pin.yml -f modules_sha=<sha>
 #
-# NOTE ON CHECKS (GOL-2114): the PR is opened with the default GITHUB_TOKEN, so
-# GitHub does NOT auto-fire `on: pull_request` workflows for it (a deliberate
-# recursion guard). The change is drift-only HCL, and merge already requires a
-# human SHA-bound approval through the guard; when the reviewer adds it to the
-# merge queue the `merge_group`-triggered required checks (ci.yml,
-# prod-plan-guard.yml) run and gate the merge. If you want checks on the PR
-# itself before queueing, close→reopen it once. A future upgrade is to open the
-# PR with a GitHub App token (would fire pull_request checks) — that needs an
-# app installation secret, which is Terra's to provision.
+# NOTE ON CHECKS (GOL-2114 / GOL-2504): if this PR is opened with the default
+# GITHUB_TOKEN, GitHub does NOT auto-fire `on: pull_request` workflows for it (a
+# deliberate recursion guard) — the required contexts are created as
+# `action_required` and never run, so the PR wedges at "Expected - waiting for
+# status" and the GOL-1958 missing-required-check sweep files an issue.
+#
+# GOL-2504 fixes that: both the checkout and `gh pr create` below use
+# `secrets.RECONCILE_PR_TOKEN || github.token`. Once that repo secret exists the
+# PR is authored by a real identity and `pull_request` checks fire normally.
+# Until it is provisioned the expression falls back to GITHUB_TOKEN and the old
+# behaviour (plus its workaround) still applies: the change is drift-only HCL,
+# merge already requires a human SHA-bound approval through the guard, and when
+# the reviewer adds it to the merge queue the `merge_group`-triggered required
+# checks (ci.yml, prod-plan-guard.yml) run and gate the merge. To get checks on
+# the PR itself before queueing, push one empty commit under a non-bot identity
+# (or close→reopen it once).
+#
+# The RECONCILE_PR_TOKEN identity MUST NOT be `agenticos-developer` or
+# `EngineeringMoonBear`: auto-approve.yml classifies by PR author and those two
+# get auto-approve + auto-merge. A production pin bump must stay human-gated.
+# Provisioning recipe: docs/RUNBOOK-reconcile-pr-token.md (Josh/CEO — an agent
+# cannot write GitHub Actions secrets).
 
 on:
   workflow_dispatch:
@@ -67,6 +80,11 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
+          # GOL-2504: persist a NON-GITHUB_TOKEN credential so the branch push
+          # below is attributed to a real identity. Falls back to github.token,
+          # so this is inert until Josh provisions the secret
+          # (docs/RUNBOOK-reconcile-pr-token.md).
+          token: ${{ secrets.RECONCILE_PR_TOKEN || github.token }}
 
       - name: Setup Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
@@ -109,7 +127,13 @@ jobs:
       - name: Commit + open reconcile PR
         if: steps.edit.outputs.changed == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          # GOL-2504: see the NOTE ON CHECKS header. Under GITHUB_TOKEN the PR
+          # author is `github-actions[bot]` and GitHub's anti-recursion guard
+          # suppresses every `on: pull_request` workflow, leaving the 4 required
+          # contexts with no check-run at all. The identity MUST NOT be
+          # `agenticos-developer` or `EngineeringMoonBear` -- auto-approve.yml
+          # classifies by PR author and would auto-merge a production pin bump.
+          GH_TOKEN: ${{ secrets.RECONCILE_PR_TOKEN || github.token }}
         run: |
           BRANCH="reconcile-modules-pin-${MODULES_SHA:0:12}-${GITHUB_RUN_ID}"
           # Belt-and-suspenders (GOL-1708 wrong-block trap): the helper is
