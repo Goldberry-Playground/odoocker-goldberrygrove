@@ -208,6 +208,8 @@ jobs:
         run: python3 scripts/test_caddy_odoo_routes.py
       - name: Run modules-pin reconcile tests (GOL-2281)
         run: python3 scripts/test_reconcile_modules_pin.py
+      - name: Run prod modules-promote tests (GOL-2346 Leg B money guard)
+        run: python3 scripts/test_prod_modules_promote.py
 
   validate-compose:
     name: Validate Docker Compose (Grove)
