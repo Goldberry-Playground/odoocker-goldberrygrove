@@ -43,10 +43,31 @@
 #
 #     grove_headless: WV 6% state sales tax bound for N of N companies
 #
-# where both numbers match. This script parses that line and exits non-zero on
-# `bound for only X of N` (or on the line being absent when grove_headless was
-# in the upgrade set). See docs/RUNBOOK-module-upgrade.md "Promoting the prod
-# modules pin (Leg B)".
+# where both numbers match. This script parses that line and exits 9 on
+# `bound for only X of N`.
+#
+# BUT THE LOG LINE IS A PROXY, NOT THE TRUTH (GOL-2346, QA 2026-09-23).
+# `setup_wv_sales_tax` is reachable two ways: the `post_init_hook` (FRESH
+# INSTALL ONLY) and `migrations/19.0.1.47.0/post-migrate.py`. Odoo runs a
+# migration script only when the DB's RECORDED version
+# (`ir_module_module.latest_version`) is BELOW the script's version -- so on a
+# database already recorded at >= 19.0.1.47.0 the migration is SKIPPED
+# SILENTLY, no bind line is ever logged, and the old guard's "no line => exit
+# 8" fired on a database that was in fact perfectly bound. That is exactly what
+# happened on QA on 2026-09-23 (recorded 19.0.1.51.0; Josh had to fall back to
+# reading the binding by hand in `odoo shell`).
+#
+# So the guard no longer trusts the log line alone. It ALWAYS finishes with the
+# authoritative check -- the same read Josh did by hand -- straight out of the
+# database:
+#
+#     every res.company.account_sale_tax_id  == "WV State Sales Tax 6%" @ 6.0
+#     every GROVE-SHIP product.taxes_id      == exactly that one tax
+#
+# Exit 9 = a bind was VERIFIED WRONG (money defect -- stop the promote).
+# Exit 8 = the bind could NOT BE VERIFIED at all (unknown -- also stop, but the
+#          fix is to get a read, not to roll back).
+# See docs/RUNBOOK-module-upgrade.md "Promoting the prod modules pin (Leg B)".
 #
 # ACCESS: port 22 on the prod droplet is firewalled to the admin IP. Run from
 # an operator machine holding the admin IP + the droplet's SSH key.
@@ -84,6 +105,15 @@ UPGRADE_TIMEOUT="${UPGRADE_TIMEOUT:-900}"
 # Seconds between polls of the two waits above. Exposed only so the test
 # harness can run them fast; leave it alone in real use.
 POLL_INTERVAL="${POLL_INTERVAL:-10}"
+# The grove_headless migration that binds the WV 6% state tax. A database whose
+# RECORDED version is already >= this will skip it (and log no bind line) --
+# the pre-flight reports that up front so it is never a surprise mid-promote.
+TAX_MIGRATION="${TAX_MIGRATION:-19.0.1.47.0}"
+# The authoritative tax the bind must land on, as created by
+# grove_headless/hooks.py (WV_STATE_NAME). Kept as a var so a future rate change
+# is a one-line edit here plus the module.
+WV_TAX_NAME="${WV_TAX_NAME:-WV State Sales Tax 6%}"
+WV_TAX_AMOUNT="${WV_TAX_AMOUNT:-6.0}"
 
 die() { echo "ERROR: $*" >&2; exit 2; }
 
@@ -122,7 +152,17 @@ echo
 ssh -o StrictHostKeyChecking=yes "${PROD_HOST}" "
   set -euo pipefail
   cd '${DEPLOY_DIR}'
+  # DB_NAME lives in the deploy env file; the tax reads below need it to pick
+  # the database. Same \`set -a; . ./.env\` shape scripts/qa-module-upgrade.sh
+  # already uses against this identical file.
+  set -a; . '${DEPLOY_DIR}/.env'; set +a
   dc() { docker compose --env-file '${DEPLOY_DIR}/.env' \"\$@\"; }
+
+  # Run a python snippet inside the odoo container against the live DB.
+  # \`odoo shell\` reads the script from stdin; the banner and any logging go to
+  # stderr/stdout around it, so every line we care about is tagged and grepped
+  # out by the caller. Read-only by construction -- we never commit the cursor.
+  odoo_py() { dc exec -T odoo odoo shell -d \"\${DB_NAME:-odoo}\" --no-http --log-level=warn; }
 
   TARGET='${TARGET_REF}'
   MODE='${MODE}'
@@ -174,6 +214,44 @@ ssh -o StrictHostKeyChecking=yes "${PROD_HOST}" "
     ver=\"\$(dc exec -T odoo grep -m1 version \"/workspace/current/\$mod/__manifest__.py\" 2>/dev/null | cut -d: -f2 | tr -cd '0-9.' || true)\"
     echo \"   \$mod: \${ver:-<unreadable>}\"
   done
+
+  # --- pre-flight 6: the DB-RECORDED version, and whether the tax migration --
+  # ---              will therefore actually run -----------------------------
+  # The manifest above is what the CODE says. \`ir_module_module.latest_version\`
+  # is what ODOO uses to decide which migration scripts to run, and the two
+  # diverge routinely (QA 2026-09-23: manifest 19.0.1.51.0, recorded
+  # 19.0.1.51.0, tax migration therefore skipped and no bind line logged).
+  # Knowing this BEFORE the promote turns a mid-run surprise into an
+  # expectation.
+  echo '>> DB-recorded grove_headless version (decides which migrations run)'
+  cat > /tmp/grove-recorded-version.py <<'PY'
+for m in env['ir.module.module'].sudo().search([('name', '=', 'grove_headless')]):
+    print('GROVEVER|' + m.name + '|' + (m.state or '') + '|' + (m.latest_version or ''))
+PY
+  RECORDED=\"\$(odoo_py < /tmp/grove-recorded-version.py 2>/dev/null \
+    | grep '^GROVEVER|grove_headless|' | tail -1 | cut -d'|' -f4 | tr -d ' \r' || true)\"
+  echo \"   installed_version = \${RECORDED:-<unreadable>}  (tax migration = ${TAX_MIGRATION})\"
+
+  TAX_MIG_PENDING='unknown'
+  if [ -n \"\$RECORDED\" ]; then
+    # sort -V puts the lower version first. If the MIGRATION sorts first, the
+    # recorded version is >= it, so Odoo will skip the script.
+    if [ \"\$(printf '%s\n%s\n' \"\$RECORDED\" '${TAX_MIGRATION}' | sort -V | head -1)\" = '${TAX_MIGRATION}' ]; then
+      TAX_MIG_PENDING='no'
+    else
+      TAX_MIG_PENDING='yes'
+    fi
+  fi
+  case \"\$TAX_MIG_PENDING\" in
+    yes)
+      echo \"   -> below ${TAX_MIGRATION}: the WV-tax migration WILL run; expect a 'bound for N of N' line.\" ;;
+    no)
+      echo \"   -> already >= ${TAX_MIGRATION}: Odoo will SKIP the WV-tax migration, so NO bind line will\"
+      echo '      be logged. That is NOT a fault -- the post-upgrade guard reads the binding'
+      echo '      straight out of the database instead.' ;;
+    *)
+      echo '   -> recorded version unreadable; the post-upgrade guard reads the database directly anyway.' ;;
+  esac
 
   if [ \"\$CURRENT\" = \"\$TARGET\" ] && [ \"\$SYNCED\" = \"\$TARGET\" ] && [ \"\$LAST\" = \"\$TARGET\" ]; then
     echo
@@ -276,28 +354,102 @@ ssh -o StrictHostKeyChecking=yes "${PROD_HOST}" "
     # and a mojibake'd log (GOL-1646) must not make this guard silently miss.
     BIND_LINE=\"\$(printf '%s\n' \"\$LOGS\" | grep -F 'WV 6% state sales tax bound for' | tail -1 || true)\"
     if [ -z \"\$BIND_LINE\" ]; then
-      echo 'ERROR: grove_headless was upgraded but NO \"WV 6% state sales tax bound for N of N\"' >&2
-      echo '       line appeared in the log window. The tax hook did not run, or the log' >&2
-      echo '       rolled past it. DO NOT take orders until this is resolved by hand:' >&2
-      echo '       a company left on the old 7% / demo 15% tax mis-charges every order.' >&2
+      # NOT fatal on its own any more. The migration is skipped whenever the
+      # recorded version already covers it (pre-flight 6), and the log window
+      # can also simply have rolled past the line. Say which, then let the
+      # database decide below.
+      if [ \"\$TAX_MIG_PENDING\" = 'no' ]; then
+        echo \"   no bind line -- EXPECTED: recorded version was \$RECORDED (>= ${TAX_MIGRATION}),\"
+        echo '   so Odoo skipped the migration. Falling through to the direct DB check.'
+      else
+        echo '   WARNING: no bind line in the log window, and the pre-flight expected one' >&2
+        echo \"   (recorded version was \${RECORDED:-<unreadable>}). Either the migration did not\" >&2
+        echo '   run or the log rolled past it. The direct DB check below is now the ONLY' >&2
+        echo '   evidence -- read its result carefully.' >&2
+      fi
+    else
+      echo \"   \$BIND_LINE\"
+      if printf '%s' \"\$BIND_LINE\" | grep -q 'bound for only '; then
+        echo 'ERROR: PARTIAL TAX BIND. At least one company kept its previous default sale tax.' >&2
+        echo '       setup_wv_sales_tax swallows per-company failures at WARNING and still exits 0,' >&2
+        echo '       so the upgrade LOOKS successful. It is not. The WARNINGs above the line name' >&2
+        echo '       the company that failed. STOP THE PROMOTE and fix before prod takes orders.' >&2
+        printf '%s\n' \"\$LOGS\" | grep -F 'WV tax setup FAILED for company' >&2 || true
+        exit 9
+      fi
+      BOUND=\"\$(printf '%s' \"\$BIND_LINE\" | sed -n 's/.*bound for \([0-9]*\) of \([0-9]*\) companies.*/\1/p')\"
+      TOTAL=\"\$(printf '%s' \"\$BIND_LINE\" | sed -n 's/.*bound for \([0-9]*\) of \([0-9]*\) companies.*/\2/p')\"
+      if [ -z \"\$BOUND\" ] || [ -z \"\$TOTAL\" ] || [ \"\$BOUND\" != \"\$TOTAL\" ]; then
+        echo \"ERROR: could not confirm a full bind from: \$BIND_LINE\" >&2
+        exit 9
+      fi
+      echo \"   log line OK -- bound for \$BOUND of \$TOTAL companies (full coverage)\"
+    fi
+
+    #########################################################################
+    # THE AUTHORITATIVE CHECK -- read the binding out of the database.
+    # This is the same read Josh ran by hand on QA on 2026-09-23 when the log
+    # line was absent. It runs on EVERY promote, line or no line, because the
+    # log line is only a proxy for what the tables actually say.
+    #########################################################################
+    echo
+    echo '>> money guard: direct DB read of the live tax binding'
+    cat > /tmp/grove-tax-verify.py <<'PY'
+TAX_NAME = '${WV_TAX_NAME}'
+TAX_AMOUNT = ${WV_TAX_AMOUNT}
+SHIP_CODE = 'GROVE-SHIP'
+
+bad = 0
+companies = env['res.company'].sudo().search([])
+for c in companies:
+    tax = c.account_sale_tax_id
+    ok = bool(tax) and tax.name == TAX_NAME and abs(tax.amount - TAX_AMOUNT) < 0.0001
+    if not ok:
+        bad += 1
+    print('GROVETAX|company|' + str(c.id) + '|' + c.name + '|'
+          + (tax.name if tax else '<none>') + '|'
+          + (str(tax.amount) if tax else '') + '|'
+          + ('OK' if ok else 'BAD'))
+
+    ship = env['product.product'].sudo().with_company(c).search(
+        [('default_code', '=', SHIP_CODE), ('company_id', 'in', [c.id, False])],
+        limit=1,
+    )
+    if not ship:
+        # Created lazily at first checkout -- absent is not a defect.
+        print('GROVETAX|ship|' + str(c.id) + '|' + c.name + '|<absent>||SKIP')
+        continue
+    names = sorted(ship.taxes_id.mapped('name'))
+    sok = names == [TAX_NAME]
+    if not sok:
+        bad += 1
+    print('GROVETAX|ship|' + str(c.id) + '|' + c.name + '|'
+          + (','.join(names) if names else '<none>') + '||'
+          + ('OK' if sok else 'BAD'))
+
+print('GROVETAXSUM|' + str(bad) + '|' + str(len(companies)))
+PY
+    TAXOUT=\"\$(odoo_py < /tmp/grove-tax-verify.py 2>/dev/null | grep '^GROVETAX' || true)\"
+    printf '%s\n' \"\$TAXOUT\" | grep '^GROVETAX|' | sed 's/^GROVETAX|/   /' || true
+
+    SUM=\"\$(printf '%s\n' \"\$TAXOUT\" | grep '^GROVETAXSUM|' | tail -1 || true)\"
+    if [ -z \"\$SUM\" ]; then
+      echo 'ERROR: could not read the tax binding out of the database -- the odoo shell probe' >&2
+      echo '       returned nothing. The upgrade itself completed, but the ONE thing that' >&2
+      echo '       decides whether prod charges the right tax is now UNVERIFIED.' >&2
+      echo '       Do not take orders until you have run, on the droplet:' >&2
+      echo \"         docker compose --env-file ${DEPLOY_DIR}/.env exec -T odoo odoo shell -d \\\"\\\$DB_NAME\\\" --no-http < /tmp/grove-tax-verify.py\" >&2
       exit 8
     fi
-    echo \"   \$BIND_LINE\"
-    if printf '%s' \"\$BIND_LINE\" | grep -q 'bound for only '; then
-      echo 'ERROR: PARTIAL TAX BIND. At least one company kept its previous default sale tax.' >&2
-      echo '       setup_wv_sales_tax swallows per-company failures at WARNING and still exits 0,' >&2
-      echo '       so the upgrade LOOKS successful. It is not. The WARNINGs above the line name' >&2
-      echo '       the company that failed. STOP THE PROMOTE and fix before prod takes orders.' >&2
-      printf '%s\n' \"\$LOGS\" | grep -F 'WV tax setup FAILED for company' >&2 || true
+    TAXBAD=\"\$(printf '%s' \"\$SUM\" | cut -d'|' -f2)\"
+    TAXCOS=\"\$(printf '%s' \"\$SUM\" | cut -d'|' -f3)\"
+    if [ \"\$TAXBAD\" != '0' ]; then
+      echo \"ERROR: VERIFIED WRONG TAX BINDING -- \$TAXBAD check(s) BAD across \$TAXCOS companies.\" >&2
+      echo '       The rows marked BAD above are live: every order those companies take is' >&2
+      echo '       mis-charged. STOP THE PROMOTE and fix before prod takes orders.' >&2
       exit 9
     fi
-    BOUND=\"\$(printf '%s' \"\$BIND_LINE\" | sed -n 's/.*bound for \([0-9]*\) of \([0-9]*\) companies.*/\1/p')\"
-    TOTAL=\"\$(printf '%s' \"\$BIND_LINE\" | sed -n 's/.*bound for \([0-9]*\) of \([0-9]*\) companies.*/\2/p')\"
-    if [ -z \"\$BOUND\" ] || [ -z \"\$TOTAL\" ] || [ \"\$BOUND\" != \"\$TOTAL\" ]; then
-      echo \"ERROR: could not confirm a full bind from: \$BIND_LINE\" >&2
-      exit 9
-    fi
-    echo \"   OK -- bound for \$BOUND of \$TOTAL companies (full coverage)\"
+    echo \"   OK -- all \$TAXCOS companies verified on '${WV_TAX_NAME}', GROVE-SHIP included\"
   else
     echo \"   skipped: grove_headless is not in AUTO_UPGRADE_MODULES (\$AUTO)\"
   fi

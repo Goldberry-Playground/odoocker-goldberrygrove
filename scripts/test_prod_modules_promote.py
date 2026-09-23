@@ -23,8 +23,18 @@ The properties tested are the ones that would actually cost money or an outage:
                              though the upgrade itself "succeeded" (GOL-2449:
                              setup_wv_sales_tax swallows per-company failures
                              and still exits 0).
-  money-guard-missing-line   grove_headless upgraded but no bind line at all
-                             => non-zero exit, never a silent pass.
+  money-guard-missing-line   no bind line is NOT a failure by itself -- Odoo
+                             skips migrations/19.0.1.47.0 whenever the DB's
+                             recorded version already covers it (QA hit this on
+                             2026-09-23). The guard says which case it is and
+                             then lets the database decide.
+  money-guard-db-is-truth    the direct DB read runs on EVERY promote: a clean
+                             "3 of 3" in the log cannot launder a mis-bound
+                             database (exit 9), and a probe that returns
+                             nothing leaves the binding UNVERIFIED (exit 8).
+  preflight-reports-version  the pre-flight prints ir_module_module's recorded
+                             version and says up front whether the WV-tax
+                             migration will run or be skipped.
   sync-timeout-leaves-odoo-alone  if git-sync never reaches the target, odoo is
                              NOT restarted (prod keeps serving the old code).
   idempotent-rerun           a second promote at the same SHA is a NO-OP and
@@ -77,9 +87,24 @@ case "$cmd" in
       [ -f "$S/synced" ] || exit 1
       cat "$S/synced"; exit 0
     fi
-    # odoo: either the symlink-basename fallback or a manifest grep
+    # odoo: symlink-basename fallback, manifest grep, or an `odoo shell` probe
     joined="${rest[*]}"
     case "$joined" in
+      *"odoo shell"*)
+        # The probe script arrives on stdin; which one it is decides the reply.
+        script="$(cat)"
+        case "$script" in
+          *GROVEVER*)
+            # empty file models an unreadable / unresolvable version
+            if [ -s "$S/recorded_version" ]; then
+              echo "GROVEVER|grove_headless|installed|$(cat "$S/recorded_version")"
+            fi
+            exit 0 ;;
+          *GROVETAX*)
+            cat "$S/tax_out" 2>/dev/null || true
+            exit 0 ;;
+        esac
+        echo "stub-docker: unhandled odoo shell probe" >&2; exit 96 ;;
       *readlink*) cat "$S/synced" 2>/dev/null || exit 1; exit 0 ;;
       *__manifest__.py*) echo '    "version": "19.0.1.51.0",'; exit 0 ;;
     esac
@@ -121,6 +146,33 @@ COMPOSE_WITHOUT_AUTO = """services:
       APP_ENV: production
 """
 
+# What the direct DB probe reports. The bind line in the log is only a proxy;
+# these rows are the thing that actually decides what a customer is charged.
+TAX_ALL_OK = """GROVETAX|company|1|Goldberry Grove|WV State Sales Tax 6%|6.0|OK
+GROVETAX|ship|1|Goldberry Grove|WV State Sales Tax 6%||OK
+GROVETAX|company|8|George George George Woodworking|WV State Sales Tax 6%|6.0|OK
+GROVETAX|ship|8|George George George Woodworking|WV State Sales Tax 6%||OK
+GROVETAX|company|9|At The Grove Nursery|WV State Sales Tax 6%|6.0|OK
+GROVETAX|ship|9|At The Grove Nursery|<absent>||SKIP
+GROVETAXSUM|0|3
+"""
+
+# The GOL-2449 shape: the upgrade "succeeded", one company kept the old 7%.
+TAX_ONE_BAD = """GROVETAX|company|1|Goldberry Grove|WV State Sales Tax 6%|6.0|OK
+GROVETAX|ship|1|Goldberry Grove|WV State Sales Tax 6%||OK
+GROVETAX|company|8|George George George Woodworking|WV State Sales Tax 6%|6.0|OK
+GROVETAX|ship|8|George George George Woodworking|WV State Sales Tax 6%||OK
+GROVETAX|company|9|At The Grove Nursery|WV Sales Tax 7%|7.0|BAD
+GROVETAX|ship|9|At The Grove Nursery|WV State Sales Tax 6%||OK
+GROVETAXSUM|1|3
+"""
+
+# Pre-1.47.0: the tax migration is pending, so a bind line IS expected.
+VER_BELOW_TAX_MIGRATION = "19.0.1.40.0"
+# >=1.47.0: Odoo skips the migration and logs nothing. QA hit exactly this on
+# 2026-09-23 and the old guard mistook it for a failure.
+VER_AT_OR_ABOVE_TAX_MIGRATION = "19.0.1.51.0"
+
 FULL_BIND = (
     "INFO odoo grove_headless: WV 6% state sales tax bound for 3 of 3 companies\n"
 )
@@ -135,7 +187,8 @@ class Droplet:
     """A temp dir that looks like /etc/grove + the stub binaries on PATH."""
 
     def __init__(self, *, env_ref=OLD, synced=OLD, marker=OLD,
-                 auto_upgrade=True, upgrade_log=FULL_BIND, sync_fails=False):
+                 auto_upgrade=True, upgrade_log=FULL_BIND, sync_fails=False,
+                 recorded_version=VER_BELOW_TAX_MIGRATION, tax_out=TAX_ALL_OK):
         self.root = tempfile.mkdtemp(prefix="fakegrove-")
         self.deploy = os.path.join(self.root, "grove")
         self.state = os.path.join(self.root, "state")
@@ -158,6 +211,8 @@ class Droplet:
         self._write(self.marker_path, marker + "\n")
         self._write(os.path.join(self.state, "upgrade_log"), upgrade_log)
         self._write(os.path.join(self.state, "logs"), "")
+        self._write(os.path.join(self.state, "recorded_version"), recorded_version)
+        self._write(os.path.join(self.state, "tax_out"), tax_out)
         if sync_fails:
             self._write(os.path.join(self.state, "sync_fails"), "1")
         # the stub docker needs to read the same .env the script edits
@@ -267,6 +322,46 @@ def test_preflight_writes_nothing():
         d.cleanup()
 
 
+def test_preflight_reports_recorded_version():
+    d = Droplet(recorded_version=VER_BELOW_TAX_MIGRATION)
+    try:
+        r = d.run()
+        check(
+            "preflight-prints-recorded-version",
+            f"installed_version = {VER_BELOW_TAX_MIGRATION}" in r.stdout,
+            r.stdout[-500:],
+        )
+        check(
+            "preflight-says-tax-migration-will-run",
+            "WV-tax migration WILL run" in r.stdout,
+            r.stdout[-500:],
+        )
+    finally:
+        d.cleanup()
+
+    d = Droplet(recorded_version=VER_AT_OR_ABOVE_TAX_MIGRATION)
+    try:
+        r = d.run()
+        check(
+            "preflight-says-tax-migration-will-be-skipped",
+            "will SKIP the WV-tax migration" in r.stdout,
+            r.stdout[-500:],
+        )
+    finally:
+        d.cleanup()
+
+    d = Droplet(recorded_version="")
+    try:
+        r = d.run()
+        check(
+            "preflight-tolerates-unreadable-version",
+            r.returncode == 0 and "recorded version unreadable" in r.stdout,
+            f"rc={r.returncode} {r.stdout[-500:]}",
+        )
+    finally:
+        d.cleanup()
+
+
 def test_preflight_noop_when_already_current():
     d = Droplet(env_ref=NEW, synced=NEW, marker=NEW)
     try:
@@ -331,14 +426,99 @@ def test_money_guard_partial_bind():
         d.cleanup()
 
 
-def test_money_guard_missing_line():
-    d = Droplet(upgrade_log="INFO odoo Modules loaded.\n")
+NO_BIND_LINE = "INFO odoo Modules loaded.\n"
+
+
+def test_money_guard_missing_line_but_db_verified():
+    """The QA 2026-09-23 case: recorded version >= the migration, so Odoo skips
+    it and logs no bind line. The old guard exited 8 on a perfectly bound DB."""
+    d = Droplet(
+        upgrade_log=NO_BIND_LINE,
+        recorded_version=VER_AT_OR_ABOVE_TAX_MIGRATION,
+    )
     try:
         r = d.run(confirm="PROMOTE")
         check(
-            "money-guard-missing-line",
-            r.returncode == 8 and "NO \"WV 6% state sales tax bound for" in r.stderr,
-            f"rc={r.returncode} err={r.stderr[-400:]}",
+            "missing-line-skipped-migration-is-not-a-failure",
+            r.returncode == 0,
+            f"rc={r.returncode} err={r.stderr[-500:]}",
+        )
+        check(
+            "missing-line-explains-why",
+            "no bind line -- EXPECTED" in r.stdout,
+            r.stdout[-500:],
+        )
+        check(
+            "missing-line-falls-back-to-db-read",
+            "all 3 companies verified on" in r.stdout,
+            r.stdout[-500:],
+        )
+    finally:
+        d.cleanup()
+
+
+def test_money_guard_missing_line_and_db_bad():
+    """No bind line AND the DB disagrees => exit 9, never a silent pass."""
+    d = Droplet(
+        upgrade_log=NO_BIND_LINE,
+        recorded_version=VER_AT_OR_ABOVE_TAX_MIGRATION,
+        tax_out=TAX_ONE_BAD,
+    )
+    try:
+        r = d.run(confirm="PROMOTE")
+        check(
+            "missing-line-bad-db-exits-9",
+            r.returncode == 9 and "VERIFIED WRONG TAX BINDING" in r.stderr,
+            f"rc={r.returncode} err={r.stderr[-500:]}",
+        )
+        check(
+            "missing-line-bad-db-names-the-row",
+            "At The Grove Nursery|WV Sales Tax 7%" in r.stdout,
+            r.stdout[-600:],
+        )
+    finally:
+        d.cleanup()
+
+
+def test_money_guard_missing_line_when_migration_was_due():
+    """No bind line when the pre-flight said one was DUE is suspicious even if
+    the DB happens to check out -- say so loudly, but let the DB decide."""
+    d = Droplet(upgrade_log=NO_BIND_LINE, recorded_version=VER_BELOW_TAX_MIGRATION)
+    try:
+        r = d.run(confirm="PROMOTE")
+        check(
+            "missing-line-when-due-warns",
+            r.returncode == 0 and "no bind line in the log window" in r.stderr,
+            f"rc={r.returncode} err={r.stderr[-500:]}",
+        )
+    finally:
+        d.cleanup()
+
+
+def test_money_guard_db_overrides_a_clean_log_line():
+    """The strongest property: a full "3 of 3" in the log can NOT launder a
+    database that is actually mis-bound."""
+    d = Droplet(upgrade_log=FULL_BIND, tax_out=TAX_ONE_BAD)
+    try:
+        r = d.run(confirm="PROMOTE")
+        check(
+            "clean-log-line-cannot-launder-bad-db",
+            r.returncode == 9 and "VERIFIED WRONG TAX BINDING" in r.stderr,
+            f"rc={r.returncode} err={r.stderr[-500:]}",
+        )
+    finally:
+        d.cleanup()
+
+
+def test_money_guard_unverifiable_db():
+    """The probe returned nothing: the binding is UNKNOWN, which is not OK."""
+    d = Droplet(tax_out="")
+    try:
+        r = d.run(confirm="PROMOTE")
+        check(
+            "unverifiable-db-exits-8",
+            r.returncode == 8 and "could not read the tax binding" in r.stderr,
+            f"rc={r.returncode} err={r.stderr[-500:]}",
         )
     finally:
         d.cleanup()

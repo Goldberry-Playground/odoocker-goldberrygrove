@@ -113,7 +113,9 @@ the rest.
 
 ```bash
 # 1. Pre-flight. Read-only: prints the current env pin, the live git-sync
-#    checkout, the upgrade marker and the on-disk manifest versions, then stops.
+#    checkout, the upgrade marker, the on-disk manifest versions, and the DB's
+#    RECORDED grove_headless version (which decides whether the WV-tax
+#    migration will actually run) -- then stops.
 TARGET_REF=<40-hex reviewed grove-odoo-modules sha> \
   scripts/prod-modules-promote.sh
 
@@ -148,10 +150,48 @@ So "the upgrade finished" is **not** the success condition. This is:
 grove_headless: WV 6% state sales tax bound for N of N companies
 ```
 
-with both numbers equal. The script parses that line and **exits non-zero** on
-`bound for only X of N` (echoing the per-company `WV tax setup FAILED` WARNINGs)
-or on the line being absent entirely when `grove_headless` was in the upgrade
-set. Do not take orders on a run that failed this check.
+with both numbers equal. The script parses that line and **exits 9** on
+`bound for only X of N`, echoing the per-company `WV tax setup FAILED` WARNINGs
+that name the company.
+
+#### …but the log line is a proxy, not the truth
+
+`setup_wv_sales_tax` is reachable two ways: the `post_init_hook` (**fresh
+install only**) and `migrations/19.0.1.47.0/post-migrate.py`. Odoo runs a
+migration script only when the database's **recorded** version
+(`ir_module_module.latest_version`) is *below* the script's version — so on a
+database already recorded at `>= 19.0.1.47.0` the migration is **skipped
+silently** and no bind line is ever logged.
+
+That is not hypothetical. On **QA, 2026-09-23**, Josh's `-u grove_headless`
+emitted no `Running migration [19.0.1.47.0]` and no bind line, because QA was
+already recorded at `19.0.1.51.0`. The tax was in fact bound correctly for all
+three companies — he had to prove it by reading the tables by hand in
+`odoo shell`.
+
+So the guard no longer trusts the log line alone:
+
+- **Pre-flight** prints `grove_headless`'s recorded `installed_version` and says
+  up front whether the WV-tax migration **will run** or **will be skipped**. A
+  missing bind line is then an expectation, not a mid-promote surprise.
+- **After the upgrade** the script always performs the authoritative read — the
+  same one Josh ran by hand — straight out of the database:
+
+  ```
+  every res.company.account_sale_tax_id == "WV State Sales Tax 6%" @ 6.0
+  every GROVE-SHIP product.taxes_id     == exactly that one tax
+  ```
+
+  (`GROVE-SHIP` is created lazily at first checkout; absent is reported `SKIP`,
+  not a failure.)
+
+| Exit | Meaning | What to do |
+|---|---|---|
+| `9` | A binding was **verified wrong** — either `bound for only X of N` in the log, or a `BAD` row in the DB read. Money defect. | Stop the promote. Prod is mis-charging those companies. Fix, then re-run. |
+| `8` | The binding could **not be verified at all** — the `odoo shell` probe returned nothing. | Stop, but the fix is to *get a read*, not to roll back. Re-run the probe on the droplet (the script prints the exact command). |
+
+A clean `3 of 3` in the log **cannot** launder a mis-bound database: the DB read
+runs either way and wins. Do not take orders on a run that failed this check.
 
 ### Other fail-closed guards
 
