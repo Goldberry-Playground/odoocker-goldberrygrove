@@ -18,6 +18,7 @@ You (or the CEO) can no longer `ssh`/`scp` to a Grove droplet and the failure is
 
 - `infra/terraform/environments/production/variables.tf`
 - `infra/terraform/environments/qa-app-platform/variables.tf`
+- `infra/terraform/environments/observability/variables.tf` (grove-obs, GOL-2333). This env's operator-local `terraform.tfvars` must **not** set `admin_ip_cidrs`, because a tfvars value overrides the codified default. Apply here with `-target=digitalocean_firewall.obs`.
 
 Terraform is **authoritative** over these firewalls. A rule added by hand in the DigitalOcean console (or via the DO API) is **silently removed by the next `terraform apply`**. So a hand-added rule is only ever a stopgap; the durable fix is to codify the address here.
 
@@ -37,7 +38,7 @@ If you're locked out *right now* and can't wait for a PR + apply, add an **addit
 
 ### 3. Codify the address (durable fix)
 
-Edit **both** env `variables.tf` files. **Append** to the list default — do **not** replace the existing entries blind (a second operator may depend on one):
+Edit **all three** env `variables.tf` files. **Append** to the list default — do **not** replace the existing entries blind (a second operator may depend on one):
 
 ```hcl
 # before
@@ -46,7 +47,7 @@ default = ["74.47.41.38/32", "173.84.140.152/32"]
 default = ["74.47.41.38/32", "173.84.140.152/32", "<new>/32"]
 ```
 
-Keep prod and QA in step so the same machine reaches both. Open a PR.
+Keep prod, QA and observability in step so the same machine reaches all of them. Open a PR.
 
 ### 4. Confirm it's an in-place update, not a replace
 
