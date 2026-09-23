@@ -6,12 +6,17 @@
 #
 # Two modes:
 #   compute  - destroy the spend, keep the data + DNS:
-#              4 App Platform apps + 2 droplets + BOTH volume attachments
-#              (caddy_data and odoo_filestore -- the volumes themselves
-#              survive; only the attachments drop, and `make qa-l3-up`
-#              reattaches them). Managed PG (all Odoo data), the
-#              caddy-data volume (LE certs -- rate-limit protection, see
-#              ADR-005), the DNS zone, and the reserved IP all survive.
+#              4 App Platform apps + the Odoo droplet + BOTH volume
+#              attachments (caddy_data and odoo_filestore -- the volumes
+#              themselves survive; only the attachments drop, and
+#              `make qa-l3-up` reattaches them). Managed PG (all Odoo
+#              data), the caddy-data volume (LE certs -- rate-limit
+#              protection, see ADR-005), the DNS zone, and the reserved
+#              IP all survive.
+#              The grove-qa-l3-obs droplet is EXEMPT by default
+#              (GOL-2333 / GOL-2472, docs/ADR/010) -- it and its
+#              firewall + oo/keep DNS records survive. Opt it back in
+#              with QA_L3_TEARDOWN_OBS=1.
 #              Re-create with `make qa-l3-up`; the droplets re-bootstrap
 #              unattended from cloud-init and Odoo reconnects to the
 #              surviving DB.
@@ -62,11 +67,17 @@ if [ "$MODE" = "all" ]; then
   echo "!! 'all' destroys Managed PG (ALL Odoo data), the LE cert volume,"
   echo "!! the qa DNS zone, and the Cloudflare NS delegation."
 else
-  echo "'compute' destroys 15 resources: 4 App Platform apps, 2 droplets,"
+  echo "'compute' destroys: 4 App Platform apps, the Odoo droplet,"
   echo "2 volume attachments (caddy_data + odoo_filestore), plus their"
-  echo "DEPENDENTS terraform pulls in via -target: droplet firewalls, the"
-  echo "odoo/oo/keep/apex DNS records, and the PG trusted-sources firewall"
-  echo "(re-verified via plan -destroy 2026-07-15, GOL-418)."
+  echo "DEPENDENTS terraform pulls in via -target: the Odoo droplet firewall,"
+  echo "the odoo/apex DNS records, and the PG trusted-sources firewall."
+  if [ "${QA_L3_TEARDOWN_OBS:-0}" = "1" ]; then
+    echo "QA_L3_TEARDOWN_OBS=1: ALSO the grove-qa-l3-obs droplet + its firewall"
+    echo "and oo/keep DNS records (15 resources total, GOL-418 inventory)."
+  else
+    echo "grove-qa-l3-obs is EXEMPT (GOL-2333) and survives; set"
+    echo "QA_L3_TEARDOWN_OBS=1 to include it. Check the plan count below."
+  fi
   echo "Survives: Managed PG cluster+data, the LE-cert + filestore volumes,"
   echo "the reserved IP, the qa DNS zone + CF delegation. NOTE: with the PG"
   echo "firewall destroyed the DB endpoint is password-only until rebuild."
@@ -102,7 +113,29 @@ if [ "$MODE" = "compute" ]; then
   # env README ("Release-train teardown: App Platform apps") for rationale.
   # -target on the bare for_each address (digitalocean_app.tenant)
   # covers all its instances.
-  TARGETS="-target=digitalocean_app.hub -target=digitalocean_app.tenant -target=digitalocean_volume_attachment.caddy_data -target=digitalocean_droplet.odoo -target=digitalocean_droplet.obs"
+  TARGETS="-target=digitalocean_app.hub -target=digitalocean_app.tenant -target=digitalocean_volume_attachment.caddy_data -target=digitalocean_droplet.odoo"
+  # grove-qa-l3-obs is EXEMPT from the release-train teardown (GOL-2323 EPIC /
+  # GOL-2333) until the CEO ratifies its fate in docs/ADR/010. Opt in with
+  # QA_L3_TEARDOWN_OBS=1. NB: this is only the QA obs box -- the canonical obs
+  # plane (grove-obs, environments/observability/) has its own state and is
+  # never touched by this script.
+  if [ "${QA_L3_TEARDOWN_OBS:-0}" = "1" ]; then
+    TARGETS="$TARGETS -target=digitalocean_droplet.obs"
+  fi
+
+  # Fail-closed tripwire (GOL-2472). The exemption above is one `if` away from
+  # being lost to a bad merge/rebase -- this asserts the built target list
+  # actually honours it rather than trusting that the edit above survived.
+  # It aborts BEFORE the destroy, so a regression costs a re-run, not a droplet.
+  case "$TARGETS" in
+    *digitalocean_droplet.obs*)
+      if [ "${QA_L3_TEARDOWN_OBS:-0}" != "1" ]; then
+        echo "FATAL: obs droplet is in the destroy targets but QA_L3_TEARDOWN_OBS is not 1." >&2
+        echo "       The GOL-2333 teardown exemption has regressed -- refusing to destroy." >&2
+        exit 3
+      fi
+      ;;
+  esac
 fi
 
 echo "==> terraform destroy ($MODE)..."
@@ -125,7 +158,37 @@ op run --env-file="$ENV_FILE" -- bash -c '
 '
 
 echo "==> Post-destroy state summary:"
-op run --env-file="$ENV_FILE" -- bash -c '
-  terraform -chdir="'"$TF_DIR"'" state list || true
-'
+# Captured (not just printed) so the exemption check below can read it back.
+# `set -e` would abort on a failed command substitution, so the rc is taken
+# explicitly: "could not read state" must NOT be reported as "obs was destroyed".
+STATE_LIST=""
+STATE_RC=0
+STATE_LIST="$(op run --env-file="$ENV_FILE" -- bash -c '
+  terraform -chdir="'"$TF_DIR"'" state list
+')" || STATE_RC=$?
+printf '%s\n' "$STATE_LIST"
+
+# Acceptance check for the exemption (GOL-2472): `-target` also destroys
+# DEPENDENTS, so proving obs is absent from the target list is not the same as
+# proving it survived. Read it back out of state.
+if [ "$MODE" = "compute" ] && [ "${QA_L3_TEARDOWN_OBS:-0}" != "1" ]; then
+  if [ "$STATE_RC" -ne 0 ]; then
+    echo "WARN: could not read terraform state (rc=$STATE_RC) -- the obs exemption" >&2
+    echo "      is UNVERIFIED. Re-run \`terraform state list\` before signing off." >&2
+    exit 5
+  fi
+  MISSING=""
+  for ADDR in digitalocean_droplet.obs digitalocean_firewall.obs \
+               digitalocean_record.oo digitalocean_record.keep; do
+    printf '%s\n' "$STATE_LIST" | grep -qx -- "$ADDR" || MISSING="$MISSING $ADDR"
+  done
+  if [ -n "$MISSING" ]; then
+    echo "FATAL: exempt obs resource(s) GONE from state after teardown:$MISSING" >&2
+    echo "       Expected them to survive (GOL-2333 / docs/ADR/010). Rebuild with" >&2
+    echo "       \`make qa-l3-up\` and report on GOL-2472 before the next train." >&2
+    exit 4
+  fi
+  echo "==> Exemption OK: obs droplet + firewall + oo/keep DNS records still in state."
+fi
+
 echo "Done. Rebuild any time with: make qa-l3-up"
