@@ -194,8 +194,13 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # Job 3: gitleaks — secret detection
-  # Full-history scan; fails the build immediately on any leak.
+  # Fails the build immediately on any leak.
   # Allowlist is in .gitleaks.toml (example files with placeholder values).
+  #
+  # Scan scope is per-trigger (GOL-2533) — see "Resolve gitleaks scan scope":
+  #   pull_request         → only the commits the PR adds (base..head)
+  #   push: main           → main's own full history
+  #   schedule / dispatch  → every ref in the clone (repo-wide sweep)
   #
   # Uses the OSS gitleaks CLI directly. gitleaks-action v2+ requires a
   # paid GITLEAKS_LICENSE on organization accounts, but the binary stays MIT.
@@ -216,7 +221,10 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         timeout-minutes: 5
         with:
-          fetch-depth: 0   # full history required for accurate secret scanning
+          # Full history required for accurate secret scanning. NB this also
+          # fetches every OTHER branch — which is why the scan scope below has
+          # to be pinned explicitly rather than left at gitleaks' `--all`.
+          fetch-depth: 0
 
       - name: Install gitleaks (verify checksum)
         timeout-minutes: 3
@@ -234,17 +242,78 @@ jobs:
           sudo install gitleaks /usr/local/bin/gitleaks
           gitleaks version
 
-      - name: Run gitleaks full-history scan
-        timeout-minutes: 8
+      # `gitleaks detect` with no --log-opts defaults to
+      # `git log -p -U0 --full-history --all` — EVERY ref in the clone. Paired
+      # with `fetch-depth: 0` above (which fetches every branch), a PR's scan
+      # therefore covered every other open branch in the repo.
+      #
+      # GOL-2533: a secret-shaped test fixture that lived for ~7 minutes on
+      # PR #733's branch (`gol2507-prod-activation` @ 4192444) failed Security
+      # Scans on the unrelated PR #734, and the CI-failure router escalated it
+      # to #734's owner — who had no way to fix a finding in a branch they do
+      # not own. (main is 61 commits; that run scanned 612.)
+      #
+      # Fix: scope each trigger to the history it is actually responsible for.
+      # Nothing stops being scanned — a secret a PR introduces still fails that
+      # PR, main's history is still gated on every push, and the weekly cron
+      # still sweeps every ref. Only the *attribution* changes.
+      - name: Resolve gitleaks scan scope
+        id: scope
+        timeout-minutes: 2
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          gitleaks detect \
-            --source . \
-            --config .gitleaks.toml \
-            --redact \
-            --verbose \
-            --exit-code 1 \
-            --report-format sarif \
+          set -euo pipefail
+          log_opts=""
+          case "$EVENT_NAME" in
+            pull_request)
+              # Only the commits this PR adds. Fail SAFE: if either endpoint is
+              # missing from the clone, fall back to the repo-wide scan — scan
+              # more than needed, never less.
+              if [ -n "${PR_BASE_SHA:-}" ] && [ -n "${PR_HEAD_SHA:-}" ] \
+                 && git cat-file -e "${PR_BASE_SHA}^{commit}" 2>/dev/null \
+                 && git cat-file -e "${PR_HEAD_SHA}^{commit}" 2>/dev/null; then
+                log_opts="${PR_BASE_SHA}..${PR_HEAD_SHA}"
+              else
+                echo "::warning::PR base/head commit missing from the clone — falling back to the repo-wide scan."
+              fi
+              ;;
+            push)
+              # The gate on what actually landed: main's own history only.
+              log_opts="--full-history HEAD"
+              ;;
+            *)
+              # schedule / workflow_dispatch: repo-wide sweep across every ref,
+              # so a secret parked on a stale branch is still caught — it just
+              # is not charged to an unrelated PR.
+              ;;
+          esac
+          echo "log_opts=${log_opts}" >> "$GITHUB_OUTPUT"
+          echo "scan scope for '${EVENT_NAME}': ${log_opts:-<all refs>}"
+
+      - name: Run gitleaks scan
+        timeout-minutes: 8
+        env:
+          LOG_OPTS: ${{ steps.scope.outputs.log_opts }}
+        run: |
+          set -euo pipefail
+          args=(
+            detect
+            --source .
+            --config .gitleaks.toml
+            --redact
+            --verbose
+            --exit-code 1
+            --report-format sarif
             --report-path gitleaks-results.sarif
+          )
+          # Empty => gitleaks' own default (`--full-history --all`).
+          if [ -n "${LOG_OPTS}" ]; then
+            args+=( --log-opts "${LOG_OPTS}" )
+          fi
+          gitleaks "${args[@]}"
 
       - name: Upload gitleaks SARIF to GitHub Security
         uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
