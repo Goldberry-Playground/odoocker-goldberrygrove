@@ -208,6 +208,14 @@ jobs:
         run: python3 scripts/test_caddy_odoo_routes.py
       - name: Run modules-pin reconcile tests (GOL-2281)
         run: python3 scripts/test_reconcile_modules_pin.py
+      # GOL-2472/GOL-2475: the release-train teardown must never destroy the
+      # exempt grove-qa-l3-obs droplet (GOL-2333 / docs/ADR/010). This runs the
+      # REAL scripts/qa-l3-teardown.sh against `op`/`terraform` stubs on PATH --
+      # no network, no DigitalOcean, no 1Password -- and asserts the destroy
+      # target list honours the exemption. Reintroducing the unconditional
+      # `-target=digitalocean_droplet.obs` drops it to 2/6 and reds this job.
+      - name: Run QA L3 teardown obs-exemption guard tests (GOL-2472)
+        run: python3 scripts/test_qa_l3_teardown_guard.py
 
   validate-compose:
     name: Validate Docker Compose (Grove)
