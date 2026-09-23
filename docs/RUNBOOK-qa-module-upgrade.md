@@ -39,11 +39,38 @@ job — it is run from an operator machine that holds the admin IP + the
 `grove-qa` SSH key. If/when a bastion or IP-allowlisted runner exists, wrap
 `scripts/qa-module-upgrade.sh` in a dispatch workflow and delete this caveat.
 
+## Provenance: always pass `EXPECT_REF` for a release-train pass
+
+QA **floats `main`** (`custom_modules_ref` defaults to `main` — see
+`infra/terraform/environments/qa-app-platform/variables.tf`), so git-sync moves
+the checkout under us. "I ran the upgrade" therefore never said *which commit*
+was upgraded, and an `-u` against a stale or mid-pull checkout silently gates
+the wrong code — the failure mode that matters most when a promote's money path
+is riding on the gate.
+
+The script resolves the synced commit before upgrading (git-sync sidecar
+`git rev-parse HEAD`, falling back to the `/workspace/current` symlink target,
+which git-sync names by commit) and prints it along with each module's on-disk
+manifest version. Pass `EXPECT_REF=<40-char sha>` to make it **fail closed**:
+
+| Situation | Behaviour |
+|---|---|
+| `EXPECT_REF` matches the synced commit | proceeds, echoes the SHA |
+| `EXPECT_REF` set, synced commit differs | **exit 3**, no upgrade (QA has not pulled it yet, or is mid-pull — wait a sync period and re-run) |
+| `EXPECT_REF` set, commit unresolvable | **exit 3**, refuses to upgrade blind |
+| `EXPECT_REF` unset | warns, then upgrades whatever git-sync last pulled |
+| `EXPECT_REF` not a 40-char lowercase hex SHA | **exit 2** locally, before touching the droplet |
+
 ## Procedure (idempotent, re-runnable)
 
 From the **admin machine** (has SSH to the droplet):
 
 ```bash
+# Release-train / money-path pass — pin the commit you intend to gate:
+EXPECT_REF=cf519bfa8ee59c493fc94eee15d77a504e7a09a7 \
+  scripts/qa-module-upgrade.sh grove_headless
+
+# Casual QA pass (whatever main is right now):
 scripts/qa-module-upgrade.sh grove_headless
 ```
 
@@ -68,6 +95,27 @@ migrations already recorded in `ir_module_module`. Downtime is only the
 `--stop-after-init` window (seconds to low minutes) plus the restart.
 
 ## Verify
+
+0. **Installed version bumped** — the single check that proves the migrations
+   ran (git-sync alone leaves this at the *old* version while the code on disk
+   is already new). From anywhere with the QA admin API key:
+
+   ```bash
+   python3 - <<'PY'
+   import os, xmlrpc.client
+   u, db = "https://odoo.qa.gatheringatthegrove.com", "odoo"
+   key = os.environ["ODOO_API_KEY"]  # op://Grove QA/<qa odoo item>/odoo_mcp_qa_api_key
+   uid = xmlrpc.client.ServerProxy(u + "/xmlrpc/2/common").authenticate(
+       db, os.environ["ODOO_LOGIN"], key, {})
+   m = xmlrpc.client.ServerProxy(u + "/xmlrpc/2/object")
+   print(m.execute_kw(db, uid, key, "ir.module.module", "search_read",
+                      [[["name", "=", "grove_headless"]]],
+                      {"fields": ["name", "state", "installed_version"]}))
+   PY
+   ```
+
+   `installed_version` must equal the manifest version the script printed
+   pre-upgrade. If it still shows the old version, the `-u` did not take.
 
 1. **In the upgrade log** (stdout of the `-u` step): look for
    `Modules loaded.` and, on a version bump, a
