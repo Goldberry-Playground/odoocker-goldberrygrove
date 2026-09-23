@@ -25,6 +25,25 @@ there.** That makes a reserved-domain email a zero-false-positive marker for
 test data. The cleanup deletes **only** on that marker (plus the well-known
 `SYNTHETIC-CANARY` product code) — never on dates, amounts, or order state.
 
+**One exact-address exception (GOL-2410):** the grove-sites e2e gate buyer,
+`e2e@goldberrygrove.farm` / `e2e+<alnum>@goldberrygrove.farm` ("E2E Test
+Buyer"). Its `@stripe` runs *confirm* orders against the QA bareroot fixture
+(`AAA QA E2E Bareroot Tree`, product.product 797). Left unswept, they reserve
+all 50 units, the fixture reads sold out, and the promo test false-reds with a
+400 on the deposit cart. The match is an anchored regex on that one local part,
+never a domain-wide `@goldberrygrove.farm` sweep. Confirmed orders are
+cancelled with `disable_cancel_warning`, which releases the stock reservation,
+and are then deleted. If the gate goes red on a promo/deposit 400, check
+`free_qty` of product 797 and run this cleanup.
+
+That rule keys on the **buyer, never the product**, so it already covers every
+fixture the gate buys — including `E2E-BAREROOT-PLANT` (`AAA QA E2E Volume Tier
+Plant`), the Plants-categorised fixture the volume-tier specs use (GOL-2463).
+Don't narrow it to a product code: the next fixture we seed would stop being
+swept. The fixtures themselves are **never deleted** — only `SYNTHETIC-CANARY`
+is a product candidate — and all of them are re-seedable from
+`grove-odoo-modules scripts/seed_e2e_test_inventory.py`.
+
 Deletes go through Odoo's **ORM over XML-RPC**, never raw SQL, so FK cascades,
 access rules, and record rules are respected — a delete that would corrupt
 referential integrity is refused by Odoo, not silently orphaned.
@@ -69,7 +88,7 @@ QA_CLEANUP_ENV_OP=scripts/qa-test-data-cleanup.env.op \
 ### Recommended pre-freeze sequence
 
 1. **Dry-run** and eyeball the report (partner emails, order names/states). If
-   anything without a reserved-domain email shows up, STOP — that's a bug, not
+   anything without a reserved-domain (or e2e gate buyer) email shows up, STOP — that's a bug, not
    test data.
 2. `--apply` to remove test orders + partners.
 3. Re-run dry-run → all counts should read `0` (idempotency = clean state).

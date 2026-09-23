@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import re
 import sys
 import xmlrpc.client as _xmlrpc
 
@@ -63,9 +64,9 @@ class FakeOdoo:
             # (case-insensitive). Modelling that distinction is what pins the
             # bug the script must avoid (see test_ilike_selector_is_case_insensitive).
             a, pat = (actual, val) if op == "=like" else (actual.lower(), val.lower())
-            if pat.startswith("%"):
-                return a.endswith(pat[1:])
-            return a == pat
+            # SQL LIKE: '%' = any run, '_' = any one char; everything else literal.
+            rx = "".join(".*" if c == "%" else "." if c == "_" else re.escape(c) for c in pat)
+            return re.fullmatch(rx, a, re.DOTALL) is not None
         raise AssertionError(f"unsupported op {op!r}")
 
     def _eval(self, model, rec_id, rec, domain):
@@ -109,8 +110,15 @@ class FakeOdoo:
                 out.append({**{f: rec.get(f) for f in fields}, "id": rid})
             return out
         if method == "action_cancel":
-            # Odoo moves the order to state 'cancel' (unless an invoice blocks it;
-            # not modelled — all test orders here cancel cleanly).
+            # Real Odoo: without context disable_cancel_warning, cancelling a
+            # non-draft order only RETURNS the sale.order.cancel wizard action and
+            # changes nothing (GOL-2410). Otherwise the order moves to 'cancel'
+            # (invoice blocks not modelled — all test orders here cancel cleanly).
+            ctx = (kwargs or {}).get("context") or {}
+            rows = self.records.get(model, {})
+            if not ctx.get("disable_cancel_warning") and any(
+                    rows.get(rid, {}).get("state") != "draft" for rid in args[0]):
+                return {"type": "ir.actions.act_window", "res_model": "sale.order.cancel"}
             for rid in args[0]:
                 if rid in self.records.get(model, {}):
                     self.records[model][rid]["state"] = "cancel"
@@ -275,6 +283,111 @@ def test_anon_cart_domain_never_emits_zero_sentinel() -> None:
     with_ids = cleanup.anon_cart_domain([40, 41])
     assert ["partner_id", "not in", [40, 41]] in with_ids
     assert ["partner_id", "not in", [0]] not in with_ids
+
+
+# ── GOL-2410: grove-sites e2e gate buyer (e2e(+tag)@goldberrygrove.farm) ──────
+
+def test_e2e_gate_email_matches_exactly() -> None:
+    for gate in ("e2e@goldberrygrove.farm", "e2e+k3x9@goldberrygrove.farm",
+                 "E2E+AbC123@GoldberryGrove.farm", " e2e@goldberrygrove.farm "):
+        assert cleanup.is_test_email(gate), gate
+    # Same domain / near-miss local parts are REAL mailboxes — never swept.
+    for real in ("josh@goldberrygrove.farm", "orders@goldberrygrove.farm",
+                 "e2e.real@goldberrygrove.farm", "xe2e@goldberrygrove.farm",
+                 "e2e+a.b@goldberrygrove.farm", "e2e+@goldberrygrove.farm",
+                 "e2e+tag@goldberrygrove.farm.evil.com", "e2e@goldberrygrove.farmx",
+                 "e2e@gathergrove.farm"):
+        assert not cleanup.is_test_email(real), real
+
+
+def _seed_e2e():
+    return {
+        "res.partner": {
+            1: {"name": "Josh", "email": "josh@goldberrygrove.farm"},
+            2: {"name": "E2E Test Buyer", "email": "e2e+k3x9@goldberrygrove.farm"},
+            3: {"name": "E2E Test Buyer", "email": "e2e@goldberrygrove.farm"},
+            # ILIKE 'e2e+%' candidate that the exact regex must reject.
+            4: {"name": "Lookalike", "email": "e2e+a.b@goldberrygrove.farm"},
+        },
+        "sale.order": {
+            10: {"name": "SO-JOSH", "partner_id": 1, "state": "sale", "amount_total": 40.0, "website_id": 7},
+            11: {"name": "SO-E2E-1", "partner_id": 2, "state": "sale", "amount_total": 45.0, "website_id": 7},
+            12: {"name": "SO-E2E-2", "partner_id": 3, "state": "sent", "amount_total": 45.0, "website_id": 7},
+            13: {"name": "SO-LOOK", "partner_id": 4, "state": "sale", "amount_total": 9.0, "website_id": 7},
+        },
+        "product.template": {},
+    }
+
+
+def test_plan_selects_e2e_gate_orders_only() -> None:
+    p = cleanup.plan(FakeOdoo(_seed_e2e()))
+    assert {r["id"] for r in p["test_partners"]} == {2, 3}, p["test_partners"]
+    assert {r["id"] for r in p["test_orders"]} == {11, 12}, p["test_orders"]
+
+
+def test_apply_cancels_confirmed_e2e_orders_releasing_stock() -> None:
+    # The fixture only cancels when disable_cancel_warning is passed (otherwise
+    # Odoo returns the cancel wizard) — so this pins the reservation release.
+    fake = FakeOdoo(_seed_e2e())
+    removed = cleanup.apply_cleanup(fake, cleanup.plan(fake), include_canary_product=False)
+    assert removed == {"orders": 2, "partners": 2, "products": 0}
+    assert set(fake.records["sale.order"]) == {10, 13}
+    assert fake.records["sale.order"][10]["state"] == "sale"      # real order untouched
+    assert set(fake.records["res.partner"]) == {1, 4}
+    p2 = cleanup.plan(fake)
+    assert p2["test_partners"] == [] and p2["test_orders"] == []
+
+
+def _seed_multi_fixture():
+    """The e2e buyer with orders against BOTH seeded bareroot fixtures.
+
+    205/797 `E2E-BAREROOT-INSTOCK` is the deterministic-cart fixture; the
+    Plants-categorised `E2E-BAREROOT-PLANT` (GOL-2463) is the one the volume-tier
+    specs buy. The sweep must not care which.
+    """
+    return {
+        "res.partner": {
+            1: {"name": "Josh", "email": "josh@goldberrygrove.farm"},
+            2: {"name": "E2E Test Buyer", "email": "e2e+v0l1@goldberrygrove.farm"},
+        },
+        "sale.order": {
+            10: {"name": "SO-JOSH", "partner_id": 1, "state": "sale", "amount_total": 40.0, "website_id": 7},
+            # 6 units of the plant fixture — the volume-tier cart.
+            11: {"name": "SO-TIER", "partner_id": 2, "state": "sale", "amount_total": 226.8, "website_id": 7},
+            # the original non-plant fixture, unchanged behaviour
+            12: {"name": "SO-FLAT", "partner_id": 2, "state": "sale", "amount_total": 42.0, "website_id": 7},
+        },
+        "product.template": {
+            50: {"name": "AAA QA E2E Bareroot Tree", "default_code": "E2E-BAREROOT-INSTOCK"},
+            51: {"name": "AAA QA E2E Volume Tier Plant", "default_code": "E2E-BAREROOT-PLANT"},
+        },
+    }
+
+
+def test_plan_sweeps_gate_orders_against_any_fixture_product() -> None:
+    # GOL-2463: the selector is BUYER-keyed, so a newly seeded fixture needs no
+    # change here. If someone ever narrows it to a product default_code, the
+    # volume-tier orders stop being swept and the plant fixture silently drains.
+    p = cleanup.plan(FakeOdoo(_seed_multi_fixture()))
+    assert {r["id"] for r in p["test_orders"]} == {11, 12}, p["test_orders"]
+
+
+def test_seeded_fixture_products_are_never_deletion_candidates() -> None:
+    # Only SYNTHETIC-CANARY is a product candidate. The e2e fixtures are seeded
+    # by grove-odoo-modules scripts/seed_e2e_test_inventory.py and must survive
+    # every cleanup — including --include-canary-product — or the next gate run
+    # has nothing to buy.
+    fake = FakeOdoo(_seed_multi_fixture())
+    plan_data = cleanup.plan(fake)
+    assert plan_data["canary_products"] == []
+    cleanup.apply_cleanup(fake, plan_data, include_canary_product=True)
+    assert set(fake.records["product.template"]) == {50, 51}
+
+
+def test_cancel_passes_disable_cancel_warning() -> None:
+    fake = FakeOdoo({"sale.order": {1: {"state": "sale"}}})
+    cleanup._cancel_orders(fake, [1])
+    assert fake.records["sale.order"][1]["state"] == "cancel"
 
 
 if __name__ == "__main__":
