@@ -163,16 +163,27 @@ qa-l3-backend:
 qa-l3-plan: qa-l3-backend
 	@op run --env-file=$(QA_L3_ENV_FILE) -- bash -c '\
 		export TF_VAR_grove_brand_pr_token="$${GROVE_BRAND_PR_TOKEN:-}"; \
+		PUBLISH_SECRET_GUARD_WARN_ONLY=1 bash scripts/check-publish-webhook-secrets-wired.sh; \
 		terraform -chdir=$(QA_L3_DIR) init -backend-config=backend.hcl -input=false >/dev/null; \
 		terraform -chdir=$(QA_L3_DIR) plan -input=false'
 
 ## qa-l3-up: apply the full Level 3 QA env (droplets re-bootstrap from cloud-init)
+# GOL-2518: gated on the publish-webhook secret guard -- with the .env.op refs
+# commented out the TF vars default to "", so an apply here silently ZEROES the
+# live per-tenant HMAC secret on BOTH halves (droplet .env + DO app env) and the
+# publish path dies without an error. Override: ALLOW_EMPTY_PUBLISH_SECRETS=1.
 .PHONY: qa-l3-up
 qa-l3-up: qa-l3-backend
 	@op run --env-file=$(QA_L3_ENV_FILE) -- bash -c '\
 		export TF_VAR_grove_brand_pr_token="$${GROVE_BRAND_PR_TOKEN:-}"; \
-		terraform -chdir=$(QA_L3_DIR) init -backend-config=backend.hcl -input=false >/dev/null; \
+		bash scripts/check-publish-webhook-secrets-wired.sh && \
+		terraform -chdir=$(QA_L3_DIR) init -backend-config=backend.hcl -input=false >/dev/null && \
 		terraform -chdir=$(QA_L3_DIR) apply -input=false'
+
+## qa-check-publish-secrets: verify an apply would not zero a publish-webhook secret
+.PHONY: qa-check-publish-secrets
+qa-check-publish-secrets:
+	@bash scripts/check-publish-webhook-secrets-wired.sh
 
 ## qa-l3-teardown: destroy compute only (apps + droplets); PG data/DNS/certs survive
 .PHONY: qa-l3-teardown
