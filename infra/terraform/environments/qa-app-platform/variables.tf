@@ -545,7 +545,7 @@ variable "grove_ship_from_phone" {
 # the module's "queue now, drain when keyed" contract. Landing this scaffold
 # empty therefore changes nothing functionally; the key activates it.
 variable "perenual_api_key" {
-  description = "Perenual v2 API key for the QA plant-facts enrichment queue (GOL-2507, parent GOL-2383). services/plant_data/perenual.py reads os.environ PERENUAL_API_KEY; empty => PerenualProvider.configured is false and _cron_process_enrich_jobs() no-ops with jobs left queued. 1P: op://Goldberry Grove - Admin/AgenticOS Infra/perenual_api_key (Josh vaults the value; .env.op ref stays COMMENTED until the field exists). Budget is 100 calls/UTC day, enforced in the module via ir.config_parameter grove_headless.perenual_daily_budget — NOT here. Feeds cloud-init user_data — changing it REPLACES the QA odoo droplet."
+  description = "Perenual v2 API key for the QA plant-facts enrichment queue (GOL-2507, parent GOL-2383). services/plant_data/perenual.py reads os.environ PERENUAL_API_KEY; empty => PerenualProvider.configured is false and _cron_process_enrich_jobs() no-ops with jobs left queued. 1P: op://Goldberry Grove - Admin/perenual_api_key/credential — a standalone API_CREDENTIAL item, so the value is the item's built-in `credential` field (vaulted by Josh 2026-09-23, GOL-2509); the .env.op ref is LIVE. Budget is 100 calls/UTC day, enforced in the module via ir.config_parameter grove_headless.perenual_daily_budget — NOT here. Feeds cloud-init user_data — changing it REPLACES the QA odoo droplet."
   type        = string
   sensitive   = true
   default     = ""
