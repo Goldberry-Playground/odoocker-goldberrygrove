@@ -456,6 +456,13 @@ resource "digitalocean_droplet" "odoo" {
     # mirrors prod. Empty default = order alerts stay silent in QA.
     discord_orders_webhook_url = var.discord_orders_webhook_url
 
+    # Perenual plant-facts enrichment (GOL-2507, parent GOL-2383). The
+    # grove.enrich.job cron only drains when PerenualProvider.configured is
+    # true, i.e. os.environ PERENUAL_API_KEY is non-empty; default-empty here
+    # => jobs stay queued (never faked done) and the cron is a no-op. Feeds
+    # user_data (droplet replace).
+    perenual_api_key = var.perenual_api_key
+
     # base64-encode embedded files (ADR-005 PR-B pattern — bypasses cloud-init
     # YAML parser entirely for content with awkward characters).
     compose_yml_b64   = base64encode(file("${path.module}/compose/docker-compose.qa.yml"))

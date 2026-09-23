@@ -165,6 +165,15 @@ services:
       # _notify_discord() prefers this over DISCORD_OPS_WEBHOOK_URL; empty =>
       # order alerts fall back into #grove-ops (visible misroute, never a drop).
       DISCORD_ORDERS_WEBHOOK_URL: ${DISCORD_ORDERS_WEBHOOK_URL:-}
+      # Perenual plant-facts enrichment (GOL-2507, parent GOL-2383).
+      # grove_headless services/plant_data/perenual.py reads PERENUAL_API_KEY
+      # from os.environ, and the odoo process env comes ONLY from this block
+      # (the /.env mount feeds odoorc.sh's odoo.conf, NOT os.environ) -- the
+      # same footgun that left the Discord alerts above a silent no-op.
+      # Interpolated from `docker compose --env-file /etc/grove/.env`, which
+      # cloud-init writes from the TF var. Default-empty => the enrich cron
+      # no-ops and jobs stay queued rather than draining into a fake `done`.
+      PERENUAL_API_KEY: ${PERENUAL_API_KEY:-}
     # GOL-746: gate the Odoo start on git-sync's FIRST clone. depends_on
     # (service_started) only guarantees the sidecar CONTAINER started, not
     # that /workspace/current is populated. On the 2026-07-22 droplet replace

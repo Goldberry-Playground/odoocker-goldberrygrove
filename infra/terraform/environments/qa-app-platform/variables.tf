@@ -533,3 +533,25 @@ variable "grove_ship_from_phone" {
     error_message = "grove_ship_from_phone must be empty or a plain phone number with NO spaces (digits and + ( ) . - only, 7-20 chars, e.g. +13045551212 or 304-555-1212) — cloud-init writes it UNQUOTED into the bash-sourced /etc/grove/.env, so a space or shell metacharacter would break set -euo pipefail."
   }
 }
+
+# === Perenual plant-facts enrichment (GOL-2507, parent GOL-2383) =============
+# grove_headless 19.0.1.51.0's "Fetch facts" button queues a grove.enrich.job
+# per product; the budgeted cron (data/enrich_job_cron.xml) drains the queue by
+# calling Perenual v2. services/plant_data/perenual.py reads the key ONLY from
+# os.environ["PERENUAL_API_KEY"] (never the repo, never ir.config_parameter) and
+# PerenualProvider.configured is `bool(self._key)` — so an EMPTY value is a
+# deliberate no-op: _cron_process_enrich_jobs() returns early and leaves every
+# job `queued` (rather than draining the backlog into a fake `done`), which is
+# the module's "queue now, drain when keyed" contract. Landing this scaffold
+# empty therefore changes nothing functionally; the key activates it.
+variable "perenual_api_key" {
+  description = "Perenual v2 API key for the QA plant-facts enrichment queue (GOL-2507, parent GOL-2383). services/plant_data/perenual.py reads os.environ PERENUAL_API_KEY; empty => PerenualProvider.configured is false and _cron_process_enrich_jobs() no-ops with jobs left queued. 1P: op://Goldberry Grove - Admin/perenual_api_key/credential — a standalone API_CREDENTIAL item, so the value is the item's built-in `credential` field (vaulted by Josh 2026-09-23, GOL-2509); the .env.op ref is LIVE. Budget is 100 calls/UTC day, enforced in the module via ir.config_parameter grove_headless.perenual_daily_budget — NOT here. Feeds cloud-init user_data — changing it REPLACES the QA odoo droplet."
+  type        = string
+  sensitive   = true
+  default     = ""
+
+  validation {
+    condition     = var.perenual_api_key == "" || can(regex("^[A-Za-z0-9._~+/=:-]{8,200}$", var.perenual_api_key))
+    error_message = "perenual_api_key must be empty or a plain API token with NO whitespace or shell metacharacters (A-Z a-z 0-9 and . _ ~ + / = : - only, 8-200 chars) — cloud-init writes it UNQUOTED into the bash-sourced /etc/grove/.env, so a space, quote or $ would break set -euo pipefail at boot."
+  }
+}

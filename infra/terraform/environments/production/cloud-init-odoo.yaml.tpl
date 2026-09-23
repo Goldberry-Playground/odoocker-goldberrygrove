@@ -167,6 +167,18 @@ write_files:
       # empty => order alerts visibly misroute into #grove-ops rather than drop.
       # Same bare-URL / no-/slack rule as DISCORD_OPS.
       DISCORD_ORDERS_WEBHOOK_URL=${discord_orders_webhook_url}
+      # Perenual plant-facts enrichment (GOL-2507, parent GOL-2383).
+      # grove_headless services/plant_data/perenual.py reads this from
+      # os.environ (compose environment: block -> here), so it MUST also be
+      # listed in the odoo service's environment: block -- the /.env mount only
+      # feeds odoorc.sh's odoo.conf substitution, not the process env. Empty
+      # default => PerenualProvider.configured is false, _cron_process_enrich_
+      # jobs() returns early and queued jobs are left queued (the "queue now,
+      # drain when keyed" contract), so this scaffold is a true no-op until
+      # Josh vaults the key (.env.op). Written UNQUOTED like the tokens above;
+      # the TF-var validation forbids whitespace and shell metacharacters so
+      # bash-sourcing this file under set -euo pipefail stays safe.
+      PERENUAL_API_KEY=${perenual_api_key}
       # Mailgun SMTP for Odoo transactional email (GOL-988) -- order-confirmation
       # + shipping-notification send. odoorc.sh substitutes these into the SMTP
       # group of /etc/odoo/odoo.conf (same image + path QA proved live under
