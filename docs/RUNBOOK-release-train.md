@@ -20,7 +20,7 @@ Both legs are **local, human-run** (see the design decision below for why).
 
 | Leg | When | Command | What it does |
 |-----|------|---------|--------------|
-| **train-up** | Mon | `make train-up` | `= make qa-l3-up`. Idempotent `terraform apply` of the QA env. Droplets re-bootstrap from cloud-init; Odoo reconnects to the surviving Managed PG. **Safe to re-run.** |
+| **train-up** | Mon | `make train-up` | `= make qa-l3-up`. Idempotent `terraform apply` of the QA env. Droplets re-bootstrap from cloud-init; Odoo reconnects to the surviving Managed PG. **Safe to re-run.** Hard-gated on the publish-webhook secret guard — see below. |
 | **train-teardown** | Thu | `make train-teardown` | `= make qa-l3-teardown` → `scripts/qa-l3-teardown.sh compute`. Destroys the 4 apps + the Odoo droplet + 2 volume attachments (the spend). Typed-confirm gated. **Data/DNS/certs survive**, and so does the exempt **grove-qa-l3-obs** droplet — see below. |
 
 Preview before either (read-only, no spend, no lock-and-leave):
@@ -32,6 +32,31 @@ make qa-l3-plan          # dry-run for train-up  (terraform plan)
 Teardown's dry-run is its **typed-confirm gate**: `scripts/qa-l3-teardown.sh
 compute` prints the exact resource list and refuses to proceed until you type
 `destroy-qa-l3-compute`. Any other input aborts before touching infra.
+
+### If train-up aborts on the publish-webhook secret guard (GOL-2518)
+
+`make train-up` now runs `scripts/check-publish-webhook-secrets-wired.sh` and
+**refuses to apply** while any `TF_VAR_grove_publish_webhook_secret_<tenant>`
+would resolve empty. That is deliberate: an apply from that state silently zeroes
+the live per-tenant HMAC secret on both halves and kills the tenant's publish
+path with no error anywhere (it happened to goldberry for ~8 weeks). The abort
+names the tenants and the fix.
+
+**Do the 5-minute fix, do not reach for the override.**
+`docs/RUNBOOK-publish-webhook-secrets.md` → "Making it durable": create three
+1Password items in vault `Grove QA`, then merge PR #731. Both steps need a
+human — the ops service account is read-only on every vault, and `.env.op` is a
+protected path.
+
+`ALLOW_EMPTY_PUBLISH_SECRETS=1` exists for the case where you genuinely accept
+zeroing them. While **GOL-2518** is open it is the wrong button: it re-breaks
+nursery, which is the tenant the GOL-1896 sellout verification runs against.
+
+**Teardown is the deadline, not the train.** `make train-teardown` destroys
+`digitalocean_app.tenant` and `digitalocean_droplet.odoo`, which are the only
+two places an un-vaulted secret lives. Any secret that is live-only and not in
+1Password is **gone** after teardown, guard or no guard — the guard covers
+applies, not destroys.
 
 ### The obs droplet is exempt from teardown (GOL-2333 / GOL-2472)
 
