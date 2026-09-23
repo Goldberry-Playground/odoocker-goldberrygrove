@@ -128,15 +128,27 @@ services:
       stripe_webhook_secret_goldberry: ${stripe_webhook_secret_goldberry:-}
       stripe_webhook_secret_ggg: ${stripe_webhook_secret_ggg:-}
       stripe_webhook_secret_nursery: ${stripe_webhook_secret_nursery:-}
-      # Publish-webhook sender (GOL-985/986/1004). grove_headless
-      # (models/grove_publish.py) reads these from os.environ to sign + POST the
-      # "Publish Guide to Storefront" webhook to the goldberry storefront. Values
-      # come from `docker compose --env-file /etc/grove/.env` (cloud-init writes
-      # GROVE_PUBLISH_WEBHOOK_URL_GOLDBERRY / _SECRET_GOLDBERRY there). Default
-      # empty => the sender has no secret and skips (fail-closed), same shape as
-      # the stripe_test_* keys above.
+      # Publish-webhook sender (GOL-985/986/1004, per-tenant since GOL-2337).
+      # grove_headless (models/grove_publish.py) reads these from os.environ to
+      # sign + POST both "Publish Guide to Storefront" (guide.publish) and the
+      # sellout/restock invalidation (product.availability, GOL-1896) to that
+      # tenant's storefront. Values come from `docker compose --env-file
+      # /etc/grove/.env` (cloud-init writes them there). Default empty => that
+      # tenant's sender has no secret and skips (fail-closed), same shape as the
+      # stripe_test_* keys above.
+      #
+      # A tenant with an EMPTY secret does not merely skip the POST: the emit
+      # raises before the grove.publish.event ledger row is written, so that
+      # tenant produces zero audit rows and the storefront silently falls back to
+      # the /shop ISR window. Every tenant whose storefront must reflect stock
+      # needs BOTH halves wired (sender here, receiver = the app's
+      # GROVE_PUBLISH_WEBHOOK_SECRET in apps.tf), byte-identical.
       GROVE_PUBLISH_WEBHOOK_URL_GOLDBERRY: ${GROVE_PUBLISH_WEBHOOK_URL_GOLDBERRY:-}
       GROVE_PUBLISH_WEBHOOK_SECRET_GOLDBERRY: ${GROVE_PUBLISH_WEBHOOK_SECRET_GOLDBERRY:-}
+      GROVE_PUBLISH_WEBHOOK_URL_GGG: ${GROVE_PUBLISH_WEBHOOK_URL_GGG:-}
+      GROVE_PUBLISH_WEBHOOK_SECRET_GGG: ${GROVE_PUBLISH_WEBHOOK_SECRET_GGG:-}
+      GROVE_PUBLISH_WEBHOOK_URL_NURSERY: ${GROVE_PUBLISH_WEBHOOK_URL_NURSERY:-}
+      GROVE_PUBLISH_WEBHOOK_SECRET_NURSERY: ${GROVE_PUBLISH_WEBHOOK_SECRET_NURSERY:-}
       # Shippo fulfillment (GOL-988). Outbound: sale_order.py reads
       # SHIPPO_API_KEY via os.environ (UserError when empty). Inbound:
       # controllers/main.py compares GROVE_SHIPPO_WEBHOOK_TOKEN (empty =>
