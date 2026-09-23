@@ -2,7 +2,9 @@
 
 **Owner:** DevOps (Terra) · **Epic:** GOL-2324 · **Automation issue:** GOL-2326
 **Cadence:** biweekly. Train-up **Monday**, promote **Wednesday**, teardown **Thursday**.
-**Train #1 anchor:** Mon **2026-09-21** (first teardown Thu 2026-09-25).
+**Train #1 anchor:** Mon **2026-09-21** (promote Wed **2026-09-23**, first
+teardown Thu **2026-09-24**). The weekday is authoritative — 2026-09-25 is a
+Friday.
 
 The train exists to cut idle QA compute ~70%: the Level 3 QA env
 (`infra/terraform/environments/qa-app-platform` — 4 App Platform apps + 2
@@ -19,7 +21,7 @@ Both legs are **local, human-run** (see the design decision below for why).
 | Leg | When | Command | What it does |
 |-----|------|---------|--------------|
 | **train-up** | Mon | `make train-up` | `= make qa-l3-up`. Idempotent `terraform apply` of the QA env. Droplets re-bootstrap from cloud-init; Odoo reconnects to the surviving Managed PG. **Safe to re-run.** |
-| **train-teardown** | Thu | `make train-teardown` | `= make qa-l3-teardown` → `scripts/qa-l3-teardown.sh compute`. Destroys the 4 apps + 2 droplets + 2 volume attachments (the spend). Typed-confirm gated. **Data/DNS/certs survive.** |
+| **train-teardown** | Thu | `make train-teardown` | `= make qa-l3-teardown` → `scripts/qa-l3-teardown.sh compute`. Destroys the 4 apps + the Odoo droplet + 2 volume attachments (the spend). Typed-confirm gated. **Data/DNS/certs survive**, and so does the exempt **grove-qa-l3-obs** droplet — see below. |
 
 Preview before either (read-only, no spend, no lock-and-leave):
 
@@ -30,6 +32,39 @@ make qa-l3-plan          # dry-run for train-up  (terraform plan)
 Teardown's dry-run is its **typed-confirm gate**: `scripts/qa-l3-teardown.sh
 compute` prints the exact resource list and refuses to proceed until you type
 `destroy-qa-l3-compute`. Any other input aborts before touching infra.
+
+### The obs droplet is exempt from teardown (GOL-2333 / GOL-2472)
+
+`compute` mode deliberately **does not** destroy `digitalocean_droplet.obs`
+(**grove-qa-l3-obs**), its firewall, or the `oo.qa` / `keep.qa` DNS records.
+Until the CEO ratifies ADR-010 (`docs/ADR/010-observability-droplet-home.md`,
+which lands with PR #698), the exemption is enforced in code rather than in an
+operator's memory:
+
+- The `-target` list omits the obs droplet unless `QA_L3_TEARDOWN_OBS=1`.
+- A **pre-flight tripwire** aborts with exit 3 if the obs droplet ever appears
+  in the targets without that opt-in — so a bad merge or rebase costs a re-run,
+  not a droplet.
+- A **post-destroy check** re-reads `terraform state list` and exits non-zero
+  unless the obs droplet, its firewall and both DNS records are still there.
+  `-target` also destroys *dependents*, so absence from the target list is not
+  by itself proof of survival; the check is the proof. A clean run prints
+  `==> Exemption OK: obs droplet + firewall + oo/keep DNS records still in state.`
+
+To include the obs droplet on purpose (after ratification, or to retire it):
+
+```bash
+QA_L3_TEARDOWN_OBS=1 make train-teardown
+```
+
+> **Not the same box.** This exemption is about **grove-qa-l3-obs**, the QA-only
+> Phase-1.5 stack. The canonical observability plane — **grove-obs**, in
+> `infra/terraform/environments/observability/` — has its own Terraform state
+> and is never reachable by this script under any flag.
+
+**Never run the DNS script as part of a teardown.** The qa zone and the
+Cloudflare NS delegation survive every train; re-creating them burns the
+Let's Encrypt issuance budget (ADR-005).
 
 ### Prerequisites (both legs)
 
@@ -116,5 +151,8 @@ GOL-2326.
 - **train-teardown dry-run:** run `scripts/qa-l3-teardown.sh compute` and enter
   anything other than `destroy-qa-l3-compute` at the prompt — it aborts without
   calling terraform. That typed-confirm IS the safe dry-run.
+- **teardown obs exemption:** `python3 scripts/test_qa_l3_teardown_guard.py`
+  runs the real script against stubbed `op`/`terraform` and asserts the obs
+  droplet is not in the destroy targets. No network, no spend.
 - **reminder:** `gh workflow run release-train-reminder.yml -f leg=up` (or
   `down`) posts a test embed to the ops Discord channel immediately.

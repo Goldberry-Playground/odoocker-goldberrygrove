@@ -58,17 +58,38 @@ RUN touch ${LOG_PATH} && chown odoo:odoo ${LOG_PATH}
 # upstream debian-slim bumps. With `apt-get upgrade` running here to PULL
 # new versions, pinning would actively defeat the purpose. Disabled with
 # rationale.
+#
+# Mirror-sync resilience (GOL-2497): archive.ubuntu.com / security.ubuntu.com
+# briefly serve a Release file that disagrees with the Packages index it
+# advertises while a mirror sync is in flight, and `apt-get update` hard-fails
+# with `File has unexpected size (... != ...). Mirror sync in progress?` →
+# exit 100. That reds a build with nothing wrong in it (CI run 35905114464).
+# Retrying once the sync settles is the only fix, and the partial index MUST be
+# purged between attempts or apt re-reads the same bad lists. `Acquire::Retries`
+# alone does NOT cover this — it retries the fetch inside one `update`, against
+# the same mid-sync mirror state; the sleep is what makes the retry meaningful.
 # hadolint ignore=DL3008
-RUN apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y && \
+RUN set -eu; \
+    for attempt in 1 2 3 4 5; do \
+        if apt-get update -o Acquire::Retries=3; then break; fi; \
+        if [ "$attempt" = 5 ]; then \
+            echo "apt-get update failed after 5 attempts" >&2; \
+            exit 100; \
+        fi; \
+        echo "apt-get update failed (attempt $attempt/5); purging index, retrying"; \
+        rm -rf /var/lib/apt/lists/*; \
+        sleep "$((attempt * 15))"; \
+    done; \
+    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -o Acquire::Retries=3; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        -o Acquire::Retries=3 \
         zip \
         unzip \
         git \
         openssh-client \
-        patch \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+        patch; \
+    apt-get clean; \
+    rm -rf /var/lib/apt/lists/*
 
 #---------------------#
 #   PIP Dependecies   #
