@@ -63,6 +63,15 @@ on:
   pull_request:
     branches: [main]
   merge_group:
+  # GOL-2504: the promote/reconcile workflows open their reconcile PRs under the
+  # default GITHUB_TOKEN, whose events are suppressed by GitHub's anti-recursion
+  # guard -- so this required `prod-plan-guard` context is never created on those
+  # PRs (it wedges at `action_required`). Those workflows re-dispatch this
+  # workflow at the reconcile branch ref (`gh workflow run prod-plan-guard.yml
+  # --ref <branch>`) so the required context reports a real check-run at the PR
+  # head SHA. The `detect` job below handles the dispatch event explicitly.
+  # Dispatchable only because this trigger lives on the default branch.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -90,9 +99,29 @@ jobs:
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             BASE="${{ github.event.pull_request.base.sha }}"
             HEAD="${{ github.event.pull_request.head.sha }}"
-          else
+          elif [ "${{ github.event_name }}" = "merge_group" ]; then
             BASE="${{ github.event.merge_group.base_sha }}"
             HEAD="${{ github.event.merge_group.head_sha }}"
+          else
+            # workflow_dispatch (GOL-2504): the promote/reconcile PR-opening
+            # workflows dispatch this guard at the reconcile BRANCH ref so its
+            # required context reports a real check-run on a GITHUB_TOKEN-authored
+            # PR. The compare API already uses merge-base (A...B) semantics, so
+            # BASE can be the literal default branch and HEAD the dispatched
+            # ref's SHA -- net changes vs the merge base, identical to the
+            # pull_request path, with no checkout or git merge-base needed.
+            BASE="main"
+            HEAD="${{ github.sha }}"
+          fi
+          # Fail CLOSED on any empty endpoint: the previous else-branch fell
+          # through to merge_group's inputs for every non-PR event, so a
+          # workflow_dispatch produced empty base/head -> the compare call 404s
+          # -> detect fails -> the guard aggregation job fails closed. That is
+          # still the safe outcome, but make it an explicit, legible error here
+          # rather than an opaque 404 for any unexpected event shape.
+          if [ -z "$BASE" ] || [ -z "$HEAD" ]; then
+            echo "::error::empty base ('$BASE') or head ('$HEAD') for event '${{ github.event_name }}' -- failing closed"
+            exit 1
           fi
           echo "event=${{ github.event_name }} base=$BASE head=$HEAD"
           FILES="$(gh api "repos/${REPO}/compare/${BASE}...${HEAD}" \
