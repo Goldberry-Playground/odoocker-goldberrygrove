@@ -41,6 +41,15 @@ MARKER="${MARKER:-${FILESTORE_DIR}/.grove-modules-rev}"
 
 echo ">> forcing module-upgrade re-run on ${QA_HOST} (clear ${MARKER} + restart odoo)"
 
+# WARNING (GOL-2531): everything between the opening and closing double quote
+# below is expanded by THIS shell before ssh runs -- comments included. An
+# unescaped backtick or $ in prose executes/interpolates LOCALLY: a comment
+# reading "inspect it with `printenv`" once spliced the whole local environment
+# (a 1Password service-account token among it) into this payload and forced a
+# rotation. Escape prose as \` and \$; write remote substitutions as \$( ... ).
+# Never print the rendered payload from a shell that holds secrets -- run
+# `python3 scripts/check-ssh-payload-escaping.py` (CI: "ssh payload render
+# guard") or `bash -n` instead.
 # shellcheck disable=SC2029  # we WANT the paths expanded locally.
 ssh -o StrictHostKeyChecking=yes "${QA_HOST}" "
   set -euo pipefail
