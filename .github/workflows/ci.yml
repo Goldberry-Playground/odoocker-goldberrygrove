@@ -101,6 +101,29 @@ jobs:
         # was bitten by a U+2026 ellipsis on cloud-init.yaml.tpl:131.
         run: bash scripts/check-cloud-init-ascii.sh
 
+  ssh-payload-escaping:
+    name: ssh payload render guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Verify ssh payloads do not execute locally at render time
+        # GOL-2531: our operator scripts pass the droplet one big DOUBLE-quoted
+        # string, so every un-backslashed backtick or `$` in it -- comments
+        # included -- is evaluated by the LOCAL shell before ssh runs. A comment
+        # in prod-modules-promote.sh reading "inspect it with `printenv`" did
+        # exactly that: it ran printenv on the operator box and spliced the
+        # agent runtime's whole environment (OP_SERVICE_ACCOUNT_TOKEN included)
+        # into the payload, forcing a 1Password service-account rotation. An
+        # unescaped ${...} is the same bug pointed at a caller-side secret.
+        # shellcheck cannot see this -- SC2029 is disabled in these scripts on
+        # purpose, because local expansion IS the intent for a few allowlisted
+        # vars. Self-tested: `--selftest` asserts both rules fire.
+        run: |
+          python3 scripts/check-ssh-payload-escaping.py --selftest
+          python3 scripts/check-ssh-payload-escaping.py
+
   checkout-secrets-wired:
     name: checkout Stripe secrets wired
     runs-on: ubuntu-latest
