@@ -33,33 +33,70 @@ result is recorded here so the next agent doesn't spend a heartbeat on it.
 is **no CLI verb that edits an existing service account's vault access**. Josh
 has to do this in the 1Password web UI. That is not a gap in our tooling.
 
-## The options (GOL-2526)
+## The decision (Josh, 2026-09-24)
 
-- **A — dedicated agent-writable QA vault (recommended).** New vault, e.g.
-  `Grove QA - Agent Managed`; ops SA gets read + write + create on *that vault
-  only*. Prod and Admin unchanged. Reversible by deleting the vault.
-- **B — write on `Grove QA`.** One permission change, no new vault, but an agent
-  could overwrite a live human-managed secret (e.g. `stripe-nursery-qa`).
-- **C — decline.** A legitimate posture: all vault writes stay human-only, and
-  secret-provisioning latency is an accepted, known cost.
+**Ruled: reuse the existing ops service account.** Josh is near his plan's cap
+on service accounts, so no new one is minted — the grant is an *edit* to
+`WMSDNFU3FRCXVKGDQ7FTFKCCRI`'s vault access. That constraint is about *service
+accounts*, not vaults, so the recommended shape still holds: one new vault,
+zero new service accounts.
 
-Everything below assumes **A**. Under B, skip step 1 and grant on `Grove QA`
-instead; under C, delete this runbook.
+**The grant, stated exactly once:**
+
+| | |
+| --- | --- |
+| service account | the existing ops SA, integration `WMSDNFU3FRCXVKGDQ7FTFKCCRI` (`op whoami` → `SERVICE_ACCOUNT`). **No new service account.** |
+| vault | **`Grove QA - Agent Managed`** — one new vault, created for this. |
+| permissions on that vault | **`read_items` + `write_items`** |
+| permissions NOT granted | `share_items`; the account-level **"can create vaults"** flag |
+| every other vault | unchanged — `Grove QA`, `Grove Prod`, `Goldberry Grove - Admin` stay **read-only** |
+
+`read_items` / `write_items` / `share_items` is the entire per-vault permission
+vocabulary 1Password offers a service account — confirmed from
+`op service-account create --help` (CLI 2.30.3); there is no finer split, so
+`write_items` is create + edit + archive + delete on that vault and nothing
+outside it. The web UI renders these as the same three toggles.
+
+Expressed as the CLI would express it (for unambiguity only — **do not run
+this**, it would mint a second service account, which is exactly what the
+ruling rules out):
+
+```
+--vault "Grove QA - Agent Managed:read_items,write_items"
+```
+
+### Why a separate vault rather than write on `Grove QA`
+
+`Grove QA` holds `stripe-nursery-qa`. 1Password cannot scope `write_items` to
+an item-name prefix, so write on `Grove QA` is write on *every* item in it,
+including a money-flow key. The standing rule is that money-flow credentials
+stay human-issued **even in QA** — the split is "did an agent mint it", not
+"is it QA". A separate vault is the only mechanism that enforces that rather
+than asking agents to be careful. Cost of the extra safety: one "New Vault"
+click in the same visit.
+
+**Fallback, only if the 1Password UI will not let you add a vault to an
+existing service account in that visit:** grant `read_items` + `write_items` on
+`Grove QA` instead and say so on GOL-2526 — the rest of this runbook still
+applies, and I will add a naming guard and re-scope the conventions below.
+Do not take this path just because it looks shorter; it is the weaker one.
 
 ## Josh's steps (~5 minutes, 1Password web UI)
 
-UI labels drift between 1Password releases; the two destinations are what
-matter, not the exact wording.
+UI labels drift between 1Password releases; the destinations and the permission
+names are what matter, not the exact wording.
 
 1. **Create the vault.** <https://my.1password.com> → *Vaults* → **New Vault** →
    name it exactly `Grove QA - Agent Managed`. Description: "QA-only secrets
    minted and rotated by agents. No prod, no money-flow keys. GOL-2526."
-2. **Grant the service account.** *Developer* (a.k.a. *Integrations* /
-   *Infrastructure Secrets Management*) → **Service Accounts** → the account
-   with integration ID `WMSDNFU3FRCXVKGDQ7FTFKCCRI` → **Manage vault access** →
-   **Add vault** → `Grove QA - Agent Managed` → enable **view / create / edit
-   items**. Leave `Grove QA`, `Grove Prod` and `Goldberry Grove - Admin` exactly
-   as they are (read only).
+2. **Edit the existing service account's vault access.** *Developer* (a.k.a.
+   *Integrations* / *Infrastructure Secrets Management*) → **Service Accounts**
+   → the account with integration ID `WMSDNFU3FRCXVKGDQ7FTFKCCRI` → **Manage
+   vault access** → **Add vault** → `Grove QA - Agent Managed` → enable **Read
+   Items** and **Write Items**. Leave **Share Items** off. Leave `Grove QA`,
+   `Grove Prod` and `Goldberry Grove - Admin` exactly as they are (read only).
+   Do not enable the account-level "can create vaults" option — it is broader
+   than this needs and nothing here requires it.
 3. **Do not re-issue the token.** Editing vault access on an existing service
    account keeps the same token, so nothing in `.env.op`, CI, or the droplets
    needs rotating — the same edit-not-roll mechanic as the Origin CA token in
@@ -128,7 +165,7 @@ be deleted.
 
 Delete the vault (items go with it), or remove the service account's access to
 it in the same UI panel. Nothing outside that vault is affected — that is the
-point of A over B. Any `.env.op` ref pointing at the deleted vault resolves to
+point of a separate vault. Any `.env.op` ref pointing at the deleted vault resolves to
 empty, so re-comment those refs at the same time; on the QA app-platform
 environment `make qa-l3-up` hard-gates on empty publish secrets
 (`scripts/check-publish-webhook-secrets-wired.sh`) and will stop you before an
