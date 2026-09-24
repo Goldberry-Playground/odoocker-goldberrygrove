@@ -411,13 +411,21 @@ resource "digitalocean_droplet" "odoo" {
     stripe_webhook_secret_ggg       = var.stripe_webhook_secret_ggg
     stripe_webhook_secret_nursery   = var.stripe_webhook_secret_nursery
 
-    # Publish-webhook sender secret (GOL-985/986/1004). grove_headless reads
-    # GROVE_PUBLISH_WEBHOOK_SECRET_GOLDBERRY from the odoo process env and signs
-    # the raw body; must byte-match the goldberry app's GROVE_PUBLISH_WEBHOOK_SECRET.
-    # The destination URL is NOT sensitive -- derived from qa_zone in the tpl.
-    # Empty default => sender skips (no secret to sign with). Provisioned live
-    # 2026-07-30; durable value awaits the 1Password item (see variables.tf).
+    # Publish-webhook sender secrets (GOL-985/986/1004; all three tenants since
+    # GOL-2337). grove_headless reads GROVE_PUBLISH_WEBHOOK_SECRET_<TENANT> from
+    # the odoo process env and signs the raw body; each must byte-match that
+    # tenant app's GROVE_PUBLISH_WEBHOOK_SECRET (apps.tf).
+    # The destination URLs are NOT sensitive -- derived from qa_zone in the tpl.
+    #
+    # ⚠️ Empty default => that tenant's sender skips. These are provisioned LIVE
+    # (droplet .env + `doctl apps update`) because the ops service account cannot
+    # WRITE the Grove QA vault, so an apply with the empty defaults ZEROES a
+    # working QA pipeline -- and a teardown/`qa-l3-up` cycle drops it entirely.
+    # Create the 1Password items + uncomment the .env.op refs (GOL-2337 child)
+    # before the next train brings QA up, or the nursery fast path regresses.
     grove_publish_webhook_secret_goldberry = var.grove_publish_webhook_secret_goldberry
+    grove_publish_webhook_secret_ggg       = var.grove_publish_webhook_secret_ggg
+    grove_publish_webhook_secret_nursery   = var.grove_publish_webhook_secret_nursery
 
     # Mailgun SMTP — transactional order/shipping email (GOL-248/GOL-995).
     # odoo.conf's SMTP group reads these from the odoo process env. Non-secret

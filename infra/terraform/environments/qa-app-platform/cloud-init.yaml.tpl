@@ -129,11 +129,20 @@ write_files:
       # `environment:` block in docker-compose.qa.yml (the /.env mount only
       # feeds odoo.conf substitution, NOT os.environ; same rule as the
       # stripe_test_* keys). URL is not sensitive (derived from qa_zone);
-      # SECRET must byte-match the goldberry app's GROVE_PUBLISH_WEBHOOK_SECRET.
-      # Empty SECRET => sender skips. goldberry only for now (single-tenant QA
-      # E2E, GOL-1003); add _GGG / _NURSERY when those tenants are provisioned.
+      # SECRET must byte-match that tenant app's GROVE_PUBLISH_WEBHOOK_SECRET.
+      # Empty SECRET => that tenant's sender skips (and writes NO
+      # grove.publish.event audit row, so "no rows" reads as "not configured",
+      # not "nothing happened").
+      #
+      # All three tenants are wired since GOL-2337: the nursery storefront is the
+      # one whose /shop grid has to reflect a tree selling out (GOL-1896), and it
+      # was silently unwired here while only goldberry had a pair.
       GROVE_PUBLISH_WEBHOOK_URL_GOLDBERRY=https://goldberry.${qa_zone}/api/webhooks/publish
       GROVE_PUBLISH_WEBHOOK_SECRET_GOLDBERRY=${grove_publish_webhook_secret_goldberry}
+      GROVE_PUBLISH_WEBHOOK_URL_GGG=https://ggg.${qa_zone}/api/webhooks/publish
+      GROVE_PUBLISH_WEBHOOK_SECRET_GGG=${grove_publish_webhook_secret_ggg}
+      GROVE_PUBLISH_WEBHOOK_URL_NURSERY=https://nursery.${qa_zone}/api/webhooks/publish
+      GROVE_PUBLISH_WEBHOOK_SECRET_NURSERY=${grove_publish_webhook_secret_nursery}
 
       # Mailgun SMTP - transactional order/shipping notifications (GOL-248/
       # GOL-995). odoo.conf's SMTP group reads SMTP_SERVER/PORT/SSL/USER/
