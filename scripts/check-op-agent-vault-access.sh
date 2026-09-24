@@ -8,9 +8,12 @@
 # (`op vault create` -> 403 at the account level). So any work that needs a
 # secret to EXIST stops until a human writes it -- GOL-2518, GOL-2424,
 # GOL-1643, GOL-697 and GOL-2318 all queued behind the same five minutes.
-# GOL-2526 asks Josh for a dedicated agent-writable vault. This script is the
-# verification half: run it right after the grant to prove the access landed,
-# instead of discovering mid-provision that it didn't.
+#
+# Josh's ruling 2026-09-24: keep the SAME service account (no new one) and give
+# it read_items + write_items on ONE new vault, `Grove QA - Agent Managed`.
+# Every other vault stays read-only. This script is the verification half: run
+# it right after the grant to prove the access landed, instead of discovering
+# mid-provision that it didn't.
 #
 # Read-only probing cannot answer the question -- 1Password reports nothing
 # about a service account's own permissions -- so the check is a real
@@ -36,8 +39,9 @@ VAULT="${OP_AGENT_VAULT:-Grove QA - Agent Managed}"
 # --- GUARD ------------------------------------------------------------------
 # Never run a write probe against a vault humans manage. This is a hard stop:
 # there is no override flag, because the only reason to point this script at
-# `Grove QA` would be to test option B, and a create/delete round trip is not
-# worth the risk of colliding with a live secret like stripe-nursery-qa.
+# `Grove QA` would be to test a write grant on a human-managed vault, and a
+# create/delete round trip is not worth the risk of colliding with a live
+# secret like stripe-nursery-qa.
 PROTECTED_VAULTS=(
   "Grove QA"
   "Grove Prod"
@@ -71,7 +75,7 @@ echo "probing vault '${VAULT}' with throwaway item '${ITEM}'..."
 
 if ! op item create --category "Secure Note" --title "${ITEM}" --vault "${VAULT}" \
      "notesPlain=GOL-2526 write probe; safe to delete" >/dev/null 2>&1; then
-  echo "FAIL(1): cannot CREATE items in '${VAULT}' -- the service account grant is missing 'create items'."
+  echo "FAIL(1): cannot CREATE items in '${VAULT}' -- the grant is missing 'write_items'."
   exit 1
 fi
 trap cleanup EXIT
@@ -83,7 +87,7 @@ fi
 
 if ! op item edit "${ITEM}" --vault "${VAULT}" \
      "notesPlain=GOL-2526 write probe (edited); safe to delete" >/dev/null 2>&1; then
-  echo "FAIL(1): can create but cannot EDIT items in '${VAULT}' -- grant is missing 'edit items'."
+  echo "FAIL(1): can create but cannot EDIT items in '${VAULT}' -- unexpected; 'write_items' covers both."
   echo "         Rotation would be impossible; fix before storing anything here."
   exit 1
 fi
