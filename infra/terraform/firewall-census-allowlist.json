@@ -1,0 +1,26 @@
+{
+  "_schema": [
+    "Exemptions for check-firewall-membership.py --census (GOL-2576).",
+    "",
+    "AN EMPTY ALLOWLIST IS THE GOAL STATE. Every entry here is a box or a rule",
+    "that the census would otherwise fail on: a droplet behind no cloud firewall,",
+    "or a firewall that allows :22 from the whole internet. Adding one does not",
+    "make the exposure safe -- it records that a human looked, decided to accept it",
+    "for now, and named the issue that will close it.",
+    "",
+    "Every entry MUST carry:",
+    "  id       DO droplet id (number) or firewall id (uuid string) -- the stable key",
+    "  name     live name at time of writing; a mismatch is reported, not fatal",
+    "  issue    GOL-NNNN tracking the fix. Enforced by regex; no issue, no exemption.",
+    "  expires  YYYY-MM-DD. PAST THIS DATE THE ENTRY STOPS SUPPRESSING AND BECOMES",
+    "           A FINDING ITSELF, so a 'temporary' exposure cannot quietly become",
+    "           permanent by nobody re-reading this file.",
+    "  why      one line a reviewer can judge without opening the issue",
+    "",
+    "Example (do not uncomment -- copy the shape):",
+    "  { \"id\": 123456789, \"name\": \"some-droplet\", \"issue\": \"GOL-0000\",",
+    "    \"expires\": \"2026-12-31\", \"why\": \"...\" }"
+  ],
+  "uncovered_droplets": [],
+  "open_ssh_firewalls": []
+}

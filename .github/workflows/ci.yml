@@ -137,6 +137,27 @@ jobs:
           python3 scripts/check-ssh-payload-escaping.py --selftest
           python3 scripts/check-ssh-payload-escaping.py
 
+  firewall-census-logic:
+    name: firewall census logic guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Verify the firewall census decodes DO's shapes correctly
+        # GOL-2576. The nightly census is the only thing that can see an
+        # UN-CODIFIED droplet, and it runs unattended against live infra, so a
+        # silent decode bug turns it into a check that always passes. The two
+        # things most likely to be wrong are precisely the two the live account
+        # never exercises: DO renders "every port" as the string "0" (matching
+        # only "22" would wave through the strictly worse rule), and a firewall
+        # may attach by TAG without that membership appearing in droplet_ids
+        # (reading droplet_ids alone would call a covered droplet uncovered).
+        # Also asserts the repo's own allowlist parses and holds no expired or
+        # issue-less entry. Offline: no token, no network.
+        run: |
+          python3 infra/terraform/scripts/check-firewall-membership.py --selftest
+
   checkout-secrets-wired:
     name: checkout Stripe secrets wired
     runs-on: ubuntu-latest
