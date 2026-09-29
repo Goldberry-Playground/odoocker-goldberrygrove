@@ -22,15 +22,11 @@ Phase 1 lands the **bones** of the env. Nothing in this PR is applied yet — ap
 | `versions.tf` | TF + provider version constraints (mirrors monolith QA) |
 | `variables.tf` | All inputs; sensitive ones flow via `TF_VAR_*` from 1Password |
 | `main.tf` | Odoo droplet, Managed PG cluster, SSH keys, DNS, firewall, Caddy volume |
-| `observability.tf` | Obs droplet + DNS for oo/keep subdomains + obs firewall |
 | `apps.tf` | App Platform apps (Phase 2). Starts with hub; other 3 frontends follow. |
-| `outputs.tf` | Droplet IPs, Odoo URL, OpenObserve URL, Keep URL, PG cluster ID, App URLs |
+| `outputs.tf` | Droplet IP, Odoo URL, PG cluster ID, App URLs |
 | `cloud-init.yaml.tpl` | Stripped to Odoo + Caddy only; wires Managed PG via env |
-| `cloud-init-obs.yaml.tpl` | Obs droplet bring-up: docker + MinIO + OpenObserve + Keep + Caddy |
 | `compose/docker-compose.qa.yml` | Two services: caddy + odoo. No postgres, no frontends |
-| `compose/docker-compose.obs.yml` | Obs stack: minio + openobserve + keep + caddy |
 | `compose/Caddyfile.tpl` | Single hostname (`odoo.qa-l3.<apex>`) — Caddy fronts only Odoo |
-| `compose/Caddyfile-obs.tpl` | Two admin-only hostnames (`oo.qa-l3.<apex>`, `keep.qa-l3.<apex>`) |
 | `terraform.tfvars.example` | Non-sensitive overrides; documentation only (sensitive via env) |
 | `backend.hcl.example` | Remote state config; copy + fill in for `terraform init` |
 
