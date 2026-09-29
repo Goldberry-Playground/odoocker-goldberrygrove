@@ -55,6 +55,26 @@ Needs 1Password **write** on vault `Grove QA`. The ops service account is
 read-only there (`op item create` → `(101) You do not have permission`), so a
 human does this.
 
+### ⏳ Step 1 expires at the next train teardown
+
+`make train-teardown` destroys `digitalocean_app.tenant` (the three tenant
+storefront apps) **and** `digitalocean_droplet.odoo` — which are the only two
+places an un-vaulted publish-webhook secret exists. First teardown: **Thu
+2026-09-24**.
+
+So there are two versions of this fix, and which one you get is decided by the
+teardown, not by you:
+
+- **Before teardown** — nursery's secret is live and working. Copy it
+  (step 1 below) so the tenant keeps publishing without a re-key.
+- **After teardown** — nothing to preserve. **Skip step 1**; mint all three
+  with `openssl rand -hex 32`. This is strictly simpler, just with nursery's
+  current working value lost. `doctl apps spec get` for a destroyed app returns
+  an error, not a secret — do not read that as "the secret was empty".
+
+The guard does **not** protect against this: it refuses an apply that would zero
+a live secret, but a teardown is a deliberate destroy and is not gated.
+
 1. Read the currently-live nursery secret — it is already correct on both ends
    and must be **preserved, not re-minted**:
    ```bash
@@ -69,7 +89,12 @@ human does this.
    - `grove-publish-webhook-ggg-qa` → fresh `openssl rand -hex 32`
      (never provisioned).
 3. Uncomment the three `TF_VAR_grove_publish_webhook_secret_*` refs in
-   `infra/terraform/environments/qa-app-platform/.env.op`.
+   `infra/terraform/environments/qa-app-platform/.env.op`. **This is a human
+   step too**: `.env.op` is under `infra/terraform/**`, a protected path, so it
+   needs human review + merge. The change is pre-written as odoocker **PR #731**
+   (draft on purpose — an `op://` ref to an item that does not exist yet is a
+   hard `op run` failure, which would wedge `qa-l3-plan`/`qa-l3-up` for
+   everyone). Mark it ready and merge it once the items from step 2 exist.
 4. `make qa-check-publish-secrets` → PASS, then `make qa-l3-plan`, then
    `make qa-l3-up`.
 

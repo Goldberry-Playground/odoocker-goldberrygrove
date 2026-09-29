@@ -197,6 +197,15 @@ echo
 # in the droplet's process list while it runs, so interpolating a key into it
 # would leak it there (and into the local `ps` too). First line of the payload
 # consumes it; `|| true` keeps `set -e` happy on an empty send.
+# WARNING (GOL-2531): everything between the opening and closing double quote
+# below is expanded by THIS shell before ssh runs -- comments included. An
+# unescaped backtick or $ in prose executes/interpolates LOCALLY: a comment
+# reading "inspect it with `printenv`" once spliced the whole local environment
+# (a 1Password service-account token among it) into this payload and forced a
+# rotation. Escape prose as \` and \$; write remote substitutions as \$( ... ).
+# Never print the rendered payload from a shell that holds secrets -- run
+# `python3 scripts/check-ssh-payload-escaping.py` (CI: "ssh payload render
+# guard") or `bash -n` instead.
 # shellcheck disable=SC2029  # we WANT the local vars expanded here, not on the droplet.
 printf '%s\n' "${PERENUAL_API_KEY}" |
 ssh -o StrictHostKeyChecking=yes "${PROD_HOST}" "

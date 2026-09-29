@@ -324,7 +324,7 @@ variable "grove_publish_webhook_secret_ggg" {
 }
 
 variable "grove_publish_webhook_secret_nursery" {
-  description = "HMAC secret for the nursery publish webhook. Not provisioned yet; wired-but-empty (receiver 401s) until the 1Password `Grove QA`/grove-publish-webhook-nursery-qa/secret item + .env.op ref exist."
+  description = "HMAC secret for the nursery publish webhook (Odoo sender <-> grove-sites receiver). Provisioned LIVE 2026-09-23 (GOL-2337: droplet /etc/grove/.env + `doctl apps update` on grove-nursery-qa) to make the GOL-1896 sellout fast path testable at Train #1; the durable value still awaits 1Password `Grove QA`/grove-publish-webhook-nursery-qa/secret + the .env.op ref, so an apply with this empty default ZEROES the live pipeline. Generate with `openssl rand -hex 32`."
   type        = string
   sensitive   = true
   default     = ""
