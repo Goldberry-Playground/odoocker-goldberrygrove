@@ -59,7 +59,24 @@ The `Prod plan must not destroy or replace a live resource` check (prod-plan-gua
 
 Merge the PR. The codified list is not live until `terraform apply` runs against the environment (prod apply is board/CEO-gated — see GOL-1844). **Apply before the next `promote-storefronts.yml` run**, or that pipeline's apply will strip any hand-added stopgap rule from step 2 and re-lock you.
 
-### 6. Prune stale addresses (housekeeping)
+### 6. Verify the applied firewall matches the code
+
+An apply that "succeeded" is not proof the allowlist is what the PR said — the
+`observability` env drifted for weeks exactly this way (ADR-010). Assert live vs.
+declared, read-only, no Terraform or state needed:
+
+```
+DO_TOKEN=<read-only DO token> \
+  infra/terraform/environments/observability/scripts/check-firewall.sh
+```
+
+Exit 0 = live `grove-obs-fw` matches `observability/variables.tf`; exit 1 prints
+each drifting port with `MISSING` (declared, not live) vs. `UNEXPECTED` (live,
+not declared). The script reads that env's `variables.tf`, so it covers
+**grove-obs only** — prod and QA are still verified by their own `terraform
+plan` being empty.
+
+### 7. Prune stale addresses (housekeeping)
 
 Once a rotated address is confirmed dead and no operator uses it, remove it from the list in a follow-up PR (same in-place check applies). Don't prune and add in the same panic — add first, prune later.
 
