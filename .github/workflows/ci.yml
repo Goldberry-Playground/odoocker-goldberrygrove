@@ -246,6 +246,10 @@ jobs:
         run: python3 scripts/test_reconcile_modules_pin.py
       - name: Run prod modules-promote tests (GOL-2346 Leg B money guard)
         run: python3 scripts/test_prod_modules_promote.py
+      # GOL-2582. Static, so it fails on the PR that reintroduces the droplet
+      # reference rather than on the release train that acts on it.
+      - name: Run QA PG firewall independence guard (GOL-2582)
+        run: python3 scripts/test_qa_pg_firewall_independence.py
 
   validate-compose:
     name: Validate Docker Compose (Grove)
