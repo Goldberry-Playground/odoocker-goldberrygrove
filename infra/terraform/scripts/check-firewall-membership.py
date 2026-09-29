@@ -20,6 +20,16 @@ Reads the env's `*.tf` directly and the DO API read-only. No Terraform, no S3
 backend, no state lock, no tfvars -- so it is safe to run on a cron, from the
 agent plane, or as a pre-/post-apply proof, concurrently with anything else.
 
+Resolves three ways a firewall can name its droplets: a managed
+`digitalocean_droplet.<x>.id`, a `module.<x>.droplet_id`, and a
+`data.digitalocean_droplet.<x>[0].id` -- the last is how the holding-action
+fences for the un-codified snowflakes (GOL-2566, GOL-2569) reach boxes
+Terraform does not manage, and it is resolved by droplet NAME (through a
+`variable` default when the name is `var.x`). `count`-gated firewalls whose
+gate is off are reported as an expected SKIP rather than drift, because
+merging those files deliberately is not an apply -- but the moment such a
+firewall exists live, its membership is asserted like any other.
+
 Usage:
   infra/terraform/scripts/check-firewall-membership.py production
   infra/terraform/scripts/check-firewall-membership.py production observability
@@ -53,9 +63,30 @@ API = "https://api.digitalocean.com/v2"
 # resolvable, so we SKIP it rather than guess -- a wrong guess here would
 # either false-alarm nightly or, worse, quietly "pass" the wrong firewall.
 LITERAL_NAME = re.compile(r'^\s*name\s*=\s*"([^"$]*)"\s*$', re.M)
-DROPLET_REF = re.compile(r"digitalocean_droplet\.([A-Za-z0-9_-]+)\.id")
+# A managed droplet: `digitalocean_droplet.odoo.id`. `(?<!\.)` keeps this from
+# also matching the `data.digitalocean_droplet.x` form below and inventing a
+# managed resource that does not exist.
+DROPLET_REF = re.compile(r"(?<!\.)\bdigitalocean_droplet\.([A-Za-z0-9_-]+)\.id")
+# A data-source droplet, as the holding-action firewalls for the un-codified
+# snowflakes use (GOL-2566 legacy Ghost, GOL-2569 agent plane): those boxes are
+# not Terraform-managed, so the firewall resolves them by NAME through
+# `data "digitalocean_droplet"`. The `[0]` / `[count.index]` index is what the
+# managed-resource pattern above cannot match, and an unmatched ref used to make
+# the whole firewall a silent SKIP -- i.e. the two firewalls added specifically
+# to close an internet-wide :22 would have been the only ones nothing watched.
+DATA_DROPLET_REF = re.compile(
+    r"\bdata\.digitalocean_droplet\.([A-Za-z0-9_-]+)(?:\[[^\]]*\])?\.id"
+)
 MODULE_REF = re.compile(r"module\.([A-Za-z0-9_-]+)\.droplet_id")
-DROPLET_IDS = re.compile(r"droplet_ids\s*=\s*\[(.*?)\]", re.S)
+# One level of nesting matters: `[data.digitalocean_droplet.x[0].id]` -- a
+# non-greedy `.*?\]` stops at the INDEX bracket and truncates the ref before
+# its `.id`, which is why the data-source form silently resolved to nothing.
+DROPLET_IDS = re.compile(r"droplet_ids\s*=\s*\[((?:[^\[\]]|\[[^\[\]]*\])*)\]", re.S)
+# `name = var.legacy_ghost_droplet_name` -> resolve through the env's variable
+# defaults. Only a literal string default resolves; anything else stays unknown.
+VAR_REF_NAME = re.compile(r'^\s*name\s*=\s*var\.([A-Za-z0-9_-]+)\s*$', re.M)
+VAR_DEFAULT = re.compile(r'^\s*default\s*=\s*"([^"$]*)"\s*$', re.M)
+COUNT_META = re.compile(r'^\s*count\s*=\s*(.+?)\s*$', re.M)
 
 
 def iter_blocks(text: str):
@@ -96,39 +127,75 @@ def iter_blocks(text: str):
         i = j + 1
 
 
-def literal_name(body: str) -> str | None:
+def literal_name(body: str, var_defaults: dict[str, str] | None = None) -> str | None:
     # First top-level `name = "..."`. Sub-blocks get scanned too, but every
     # resource we care about declares its own name before any sub-block, and
     # a firewall's inbound_rule/outbound_rule carry no `name` at all.
     m = LITERAL_NAME.search(body)
-    return m.group(1) if m else None
+    if m:
+        return m.group(1)
+    # `name = var.x` with a literal string default in this env's variables.tf.
+    # Deliberately NOT a general interpolation resolver: a tfvars file or -var
+    # on the command line overrides the default, so this is a best effort that
+    # is right for how this repo uses it (the droplet-name vars exist to avoid
+    # pinning a bare id, and their defaults ARE the live names). If a caller
+    # overrides one, the name lookup simply fails to match live and reports.
+    if var_defaults:
+        vm = VAR_REF_NAME.search(body)
+        if vm:
+            return var_defaults.get(vm.group(1))
+    return None
 
 
 def parse_env(env_dir: Path):
     """-> (droplets, firewalls). Keys are Terraform addresses."""
     droplets: dict[str, str | None] = {}
     firewalls: dict[str, dict] = {}
+    # Two passes: `variable` defaults first, because a droplet/data block that
+    # names itself `var.x` needs them, and HCL has no file ordering guarantee.
+    var_defaults: dict[str, str] = {}
+    for tf in sorted(env_dir.glob("*.tf")):
+        for header, body in iter_blocks(tf.read_text()):
+            vm = re.match(r'variable\s+"([^"]+)"', header)
+            if vm:
+                dm = VAR_DEFAULT.search(body)
+                if dm:
+                    var_defaults[vm.group(1)] = dm.group(1)
     for tf in sorted(env_dir.glob("*.tf")):
         text = tf.read_text()
         for header, body in iter_blocks(text):
             rm = re.match(r'resource\s+"([^"]+)"\s+"([^"]+)"', header)
+            dm = re.match(r'data\s+"([^"]+)"\s+"([^"]+)"', header)
             mm = re.match(r'module\s+"([^"]+)"', header)
             if rm and rm.group(1) == "digitalocean_droplet":
-                droplets[f"digitalocean_droplet.{rm.group(2)}"] = literal_name(body)
+                droplets[f"digitalocean_droplet.{rm.group(2)}"] = literal_name(body, var_defaults)
+            elif dm and dm.group(1) == "digitalocean_droplet":
+                # Un-codified box fenced by a holding-action firewall: the data
+                # source resolves it BY NAME, so the name is all we need and it
+                # is looked up live exactly like a managed droplet's.
+                droplets[f"data.digitalocean_droplet.{dm.group(2)}"] = literal_name(body, var_defaults)
             elif mm:
                 # A module block is only interesting if some firewall
                 # references its droplet_id; recorded unconditionally, cheap.
-                droplets[f"module.{mm.group(1)}"] = literal_name(body)
+                droplets[f"module.{mm.group(1)}"] = literal_name(body, var_defaults)
             elif rm and rm.group(1) == "digitalocean_firewall":
                 ids = DROPLET_IDS.search(body)
                 refs = []
                 if ids:
                     refs = [f"digitalocean_droplet.{m}" for m in DROPLET_REF.findall(ids.group(1))]
+                    refs += [f"data.digitalocean_droplet.{m}" for m in DATA_DROPLET_REF.findall(ids.group(1))]
                     refs += [f"module.{m}" for m in MODULE_REF.findall(ids.group(1))]
+                cm = COUNT_META.search(body)
                 firewalls[f"digitalocean_firewall.{rm.group(2)}"] = {
-                    "fw_name": literal_name(body),
+                    "fw_name": literal_name(body, var_defaults),
                     "refs": refs,
                     "file": tf.name,
+                    # A `count`-gated firewall legitimately may not exist: the
+                    # holding-action fences default their gate to false so that
+                    # MERGING the file is not an apply. Absence is then the
+                    # expected state, not drift -- but the moment the firewall
+                    # does exist live, its membership is asserted like any other.
+                    "count": cm.group(1) if cm else None,
                 }
     return droplets, firewalls
 
@@ -206,7 +273,13 @@ def main() -> int:
                 # --allow-absent "no such firewall" is the expected steady
                 # state, not drift. For production it is the loudest possible
                 # signal: the rules themselves are gone.
-                if args.allow_absent:
+                if fw["count"] is not None:
+                    print(
+                        f"  SKIP {name}: count-gated (count = {fw['count']}) and not live "
+                        f"-- gate is off / not applied yet, so absence is expected. "
+                        f"Membership WILL be asserted once it exists."
+                    )
+                elif args.allow_absent:
                     print(f"  SKIP {name}: no such firewall live (env torn down?)")
                 else:
                     print(f"  DRIFT {name}: declared in {fw['file']} but NO such firewall exists live")

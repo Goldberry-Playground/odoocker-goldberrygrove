@@ -121,6 +121,16 @@ clean up, and escalate to the board as a suspected compromise.
   envs. Read-only, lock-free, no Terraform.
 - `.github/workflows/firewall-membership.yml` — runs it nightly and alerts the
   Discord ops webhook.
+- Coverage note: the guard resolves a firewall's droplets from a managed
+  `digitalocean_droplet.<x>.id`, a `module.<x>.droplet_id`, **and** a
+  `data.digitalocean_droplet.<x>[0].id`. That last form is how the
+  holding-action fences in #748 (GOL-2566 legacy Ghost) and #749 (GOL-2569
+  agent plane) reach boxes Terraform does not manage; until it was handled, both
+  resolved to "declares no droplet_ids" and were silently SKIPped — the two
+  firewalls added specifically to close an internet-wide `:22` would have been
+  the only ones nothing watched. Their `count` gates default to false, so the
+  guard reports a gated-off firewall as an expected SKIP and starts asserting
+  membership the moment Josh applies one.
 
 The existing GOL-2333 `observability/scripts/check-firewall.sh` compares
 per-port source *unions*; it would have passed `grove-prod-odoo-fw` cleanly,
