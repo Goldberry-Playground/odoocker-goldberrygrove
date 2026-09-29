@@ -101,3 +101,58 @@ board sees green the day the last one lands. The alternative — shipping the
 allowlist pre-populated by the author of the check — would make the census pass
 on day one while changing nothing about the exposure, which is the failure mode
 this whole issue exists to remove.
+
+## Managed database clusters (GOL-2582)
+
+A third surface, added after the two above. Trusted sources live at
+`/v2/databases/{id}/firewall` and are a `digitalocean_database_firewall`
+resource — a different API object and a different Terraform resource from
+everything under `/v2/firewalls`. No amount of droplet-firewall coverage
+reaches them.
+
+**The trap is the empty list.** On DO managed databases `trusted_sources: []`
+is not "closed". The cluster's public host (`...:25060`) accepts connections
+from **any** source that presents credentials, so the entire perimeter is the
+`doadmin`/`odoo` password. A check that only asks "does the firewall object
+exist?" reads an empty list as healthy.
+
+| Finding | Means | First move |
+|---|---|---|
+| `OPEN-DB ... trusted sources are EMPTY` | Anyone with the password can connect | Find out **why** it is empty before re-applying (see below) |
+| `OPEN-DB ... include the whole internet` | An `ip_addr` rule is `0.0.0.0` / `0.0.0.0/0` / `::` / `::/0` | Narrow it to the operator /32s |
+| `UNKNOWN database ...` | The per-cluster read failed; posture unverified | Re-run; if it persists, check the token's database scope |
+
+### Why it was empty, the time it mattered
+
+`grove-qa-l3-pg` was found with `{"rules":[]}` on 2026-09-29. The allowlist had
+been **codified all along** — `digitalocean_database_firewall.pg` in
+`environments/qa-app-platform/main.tf`. It carried
+`type = "droplet", value = digitalocean_droplet.odoo.id`, which makes it a
+*dependent* of the droplet, and `qa-l3-teardown.sh compute` destroys with
+`-target=digitalocean_droplet.odoo` — which destroys the target **and its
+dependents**. The cluster survived on `prevent_destroy`; its allowlist did not.
+So the exposure was continuous between trains, and re-applying the same resource
+would only have reset the clock until the next teardown.
+
+The fix (GOL-2582) is a `tag` rule: it takes a string, so the firewall depends on
+the cluster and on `digitalocean_tag.pg_client` rather than on the droplet, and
+the teardown leaves it standing. `prevent_destroy` on the firewall is the
+tripwire against the droplet-id form coming back.
+
+**Generalise this before you re-apply anything:** ask whether the resource is
+absent because nobody wrote it, or because something routinely destroys it. Only
+the first is fixed by applying.
+
+### Note on `-target`
+
+`terraform destroy -target=X` destroys X *and everything that depends on X*. The
+dependents are never named in the teardown script, so a resource can be removed
+every run by a command that does not mention it. To see the real blast radius
+before trusting a targeted destroy:
+
+```bash
+terraform graph | grep -E ' -> "digitalocean_droplet\.odoo"'
+```
+
+Same lesson as the obs-droplet exemption (GOL-2472): absence from the target list
+is not the same as survival — read it back.

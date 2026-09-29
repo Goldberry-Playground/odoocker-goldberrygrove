@@ -22,7 +22,8 @@ name: Firewall Membership Check
 #   per-env   compares live membership against the repo's *.tf. Config-driven,
 #             so it can only ever assert things we declared.
 #   census    asks the DO ACCOUNT instead. Every live droplet must be behind
-#             some firewall; no firewall may open :22 to the world.
+#             some firewall; no firewall may open :22 to the world; and every
+#             managed database cluster must have trusted sources (GOL-2582).
 #
 # An UN-CODIFIED droplet has no Terraform resource, therefore no expectation,
 # therefore no finding -- it is invisible to the per-env leg BY CONSTRUCTION.
@@ -31,6 +32,14 @@ name: Firewall Membership Check
 # were found by a hand-run audit. Nothing scheduled would have found either,
 # and nothing scheduled would find the third. The census leg is what makes
 # "nobody happened to look" stop being the detection mechanism.
+#
+# Managed databases are a THIRD surface again (GOL-2582): trusted sources are
+# `/v2/databases/{id}/firewall`, not `/v2/firewalls`, so neither leg above could
+# ever see them however much droplet coverage they gained. `grove-qa-l3-pg` sat
+# with an EMPTY list -- which on DO means "any source with the password", not
+# "closed" -- because its codified `digitalocean_database_firewall` is destroyed
+# every release train as a DEPENDENT of the droplet named in the teardown's
+# `-target`. Nothing was misconfigured and nothing alerted.
 on:
   schedule:
     - cron: "0 13 * * *" # daily, ~09:00 ET — before the market-season workday
@@ -103,7 +112,7 @@ jobs:
       # repo — infra/terraform/firewall-census-allowlist.json — so an accepted
       # exposure is a reviewed commit, and an exemption that outlives its
       # `expires` date starts failing again by itself.
-      - name: Account-wide census (no droplet outside a firewall, no world-open :22)
+      - name: Account-wide census (every droplet covered, no world-open :22, every DB has trusted sources)
         id: census
         timeout-minutes: 3
         run: |
@@ -123,12 +132,15 @@ jobs:
           EPHEMERAL: ${{ steps.ephemeral.outputs.exitcode }}
           CENSUS: ${{ steps.census.outputs.exitcode }}
         run: |
-          # UNCOVERED / OPEN-SSH / ALLOWLIST are the census leg's finding
-          # prefixes; DRIFT and ! are the per-env leg's. The census prints the
-          # droplet name, id and created_at on the finding line itself, so the
-          # alert carries enough to act on without opening the run.
+          # UNCOVERED / OPEN-SSH / OPEN-DB / UNKNOWN / ALLOWLIST are the census
+          # leg's finding prefixes; DRIFT and ! are the per-env leg's. Keep this
+          # list in step with the prefixes census() prints: a prefix missing here
+          # still fails the job (the exit code drives the `if:` above) but reaches
+          # Discord as an alert with an EMPTY detail block, which reads like a
+          # glitch rather than an exposure. OPEN-DB and UNKNOWN were added with
+          # the database leg for exactly that reason (GOL-2582).
           MEMBERSHIP="$(grep -hE '^[[:space:]]+(DRIFT|!)' strict.txt ephemeral.txt | head -10)"
-          CENSUS_DETAIL="$(grep -hE '^[[:space:]]+(UNCOVERED|OPEN-SSH|ALLOWLIST)' census.txt | head -10)"
+          CENSUS_DETAIL="$(grep -hE '^[[:space:]]+(UNCOVERED|OPEN-SSH|OPEN-DB|UNKNOWN|ALLOWLIST)' census.txt | head -10)"
           DETAIL="$(printf '%s\n%s' "$MEMBERSHIP" "$CENSUS_DETAIL" | sed '/^$/d')"
           [ -n "$DETAIL" ] || DETAIL="check could not run (exit 2: no token, bad allowlist, or DO unreachable)"
 
