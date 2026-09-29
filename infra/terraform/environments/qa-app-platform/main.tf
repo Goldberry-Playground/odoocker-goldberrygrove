@@ -42,6 +42,13 @@ locals {
     "project-grove",
     "layer-app-platform",
   ]
+
+  # Purpose-named tag carried ONLY by droplets that must reach Managed PG
+  # (today: the Odoo droplet). Deliberately NOT one of local.tags -- those go
+  # on volumes and the cluster too, so reusing one would grant DB access to
+  # every future droplet in the env rather than to the ones that need it.
+  # See digitalocean_database_firewall.pg for why the rule is by tag at all.
+  pg_client_tag = "qa-l3-pg-client"
 }
 
 data "cloudflare_zone" "apex" {
@@ -210,21 +217,52 @@ resource "digitalocean_database_user" "odoo" {
   }
 }
 
-# Trusted-sources allowlist: lock the Managed PG cluster to the Odoo
-# droplet's IP + the operator CIDR. Without this the cluster is publicly
-# reachable on its assigned hostname (firewalled but exposed). With this,
-# the cluster only accepts connections from the listed sources.
+# The DO tag the trusted-sources rule below resolves against. Declared as its
+# own resource so the firewall can reference a name Terraform knows exists
+# without reaching through the droplet -- and so a from-scratch apply cannot
+# order the firewall ahead of the tag and have DO reject an unknown tag.
 #
-# Note: trusted sources work alongside private networking — the Odoo
-# droplet connects over private IP (which is itself implicitly allowed),
-# but listing the droplet here makes the intent explicit and forces TF
-# to recreate the firewall rule if the droplet is recreated.
+# Note the dependency DIRECTION: the droplet CONSUMES this tag, so the tag is a
+# dependency OF the droplet, never a dependent. `terraform destroy -target` walks
+# dependents only, so targeting the droplet leaves this standing. That is the
+# whole point (GOL-2582).
+resource "digitalocean_tag" "pg_client" {
+  name = local.pg_client_tag
+}
+
+# Trusted-sources allowlist: lock the Managed PG cluster to the Odoo droplet +
+# the operator CIDRs. Without this the cluster is publicly reachable on its
+# assigned hostname -- and on DO managed databases an EMPTY trusted-sources list
+# is not "closed", it is "open to any source that presents credentials". The
+# only thing between the internet and QA Odoo's database is then a password.
+#
+# WHY BY TAG AND NOT BY DROPLET ID (GOL-2582). This resource used to carry
+# `type = "droplet", value = digitalocean_droplet.odoo.id`. That reference made
+# it a DEPENDENT of the droplet, and `qa-l3-teardown.sh compute` destroys with
+# `-target=digitalocean_droplet.odoo` -- which destroys the target AND its
+# dependents. So every release train silently took the DB firewall with the
+# droplet while the cluster itself survived on `prevent_destroy`, leaving
+# grove-qa-l3-pg with `trusted_sources: []` for the whole between-trains window.
+# Confirmed live 2026-09-29: GET /v2/databases/44e19536-.../firewall -> {"rules":[]},
+# and digitalocean_database_firewall.pg absent from qa-app-platform state (serial 99).
+#
+# A `tag` rule takes a string, so this resource depends on the cluster and the
+# tag and NOT on the droplet. The teardown leaves it standing, and the cluster
+# stays closed to everything but the operator CIDRs between trains. It also
+# removes a second, quieter hazard: with a droplet-id rule a droplet REPLACE
+# needs this resource re-converged to stay correct -- the exact shape that left
+# grove-prod-odoo-fw holding droplet_ids = [] for 13 days (GOL-2565). A tag rule
+# re-resolves on its own, so a replacement droplet is trusted the moment it
+# boots with the tag and an old id cannot linger.
+#
+# App Platform apps are NOT listed: the four Next.js frontends talk to Odoo's
+# REST API, never to Postgres, so no `app` rule belongs here.
 resource "digitalocean_database_firewall" "pg" {
   cluster_id = digitalocean_database_cluster.pg.id
 
   rule {
-    type  = "droplet"
-    value = digitalocean_droplet.odoo.id
+    type  = "tag"
+    value = digitalocean_tag.pg_client.name
   }
 
   # One ip_addr rule per operator CIDR (GOL-1842); DO's ip_addr rule takes a
@@ -235,6 +273,17 @@ resource "digitalocean_database_firewall" "pg" {
       type  = "ip_addr"
       value = split("/", rule.value)[0]
     }
+  }
+
+  # Fail-closed tripwire (GOL-2582). The tag rule above is one careless edit
+  # from being a droplet-id rule again, and that edit does not LOOK dangerous
+  # -- the destroy it re-enables is implicit in `-target`, never named in the
+  # teardown script, and its only symptom is a cluster quietly reopening.
+  # With this, a teardown that would take the firewall ERRORS instead. A real
+  # full teardown removes this guard and the cluster's own `prevent_destroy`
+  # in a reviewed PR, which is already the established path for this env.
+  lifecycle {
+    prevent_destroy = true
   }
 }
 
@@ -368,7 +417,9 @@ resource "digitalocean_droplet" "odoo" {
   size   = var.odoo_droplet_size
   image  = var.droplet_image
   region = var.region
-  tags   = local.tags
+  # pg_client is what digitalocean_database_firewall.pg trusts. Drop it here and
+  # this droplet loses Postgres, so the two move together (GOL-2582).
+  tags = concat(local.tags, [digitalocean_tag.pg_client.name])
 
   ssh_keys = [
     data.digitalocean_ssh_key.qa_deploy.fingerprint,
