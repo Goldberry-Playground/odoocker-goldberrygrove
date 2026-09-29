@@ -1,6 +1,6 @@
 # ADR 010: grove-obs is the canonical observability droplet; grove-qa-l3-obs is QA-only
 
-**Status:** Proposed. Needs CEO ratification because the placement decision can't easily be undone (GOL-2333).
+**Status:** Accepted. Ratified by the CEO on 2026-09-29 (GOL-2333). grove-qa-l3-obs was retired the same day: the droplet was destroyed via `QA_L3_TEARDOWN_OBS=1 make train-teardown`, and `qa-app-platform/observability.tf` plus the teardown exemption were removed in the follow-up PR the Decision section recommends.
 **Date:** 2026-09-22
 **Deciders:** CEO (ratify), Josh Dunbar (apply)
 **Relates to:** [ADR-007](./007-level-3-app-platform-migration.md) (D1 "same shape"), [ADR-008](./008-observability-openobserve-supersedes-adr004.md), EPIC GOL-2323, GOL-1844 (admin allowlist), `docs/specs/2026-06-26-grove-observability-design.md` §4

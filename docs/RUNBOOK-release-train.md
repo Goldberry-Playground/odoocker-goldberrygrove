@@ -58,33 +58,17 @@ two places an un-vaulted secret lives. Any secret that is live-only and not in
 1Password is **gone** after teardown, guard or no guard — the guard covers
 applies, not destroys.
 
-### The obs droplet is exempt from teardown (GOL-2333 / GOL-2472)
+### No obs droplet in the QA env (retired 2026-09-29, ADR-010)
 
-`compute` mode deliberately **does not** destroy `digitalocean_droplet.obs`
-(**grove-qa-l3-obs**), its firewall, or the `oo.qa` / `keep.qa` DNS records.
-Until the CEO ratifies ADR-010 (`docs/ADR/010-observability-droplet-home.md`,
-which lands with PR #698), the exemption is enforced in code rather than in an
-operator's memory:
+The QA-only **grove-qa-l3-obs** droplet and its firewall and `oo.qa` / `keep.qa`
+records were retired when the CEO accepted ADR-010
+(`docs/ADR/010-observability-droplet-home.md`, GOL-2333). The teardown
+exemption (`QA_L3_TEARDOWN_OBS`, pre-flight tripwire, post-destroy state check)
+went with it. There is nothing obs-shaped left in `qa-app-platform/` for
+`train-up` to create or `train-teardown` to destroy.
 
-- The `-target` list omits the obs droplet unless `QA_L3_TEARDOWN_OBS=1`.
-- A **pre-flight tripwire** aborts with exit 3 if the obs droplet ever appears
-  in the targets without that opt-in — so a bad merge or rebase costs a re-run,
-  not a droplet.
-- A **post-destroy check** re-reads `terraform state list` and exits non-zero
-  unless the obs droplet, its firewall and both DNS records are still there.
-  `-target` also destroys *dependents*, so absence from the target list is not
-  by itself proof of survival; the check is the proof. A clean run prints
-  `==> Exemption OK: obs droplet + firewall + oo/keep DNS records still in state.`
-
-To include the obs droplet on purpose (after ratification, or to retire it):
-
-```bash
-QA_L3_TEARDOWN_OBS=1 make train-teardown
-```
-
-> **Not the same box.** This exemption is about **grove-qa-l3-obs**, the QA-only
-> Phase-1.5 stack. The canonical observability plane — **grove-obs**, in
-> `infra/terraform/environments/observability/` — has its own Terraform state
+> The canonical observability plane, **grove-obs** in
+> `infra/terraform/environments/observability/`, has its own Terraform state
 > and is never reachable by this script under any flag.
 
 **Never run the DNS script as part of a teardown.** The qa zone and the
@@ -176,8 +160,5 @@ GOL-2326.
 - **train-teardown dry-run:** run `scripts/qa-l3-teardown.sh compute` and enter
   anything other than `destroy-qa-l3-compute` at the prompt — it aborts without
   calling terraform. That typed-confirm IS the safe dry-run.
-- **teardown obs exemption:** `python3 scripts/test_qa_l3_teardown_guard.py`
-  runs the real script against stubbed `op`/`terraform` and asserts the obs
-  droplet is not in the destroy targets. No network, no spend.
 - **reminder:** `gh workflow run release-train-reminder.yml -f leg=up` (or
   `down`) posts a test embed to the ops Discord channel immediately.
