@@ -10,7 +10,8 @@
 # subsequent validations with "Incorrect TXT record (and N more)". On
 # 2026-06-26 we hit 17 stale TXTs before noticing.
 #
-# This script lists all TXT records named "_acme-challenge" in the given
+# This script lists all TXT records named "_acme-challenge" or
+# "_acme-challenge.<host>" (per-host certs, e.g. odoo/oo/keep) in the given
 # zone and DELETEs each. Caddy's next ACME attempt creates a single fresh
 # TXT, LE sees only the one it expects, validation succeeds.
 #
@@ -51,7 +52,7 @@ API="https://api.digitalocean.com/v2/domains/${ZONE}/records"
 # read is portable across bash + zsh.
 ids_json=$(curl -sf -H "Authorization: Bearer $DIGITALOCEAN_TOKEN" \
   "${API}?per_page=200" | jq -r '.domain_records[]
-    | select(.type == "TXT" and .name == "_acme-challenge")
+    | select(.type == "TXT" and (.name == "_acme-challenge" or (.name | startswith("_acme-challenge."))))
     | .id')
 
 if [ -z "$ids_json" ]; then
@@ -92,7 +93,7 @@ fi
 # #4) -- we explicitly handle the "couldn't verify" case below.
 remaining=$(curl -sf -H "Authorization: Bearer $DIGITALOCEAN_TOKEN" \
   "${API}?per_page=200" 2>/dev/null | jq -r '[.domain_records[] |
-    select(.type == "TXT" and .name == "_acme-challenge")] | length' 2>/dev/null || echo "?")
+    select(.type == "TXT" and (.name == "_acme-challenge" or (.name | startswith("_acme-challenge."))))] | length' 2>/dev/null || echo "?")
 
 if [ "$remaining" = "?" ]; then
   echo "  WARN: could not verify final TXT count (DO API call failed). Deletes above succeeded; rerun for verification if needed." >&2
