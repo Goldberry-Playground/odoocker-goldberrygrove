@@ -30,10 +30,17 @@ provider "digitalocean" {
 }
 
 provider "cloudflare" {
-  # Origin CA certs authenticate with the same API token since Aug 2022
-  # (token needs Zone -> SSL and Certificates -> Edit on all four zones).
-  # The legacy Origin CA service key is deprecated and stops working
-  # 2026-09-30: developers.cloudflare.com/changelog/post/2026-03-19-service-key-authentication-deprecated/
+  # Origin CA certs (blogs.tf, cloudflare_origin_ca_certificate) authenticate
+  # with THIS scoped API token — no service key. Provider supports token auth
+  # for Origin CA since v3.32.0 (prod is pinned ~> 4.40). The token needs
+  # Zone -> SSL and Certificates -> Edit on all four zones; verified live
+  # 2026-09-29 (token id a9caef2f: POST/GET /certificates authorize on all four
+  # brand zones — GOL-2317).
+  # The legacy Origin CA Key (X-Auth-User-Service-Key) Cloudflare deprecated
+  # 2026-09-30 is NOT used here and was never vaulted, so its retirement is a
+  # no-op for this env: a droplet rebuild after the deadline mints certs
+  # token-only, no fallback needed.
+  # developers.cloudflare.com/changelog/post/2026-03-19-service-key-authentication-deprecated/
   # This env feeds the token at 1P ref `op://Grove Prod/Cloudflare API Token/credential`
   # (repointed GOL-1770; the old `account_cloudflare_api_token` field expired 2026-08-19).
   api_token = var.cloudflare_api_token
