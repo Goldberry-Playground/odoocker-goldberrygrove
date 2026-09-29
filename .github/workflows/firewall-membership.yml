@@ -16,6 +16,23 @@ name: Firewall Membership Check
 # production Odoo had no edge filtering at all and :22 was open to the
 # internet for 13 days before a human happened to look. Nightly, this fires on
 # day one.
+#
+# TWO LEGS, and the second is not a nicety (GOL-2576):
+#
+#   per-env   compares live membership against the repo's *.tf. Config-driven,
+#             so it can only ever assert things we declared.
+#   census    asks the DO ACCOUNT instead. Every live droplet must be behind
+#             some firewall; no firewall may open a SENSITIVE port to the world
+#             (22, 5432, 6379, 8069, 9090, ... -- GOL-2572; 80/443 are expected
+#             and deliberately not in that table).
+#
+# An UN-CODIFIED droplet has no Terraform resource, therefore no expectation,
+# therefore no finding -- it is invisible to the per-env leg BY CONSTRUCTION.
+# Two of five droplets were in exactly that state on 2026-09-29
+# (ghostgoldberrygrove-nyc1 / GOL-2566, agenticos-droplet / GOL-2569) and BOTH
+# were found by a hand-run audit. Nothing scheduled would have found either,
+# and nothing scheduled would find the third. The census leg is what makes
+# "nobody happened to look" stop being the detection mechanism.
 on:
   schedule:
     - cron: "0 13 * * *" # daily, ~09:00 ET — before the market-season workday
@@ -82,27 +99,96 @@ jobs:
             --allow-absent qa-app-platform 2>&1 | tee ephemeral.txt
           echo "exitcode=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
 
+      # Config-INDEPENDENT. Takes no env argument on purpose: it enumerates the
+      # account, so a droplet nobody codified (and nobody remembered) is still
+      # in scope. Exemptions live in a dated, GOL-referencing allowlist in the
+      # repo — infra/terraform/firewall-census-allowlist.json — so an accepted
+      # exposure is a reviewed commit, and an exemption that outlives its
+      # `expires` date starts failing again by itself.
+      - name: Account-wide census (no droplet outside a firewall, no world-open sensitive port)
+        id: census
+        timeout-minutes: 3
+        run: |
+          set +e
+          ./infra/terraform/scripts/check-firewall-membership.py --census 2>&1 | tee census.txt
+          echo "exitcode=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
       # Exit 2 is "bad env" (no token, DO unreachable) — a broken watcher, not
       # a clean bill of health. It must be as loud as drift, or the check
       # silently stops checking.
-      - name: Alert Discord on drift or broken check
-        if: steps.strict.outputs.exitcode != '0' || steps.ephemeral.outputs.exitcode != '0'
+      - name: Alert Discord on drift, census finding, or broken check
+        if: steps.strict.outputs.exitcode != '0' || steps.ephemeral.outputs.exitcode != '0' || steps.census.outputs.exitcode != '0'
         timeout-minutes: 1
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           STRICT: ${{ steps.strict.outputs.exitcode }}
           EPHEMERAL: ${{ steps.ephemeral.outputs.exitcode }}
+          CENSUS: ${{ steps.census.outputs.exitcode }}
         run: |
-          DETAIL="$(grep -hE '^\s+(DRIFT|!)' strict.txt ephemeral.txt | head -10)"
-          [ -n "$DETAIL" ] || DETAIL="check could not run (exit 2: no token or DO unreachable)"
+          # ERROR / WARN / UNCOVERED are the census leg's finding prefixes;
+          # DRIFT and ! are the per-env leg's. The census prints the droplet
+          # name, id and created_at on the finding line itself, so the alert
+          # carries enough to act on without opening the run.
+          #
+          # `|| true` on EVERY grep, including the ones that look safe.
+          # GitHub's default shell here is `bash -e {0}` -- `-e` but NOT
+          # `pipefail` -- so `grep ... | head` survives a no-match only because
+          # the pipeline reports head's 0. The bare `grep -c` below has no such
+          # accident: no match is exit 1, and `set -e` would kill this step
+          # BEFORE the webhook POST, silently losing the alert in the very
+          # common case where only one leg fired. Adding `shell: bash` to this
+          # job would arm the piped ones the same way, so they are guarded too.
+          # Same defect class as GOL-2630 / GOL-2631: a check whose failure
+          # path is itself unprotected.
+          MEMBERSHIP="$(grep -hE '^[[:space:]]+(DRIFT|!)' strict.txt ephemeral.txt | head -10 || true)"
+          CENSUS_DETAIL="$(grep -hE '^[[:space:]]+(ERROR|WARN|UNCOVERED)' census.txt | head -10 || true)"
+          CENSUS_ERRORS="$(grep -cE '^[[:space:]]+ERROR' census.txt || true)"
+          DETAIL="$(printf '%s\n%s' "$MEMBERSHIP" "$CENSUS_DETAIL" | sed '/^$/d')"
+          BROKEN=""
+          if [ -z "$DETAIL" ]; then
+            BROKEN=1
+            DETAIL="check could not run (exit 2: no token, bad allowlist, or DO unreachable)"
+          fi
+
+          # Name what actually fired. "A firewall does not contain its droplets"
+          # is the wrong sentence for "a droplet is behind no firewall at all",
+          # and an alert that describes the wrong failure gets triaged as noise.
+          if [ -n "$BROKEN" ]; then
+            # A non-zero exit with NO finding lines means the watcher itself
+            # broke. It must not inherit a finding's wording: "a firewall does
+            # not contain its droplets" reads as a real exposure and sends
+            # somebody to the DO console, when the true state is that nothing
+            # was checked at all -- which is strictly worse and needs a
+            # different first move.
+            TITLE="🛑 The firewall watcher could not run — nothing was checked"
+            BLURB="Exit 2 from at least one leg and no findings parsed. Likely the 1Password step, the DO token's scope, or the allowlist file — fix the watcher first; the account's actual state is UNKNOWN until it runs clean."
+          elif [ -n "$MEMBERSHIP" ] && [ -n "$CENSUS_DETAIL" ]; then
+            TITLE="⚠️ Firewall membership drift AND an unprotected droplet"
+            BLURB="Both legs fired: a codified firewall lost its droplet, and the account has a box or rule nothing covers."
+          elif [ -n "$CENSUS_DETAIL" ] && [ "${CENSUS_ERRORS:-0}" -gt 0 ]; then
+            # ERROR = something is reachable right now. Named separately from a
+            # WARN so the person reading this at 09:00 knows whether to open a
+            # terminal or open a ticket.
+            TITLE="🚨 A droplet is unprotected, or a sensitive port is open to the world"
+            BLURB="The account-wide census found a LIVE exposure the per-env check cannot see (GOL-2572). Codify a firewall and apply, or narrow the rule to known /32s."
+          elif [ -n "$CENSUS_DETAIL" ]; then
+            TITLE="⚠️ A dormant firewall opens a sensitive port to the world"
+            BLURB="Inert today — nothing is attached — but world-open the moment a droplet is (GOL-2572/GOL-2570). Delete the firewall, or add a dated, port-scoped allowlist entry."
+          else
+            TITLE="⚠️ A DO firewall does not contain the droplets it names"
+            BLURB="A codified firewall is not protecting its droplet — the box may be exposed at the DO edge."
+          fi
+
           PAYLOAD=$(jq -n \
             --arg run_url "$RUN_URL" \
             --arg detail "$DETAIL" \
+            --arg title "$TITLE" \
+            --arg blurb "$BLURB" \
             '{
               username: "🧱 Firewall Membership",
               embeds: [{
-                title: "⚠️ A DO firewall does not contain the droplets it names",
-                description: ("A codified firewall is not protecting its droplet — the box may be exposed at the DO edge.\n```\n" + $detail + "\n```"),
+                title: $title,
+                description: ($blurb + "\n```\n" + $detail + "\n```"),
                 url: $run_url,
                 color: 15158332
               }]
@@ -110,8 +196,8 @@ jobs:
           curl -fsS -X POST -H "Content-Type: application/json" \
             -d "$PAYLOAD" "$DISCORD_OPS_WEBHOOK_URL"
 
-      - name: Fail the run if membership drifted
-        if: steps.strict.outputs.exitcode != '0' || steps.ephemeral.outputs.exitcode != '0'
+      - name: Fail the run if membership drifted or the census found an exposure
+        if: steps.strict.outputs.exitcode != '0' || steps.ephemeral.outputs.exitcode != '0' || steps.census.outputs.exitcode != '0'
         run: |
-          echo "::error::firewall membership check failed (strict=${{ steps.strict.outputs.exitcode }} ephemeral=${{ steps.ephemeral.outputs.exitcode }})"
+          echo "::error::firewall check failed (strict=${{ steps.strict.outputs.exitcode }} ephemeral=${{ steps.ephemeral.outputs.exitcode }} census=${{ steps.census.outputs.exitcode }})"
           exit 1
