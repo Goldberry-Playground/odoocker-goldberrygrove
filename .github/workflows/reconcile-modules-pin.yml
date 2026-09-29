@@ -20,6 +20,13 @@ name: Reconcile prod modules pin
 # allowlisted-human APPROVED review, GOL-1478) — this workflow cannot merge it.
 # So the ssh pin recipe ends with:  gh workflow run reconcile-modules-pin.yml -f modules_sha=<sha>
 #
+# DETECTION (GOL-2580): this workflow is the FIX. It is dispatched by hand, so
+# for its first year the drift was only ever found by a human noticing -- five
+# times, the last undetected for six days. `prod-modules-pin-drift.yml` is the
+# nightly DETECTOR: it reads prod's live grove_headless version over read-only
+# JSON-RPC, compares it to the committed default, and alerts to Discord with
+# the exact `-f modules_sha=<sha>` line to paste here.
+#
 # NOTE ON CHECKS (GOL-2114 / GOL-2504 / GOL-2607): the PR is opened with the
 # default GITHUB_TOKEN. GitHub deliberately suppresses `push` / `pull_request`
 # events for GITHUB_TOKEN actions (anti-recursion), so the four contexts that
