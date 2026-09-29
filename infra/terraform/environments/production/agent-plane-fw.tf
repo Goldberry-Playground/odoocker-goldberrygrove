@@ -92,7 +92,7 @@
 # Related: GOL-2565 (prod Odoo membership drift - APPLIED, verified filtered
 # 2026-09-29), GOL-2566 (legacy Ghost snowflake, legacy-ghost-fw.tf), GOL-2306
 # (the token half), PR #745 (membership watcher that cannot cover un-codified
-# droplets - see GOL-2576 for the census extension that can).
+# droplets - see GOL-2572 for the census extension that can).
 ###############################################################################
 
 # Resolve the un-codified snowflake by name rather than pinning the bare id

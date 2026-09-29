@@ -202,8 +202,8 @@ Host-level rules on the droplet are untouched by anything in this runbook.
 - **GOL-2306** — agent-plane credential exposure (the token half).
 - **PR #745** — nightly membership watcher. It asserts *codified* firewalls
   contain their *codified* droplets, so an un-codified droplet is invisible to it
-  by construction; GOL-2576 extends it to an account-wide census that is not.
-- **`General` firewall** (`c6ca14ae-…`) — `droplet_ids = []` but its rules are
-  `:22` ← `0.0.0.0/0` plus tcp/udp `25565` ← `0.0.0.0/0`. Empty today, a loaded
-  gun tomorrow: attaching anything to it opens SSH to the world. Recommend
-  deleting it.
+  by construction; GOL-2572 extends it to an account-wide census that is not.
+- **GOL-2570** — delete the account's `General` firewall (`c6ca14ae-…`):
+  `droplet_ids = []` but its rules are `:22` ← `0.0.0.0/0` plus tcp/udp `25565` ←
+  `0.0.0.0/0`. Empty today, a loaded gun tomorrow — attaching anything to it
+  opens SSH to the world. Already in review, awaiting Josh.
