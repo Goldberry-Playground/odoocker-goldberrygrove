@@ -22,7 +22,9 @@ name: Firewall Membership Check
 #   per-env   compares live membership against the repo's *.tf. Config-driven,
 #             so it can only ever assert things we declared.
 #   census    asks the DO ACCOUNT instead. Every live droplet must be behind
-#             some firewall; no firewall may open :22 to the world.
+#             some firewall; no firewall may open a SENSITIVE port to the world
+#             (22, 5432, 6379, 8069, 9090, ... -- GOL-2572; 80/443 are expected
+#             and deliberately not in that table).
 #
 # An UN-CODIFIED droplet has no Terraform resource, therefore no expectation,
 # therefore no finding -- it is invisible to the per-env leg BY CONSTRUCTION.
@@ -103,7 +105,7 @@ jobs:
       # repo — infra/terraform/firewall-census-allowlist.json — so an accepted
       # exposure is a reviewed commit, and an exemption that outlives its
       # `expires` date starts failing again by itself.
-      - name: Account-wide census (no droplet outside a firewall, no world-open :22)
+      - name: Account-wide census (no droplet outside a firewall, no world-open sensitive port)
         id: census
         timeout-minutes: 3
         run: |
@@ -123,24 +125,55 @@ jobs:
           EPHEMERAL: ${{ steps.ephemeral.outputs.exitcode }}
           CENSUS: ${{ steps.census.outputs.exitcode }}
         run: |
-          # UNCOVERED / OPEN-SSH / ALLOWLIST are the census leg's finding
-          # prefixes; DRIFT and ! are the per-env leg's. The census prints the
-          # droplet name, id and created_at on the finding line itself, so the
-          # alert carries enough to act on without opening the run.
-          MEMBERSHIP="$(grep -hE '^[[:space:]]+(DRIFT|!)' strict.txt ephemeral.txt | head -10)"
-          CENSUS_DETAIL="$(grep -hE '^[[:space:]]+(UNCOVERED|OPEN-SSH|ALLOWLIST)' census.txt | head -10)"
+          # ERROR / WARN / UNCOVERED are the census leg's finding prefixes;
+          # DRIFT and ! are the per-env leg's. The census prints the droplet
+          # name, id and created_at on the finding line itself, so the alert
+          # carries enough to act on without opening the run.
+          #
+          # `|| true` on EVERY grep, including the ones that look safe.
+          # GitHub's default shell here is `bash -e {0}` -- `-e` but NOT
+          # `pipefail` -- so `grep ... | head` survives a no-match only because
+          # the pipeline reports head's 0. The bare `grep -c` below has no such
+          # accident: no match is exit 1, and `set -e` would kill this step
+          # BEFORE the webhook POST, silently losing the alert in the very
+          # common case where only one leg fired. Adding `shell: bash` to this
+          # job would arm the piped ones the same way, so they are guarded too.
+          # Same defect class as GOL-2630 / GOL-2631: a check whose failure
+          # path is itself unprotected.
+          MEMBERSHIP="$(grep -hE '^[[:space:]]+(DRIFT|!)' strict.txt ephemeral.txt | head -10 || true)"
+          CENSUS_DETAIL="$(grep -hE '^[[:space:]]+(ERROR|WARN|UNCOVERED)' census.txt | head -10 || true)"
+          CENSUS_ERRORS="$(grep -cE '^[[:space:]]+ERROR' census.txt || true)"
           DETAIL="$(printf '%s\n%s' "$MEMBERSHIP" "$CENSUS_DETAIL" | sed '/^$/d')"
-          [ -n "$DETAIL" ] || DETAIL="check could not run (exit 2: no token, bad allowlist, or DO unreachable)"
+          BROKEN=""
+          if [ -z "$DETAIL" ]; then
+            BROKEN=1
+            DETAIL="check could not run (exit 2: no token, bad allowlist, or DO unreachable)"
+          fi
 
           # Name what actually fired. "A firewall does not contain its droplets"
           # is the wrong sentence for "a droplet is behind no firewall at all",
           # and an alert that describes the wrong failure gets triaged as noise.
-          if [ -n "$MEMBERSHIP" ] && [ -n "$CENSUS_DETAIL" ]; then
+          if [ -n "$BROKEN" ]; then
+            # A non-zero exit with NO finding lines means the watcher itself
+            # broke. It must not inherit a finding's wording: "a firewall does
+            # not contain its droplets" reads as a real exposure and sends
+            # somebody to the DO console, when the true state is that nothing
+            # was checked at all -- which is strictly worse and needs a
+            # different first move.
+            TITLE="🛑 The firewall watcher could not run — nothing was checked"
+            BLURB="Exit 2 from at least one leg and no findings parsed. Likely the 1Password step, the DO token's scope, or the allowlist file — fix the watcher first; the account's actual state is UNKNOWN until it runs clean."
+          elif [ -n "$MEMBERSHIP" ] && [ -n "$CENSUS_DETAIL" ]; then
             TITLE="⚠️ Firewall membership drift AND an unprotected droplet"
             BLURB="Both legs fired: a codified firewall lost its droplet, and the account has a box or rule nothing covers."
+          elif [ -n "$CENSUS_DETAIL" ] && [ "${CENSUS_ERRORS:-0}" -gt 0 ]; then
+            # ERROR = something is reachable right now. Named separately from a
+            # WARN so the person reading this at 09:00 knows whether to open a
+            # terminal or open a ticket.
+            TITLE="🚨 A droplet is unprotected, or a sensitive port is open to the world"
+            BLURB="The account-wide census found a LIVE exposure the per-env check cannot see (GOL-2572). Codify a firewall and apply, or narrow the rule to known /32s."
           elif [ -n "$CENSUS_DETAIL" ]; then
-            TITLE="⚠️ A droplet is behind no firewall, or :22 is open to the world"
-            BLURB="The account-wide census found an exposure the per-env check cannot see (GOL-2576). Codify a firewall and apply, delete the dormant rule, or add a dated allowlist entry."
+            TITLE="⚠️ A dormant firewall opens a sensitive port to the world"
+            BLURB="Inert today — nothing is attached — but world-open the moment a droplet is (GOL-2572/GOL-2570). Delete the firewall, or add a dated, port-scoped allowlist entry."
           else
             TITLE="⚠️ A DO firewall does not contain the droplets it names"
             BLURB="A codified firewall is not protecting its droplet — the box may be exposed at the DO edge."
