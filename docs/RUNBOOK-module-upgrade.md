@@ -136,6 +136,57 @@ target commit, and only then restarts odoo so the entrypoint runs its blocking
 `--init=base,<mods> --update=<mods>` pass. If git-sync never reaches the target,
 **odoo is not restarted** and prod keeps serving the previous code.
 
+### Activating a new container env var in the same touch (GOL-2507)
+
+A secret `grove_headless` reads from `os.environ` needs **both** the droplet's
+`/etc/grove/.env` line **and** the odoo service's compose `environment:`
+passthrough -- the `/.env` mount only feeds `odoorc.sh`'s `odoo.conf`
+substitution, so a var present only there **never reaches the process** (the
+GOL-1935 footgun that left every Discord alert a silent no-op). Both points are
+rendered from `user_data`, which prod's droplet carries in `ignore_changes` --
+so merging the Terraform chain is a provable no-op and the **running** box only
+picks the var up on a rebuild.
+
+Rather than make that a second hand-edited prod touch on promote day, pass the
+value in and the promote converges both points in place and **recreates** odoo:
+
+```bash
+PERENUAL_API_KEY="$(op read 'op://Goldberry Grove - Admin/perenual_api_key/credential')" \
+  TARGET_REF=<same sha> CONFIRM=PROMOTE \
+  scripts/prod-modules-promote.sh
+```
+
+- **Unset => skipped entirely.** The promote is byte-for-byte what it was.
+- **The value never appears in argv** (either machine's process list) and is
+  never echoed -- it travels to the droplet on stdin. A promote log is safe to
+  paste into a ticket.
+- **Validated locally first**, against the same contract
+  `var.perenual_api_key`'s `validation` block enforces: cloud-init writes the
+  value **unquoted** into a `set -euo pipefail` bash-sourced file, so a space or
+  `$` would break the *next* boot, long after this run looked successful.
+- **Recreate, not restart.** A container's env is fixed at create time; a plain
+  `restart` would leave the whole converge invisible to the process. The
+  recreate runs the same blocking entrypoint upgrade pass.
+- **Verified against the process, not the files.** After the marker lands, the
+  script reads `printenv PERENUAL_API_KEY` out of the container and **exits 10**
+  if it is empty or different (values never echoed). Files converged + process
+  not = the exact state that looks activated and enriches nothing.
+- **Idempotent.** An empty `PERENUAL_API_KEY=` line (what cloud-init renders
+  before the key is vaulted) is replaced, not duplicated; a second run is a
+  `NO-OP`. And a droplet **already on the target SHA** does *not* take the
+  `NO-OP` shortcut while a converge is still pending.
+- **It is a bridge, not a snowflake.** The committed cloud-init + compose
+  already render both lines (odoocker #724), so the next rebuild reproduces the
+  box without this step; the on-box edit only stops the running droplet waiting
+  for one.
+
+After the promote, confirm Perenual actually drains rather than assuming it:
+press **Fetch facts** on a plant product, check the `grove.enrich.job` row
+reaches `done`, and check `ir.config_parameter
+grove_headless.perenual_calls.<UTC-today>` increments. Prod's daily budget stays
+**80** (`grove_headless.perenual_daily_budget`); QA holds the other 20 of the
+shared vendor quota (one free-tier key, 100 calls/UTC day, counted per database).
+
 ### The money guard -- the real success condition
 
 `grove_headless`'s `setup_wv_sales_tax` (`hooks.py`) wraps every company in
@@ -206,7 +257,12 @@ runs either way and wins. Do not take orders on a run that failed this check.
   re-run.
 - **Idempotent.** Env pin + git-sync checkout + upgrade marker all already at the
   target reports `NO-OP` and changes nothing. Re-running a partially completed
-  promote converges.
+  promote converges. A requested env converge (above) is part of that condition,
+  so the shortcut can never skip an activation.
+- **A broken compose edit is restored** (exit 10). The passthrough insert is
+  anchored on `AUTO_UPGRADE_MODULES` and re-validated with `docker compose
+  config`; on either failure the timestamped `docker-compose.yml.bak.*` is put
+  back and nothing is recreated.
 
 ### Rollback
 

@@ -42,6 +42,23 @@ The properties tested are the ones that would actually cost money or an outage:
   no-duplicate-env-key       the upsert rewrites in place; compose reads the
                              last occurrence, so a duplicate key would be a
                              silent split-brain.
+  perenual-off-by-default    with PERENUAL_API_KEY unset the promote is
+                             byte-for-byte what it was: no .env line, no compose
+                             edit, a plain `restart` rather than a recreate.
+  perenual-validates-locally a key with whitespace/metacharacters is refused
+                             before the droplet is touched -- cloud-init writes
+                             it UNQUOTED into a bash-sourced /etc/grove/.env, so
+                             a bad value breaks the NEXT boot, not this run.
+  perenual-never-echoed      the key appears in NO output on any path, pass or
+                             fail (a promote log is pasted into tickets).
+  perenual-converges         .env line + compose passthrough + a RECREATE (a
+                             plain restart keeps the old container env, which is
+                             how an "activated" key silently stays inert).
+  perenual-noop-shortcut     a droplet already ON the target SHA must NOT take
+                             the NO-OP exit while the converge is still pending
+                             -- that path would silently skip the activation.
+  perenual-runtime-verified  if the var does not reach the odoo PROCESS after
+                             the recreate, exit 10 rather than report success.
 
     python3 scripts/test_prod_modules_promote.py
 """
@@ -90,6 +107,12 @@ case "$cmd" in
     # odoo: symlink-basename fallback, manifest grep, or an `odoo shell` probe
     joined="${rest[*]}"
     case "$joined" in
+      *printenv*)
+        # Models the container env as baked at CREATE time: `restart` cannot
+        # change it, only a recreate re-reads compose + .env.
+        [ -f "$S/container_perenual" ] || exit 1
+        cat "$S/container_perenual"
+        exit 0 ;;
       *"odoo shell"*)
         # The probe script arrives on stdin; which one it is decides the reply.
         script="$(cat)"
@@ -110,7 +133,26 @@ case "$cmd" in
     esac
     echo "stub-docker: unhandled exec: $joined" >&2; exit 97
     ;;
+  config)
+    exit 0
+    ;;
   up)
+    svc="${rest[${#rest[@]}-1]}"
+    if [ "$svc" = "odoo" ]; then
+      # Recreate: same entrypoint pass as `restart`, PLUS the container env is
+      # rebuilt from the deployed compose + .env (the whole reason the script
+      # recreates instead of restarting).
+      touch "$S/odoo_restarted"; touch "$S/odoo_recreated"
+      synced="$(cat "$S/synced")"
+      cat "$S/upgrade_log" >> "$S/logs" 2>/dev/null || true
+      printf '%s\n' "$synced" > "$S/marker"
+      compose="$(dirname "$(readlink -f "$S/envfile")")/docker-compose.yml"
+      if [ ! -f "$S/env_blackhole" ] \
+         && grep -Eq '^[[:space:]]*PERENUAL_API_KEY:' "$compose"; then
+        sed -n 's/^PERENUAL_API_KEY=//p' "$S/envfile" | tail -1 | tr -d '\r' > "$S/container_perenual"
+      fi
+      exit 0
+    fi
     # up -d --force-recreate --no-deps custom-modules-sync => adopt the .env ref
     if [ -f "$S/sync_fails" ]; then exit 0; fi
     sed -n 's/^CUSTOM_MODULES_REF=//p' "$S/envfile" | tail -1 | tr -d '\r' > "$S/synced"
@@ -188,7 +230,9 @@ class Droplet:
 
     def __init__(self, *, env_ref=OLD, synced=OLD, marker=OLD,
                  auto_upgrade=True, upgrade_log=FULL_BIND, sync_fails=False,
-                 recorded_version=VER_BELOW_TAX_MIGRATION, tax_out=TAX_ALL_OK):
+                 recorded_version=VER_BELOW_TAX_MIGRATION, tax_out=TAX_ALL_OK,
+                 perenual_env=None, compose_has_perenual=False,
+                 container_perenual=None, env_blackhole=False):
         self.root = tempfile.mkdtemp(prefix="fakegrove-")
         self.deploy = os.path.join(self.root, "grove")
         self.state = os.path.join(self.root, "state")
@@ -202,9 +246,19 @@ class Droplet:
             if env_ref:
                 fh.write(f"CUSTOM_MODULES_REF={env_ref}\n")
             fh.write("ODOO_TAG=latest\n")
+            if perenual_env is not None:
+                fh.write(f"PERENUAL_API_KEY={perenual_env}\n")
 
+        compose = COMPOSE_WITH_AUTO if auto_upgrade else COMPOSE_WITHOUT_AUTO
+        if compose_has_perenual:
+            compose += "      PERENUAL_API_KEY: ${PERENUAL_API_KEY:-}\n"
         with open(os.path.join(self.deploy, "docker-compose.yml"), "w") as fh:
-            fh.write(COMPOSE_WITH_AUTO if auto_upgrade else COMPOSE_WITHOUT_AUTO)
+            fh.write(compose)
+        if container_perenual is not None:
+            self._write(os.path.join(self.state, "container_perenual"),
+                        container_perenual)
+        if env_blackhole:
+            self._write(os.path.join(self.state, "env_blackhole"), "1")
 
         self._write(os.path.join(self.state, "synced"), synced + "\n")
         self.marker_path = os.path.join(self.state, "marker")
@@ -260,6 +314,26 @@ class Droplet:
 
     def odoo_restarted(self):
         return os.path.exists(os.path.join(self.state, "odoo_restarted"))
+
+    def odoo_recreated(self):
+        return os.path.exists(os.path.join(self.state, "odoo_recreated"))
+
+    def compose_text(self):
+        with open(os.path.join(self.deploy, "docker-compose.yml")) as fh:
+            return fh.read()
+
+    def compose_backups(self):
+        return sorted(
+            f for f in os.listdir(self.deploy)
+            if f.startswith("docker-compose.yml.bak.")
+        )
+
+    def container_perenual(self):
+        path = os.path.join(self.state, "container_perenual")
+        if not os.path.exists(path):
+            return None
+        with open(path) as fh:
+            return fh.read().strip()
 
     def cleanup(self):
         shutil.rmtree(self.root, ignore_errors=True)
@@ -560,6 +634,183 @@ def test_appends_key_when_absent():
         check("appends-key-when-absent", r.returncode == 0 and
               d.env_text().count(f"CUSTOM_MODULES_REF={NEW}") == 1,
               f"rc={r.returncode} env={d.env_text()!r}")
+    finally:
+        d.cleanup()
+
+
+# --- PERENUAL_API_KEY converge (GOL-2507) ----------------------------------
+# The Perenual half of a prod promote: the key must land in /etc/grove/.env AND
+# in the odoo service's compose `environment:` AND in the running container's
+# process env -- miss any one and the enrich cron silently no-ops with every
+# job left queued, which looks exactly like success.
+
+# Deliberately shaped like a placeholder, not like a key: `your-key-here` is a
+# .gitleaks.toml allowlist regex, and a realistic-looking fixture would (and did)
+# trip `generic-api-key` on the full-history scan. Still has to satisfy the
+# script's own charset validation, so no underscores.
+FAKE_KEY = "your-key-here-gol2507-fixture"
+PASSTHROUGH = "PERENUAL_API_KEY: ${PERENUAL_API_KEY:-}"
+
+
+def _no_leak(name, r, secret=FAKE_KEY):
+    """A promote log gets pasted into tickets and Discord. The key must not be
+    in it -- on ANY path, including the failure ones."""
+    check(f"{name}-never-echoed", secret not in r.stdout and secret not in r.stderr)
+
+
+def test_perenual_off_by_default():
+    """Unset => the promote is exactly what it was: no .env line, no compose
+    edit, and a plain `restart` (not a recreate)."""
+    d = Droplet()
+    try:
+        r = d.run(confirm="PROMOTE")
+        check("perenual-off-exit-0", r.returncode == 0, f"rc={r.returncode} {r.stderr[-300:]}")
+        check("perenual-off-no-env-line", "PERENUAL_API_KEY=" not in d.env_text())
+        check("perenual-off-no-compose-edit", PASSTHROUGH not in d.compose_text())
+        check("perenual-off-no-compose-backup", d.compose_backups() == [])
+        check("perenual-off-restart-not-recreate",
+              d.odoo_restarted() and not d.odoo_recreated())
+        # The state line is still reported, so a pre-flight always answers
+        # "is Perenual live on prod?" without being asked to converge.
+        check("perenual-off-still-reports-state", "PERENUAL_API_KEY (GOL-2507)" in r.stdout)
+    finally:
+        d.cleanup()
+
+
+def test_perenual_validates_locally():
+    """A value that would break the NEXT boot is refused before the droplet is
+    touched -- /etc/grove/.env is bash-sourced under `set -euo pipefail` and
+    cloud-init writes the value UNQUOTED."""
+    d = Droplet()
+    try:
+        for bad in ("has space", "semi;colon", "$(whoami)", "short"):
+            r = d.run(confirm="PROMOTE", extra_env={"PERENUAL_API_KEY": bad})
+            check(
+                f"perenual-rejects[{bad}]",
+                r.returncode == 2 and "PERENUAL_API_KEY must be" in r.stderr,
+                f"rc={r.returncode} err={r.stderr[:160]}",
+            )
+            check(f"perenual-rejects[{bad}]-no-write",
+                  "PERENUAL_API_KEY=" not in d.env_text() and not d.odoo_restarted())
+            _no_leak(f"perenual-rejects[{bad}]", r, bad)
+    finally:
+        d.cleanup()
+
+
+def test_perenual_preflight_writes_nothing():
+    d = Droplet()
+    try:
+        before_env, before_compose = d.env_text(), d.compose_text()
+        r = d.run(extra_env={"PERENUAL_API_KEY": FAKE_KEY})
+        check("perenual-preflight-exit-0", r.returncode == 0, f"rc={r.returncode}")
+        check("perenual-preflight-says-pending", "converge PENDING" in r.stdout, r.stdout[-400:])
+        check("perenual-preflight-writes-nothing",
+              d.env_text() == before_env and d.compose_text() == before_compose)
+        check("perenual-preflight-no-restart", not d.odoo_restarted())
+        _no_leak("perenual-preflight", r)
+    finally:
+        d.cleanup()
+
+
+def test_perenual_converges():
+    """The happy path: all three points, and a RECREATE rather than a restart."""
+    d = Droplet(container_perenual=None)
+    try:
+        r = d.run(confirm="PROMOTE", extra_env={"PERENUAL_API_KEY": FAKE_KEY})
+        check("perenual-converge-exit-0", r.returncode == 0, f"rc={r.returncode} {r.stderr[-400:]}")
+        check("perenual-converge-env-line",
+              d.env_text().count(f"PERENUAL_API_KEY={FAKE_KEY}\n") == 1, repr(d.env_text()))
+        check("perenual-converge-single-key",
+              d.env_text().count("PERENUAL_API_KEY=") == 1)
+        check("perenual-converge-compose-passthrough", PASSTHROUGH in d.compose_text(),
+              repr(d.compose_text()))
+        # Indented to match its sibling, i.e. inside the odoo service's
+        # environment block rather than dropped at column 0.
+        check("perenual-converge-compose-indent",
+              "      " + PASSTHROUGH in d.compose_text())
+        check("perenual-converge-secret-not-in-compose", FAKE_KEY not in d.compose_text())
+        check("perenual-converge-compose-backup", len(d.compose_backups()) == 1,
+              str(d.compose_backups()))
+        check("perenual-converge-recreated", d.odoo_recreated())
+        check("perenual-converge-runtime", d.container_perenual() == FAKE_KEY,
+              repr(d.container_perenual()))
+        check("perenual-converge-verified", "odoo process env carries the supplied key" in r.stdout)
+        _no_leak("perenual-converge", r)
+    finally:
+        d.cleanup()
+
+
+def test_perenual_collapses_empty_line():
+    """cloud-init renders `PERENUAL_API_KEY=` (empty) before the key is vaulted.
+    The converge must replace it, not append a second line -- compose reads the
+    LAST occurrence, so a duplicate is a silent split-brain."""
+    d = Droplet(perenual_env="", compose_has_perenual=True, container_perenual="")
+    try:
+        r = d.run(confirm="PROMOTE", extra_env={"PERENUAL_API_KEY": FAKE_KEY})
+        check("perenual-empty-line-exit-0", r.returncode == 0, f"rc={r.returncode} {r.stderr[-400:]}")
+        check("perenual-empty-line-collapsed",
+              d.env_text().count("PERENUAL_API_KEY=") == 1
+              and f"PERENUAL_API_KEY={FAKE_KEY}" in d.env_text(), repr(d.env_text()))
+        # The passthrough was already there: no edit, so no compose backup.
+        check("perenual-empty-line-no-compose-backup", d.compose_backups() == [])
+        check("perenual-empty-line-recreated", d.odoo_recreated())
+        _no_leak("perenual-empty-line", r)
+    finally:
+        d.cleanup()
+
+
+def test_perenual_noop_shortcut_does_not_skip_converge():
+    """THE regression this pairs with: a droplet already ON the target SHA used
+    to exit 0 at the NO-OP shortcut. If the converge is still pending that exit
+    would silently skip the whole activation."""
+    d = Droplet(env_ref=NEW, synced=NEW, marker=NEW)
+    try:
+        r = d.run(target=NEW, confirm="PROMOTE", extra_env={"PERENUAL_API_KEY": FAKE_KEY})
+        check("perenual-noop-not-taken", "NO-OP" not in r.stdout, r.stdout[-400:])
+        check("perenual-noop-exit-0", r.returncode == 0, f"rc={r.returncode} {r.stderr[-400:]}")
+        check("perenual-noop-converged", f"PERENUAL_API_KEY={FAKE_KEY}" in d.env_text()
+              and PASSTHROUGH in d.compose_text())
+        _no_leak("perenual-noop", r)
+
+        # ...and once it IS converged, the shortcut comes back.
+        again = d.run(target=NEW, confirm="PROMOTE", extra_env={"PERENUAL_API_KEY": FAKE_KEY})
+        check("perenual-noop-idempotent", again.returncode == 0 and "NO-OP" in again.stdout,
+              f"rc={again.returncode} {again.stdout[-300:]}")
+        check("perenual-noop-single-key", d.env_text().count("PERENUAL_API_KEY=") == 1)
+        check("perenual-noop-one-compose-backup", len(d.compose_backups()) == 1,
+              str(d.compose_backups()))
+    finally:
+        d.cleanup()
+
+
+def test_perenual_runtime_unverified_fails():
+    """Files converged but the var never reached the PROCESS: that is the exact
+    state that looks activated and enriches nothing. Fail, do not report success."""
+    d = Droplet(env_blackhole=True)
+    try:
+        r = d.run(confirm="PROMOTE", extra_env={"PERENUAL_API_KEY": FAKE_KEY})
+        check("perenual-runtime-exit-10",
+              r.returncode == 10 and "no PERENUAL_API_KEY in its process env" in r.stderr,
+              f"rc={r.returncode} err={r.stderr[-400:]}")
+        # The module promote itself is NOT rolled back -- the migration ran.
+        check("perenual-runtime-says-modules-ok", "module promote itself SUCCEEDED" in r.stderr)
+        _no_leak("perenual-runtime", r)
+    finally:
+        d.cleanup()
+
+
+def test_perenual_wrong_runtime_value_fails():
+    """Something else is interpolating the var (stale container, second env
+    file). Neither value is echoed."""
+    d = Droplet(env_blackhole=True, container_perenual="your-key-here-a-different-one")
+    try:
+        r = d.run(confirm="PROMOTE", extra_env={"PERENUAL_API_KEY": FAKE_KEY})
+        check("perenual-mismatch-exit-10",
+              r.returncode == 10 and "DIFFERENT PERENUAL_API_KEY" in r.stderr,
+              f"rc={r.returncode} err={r.stderr[-400:]}")
+        _no_leak("perenual-mismatch", r)
+        check("perenual-mismatch-other-not-echoed",
+              "your-key-here-a-different-one" not in r.stdout + r.stderr)
     finally:
         d.cleanup()
 
