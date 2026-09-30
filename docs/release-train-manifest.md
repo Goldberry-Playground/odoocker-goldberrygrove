@@ -40,9 +40,9 @@ these out per train and keep it as the train's system of record.
 #### Gate (on QA)
 - [ ] `scripts/qa-test-data-cleanup.sh` run BEFORE recording verdicts
 - [ ] Catalog compat baseline captured BEFORE `qa-module-upgrade.sh`, verified
-      after — `scripts/verify-shop-departments-compat.py` (see
-      RUNBOOK-release-train.md). Required whenever the bundle carries a
-      `product.public.category` migration.
+      after — `scripts/verify-shop-departments-compat.py --storefront-url
+      <pinned storefront>` (see RUNBOOK-release-train.md). Required whenever
+      the bundle carries a `product.public.category` migration.
 - [ ] `test:e2e:gate` green
 - [ ] `@stripe` suite green
 - **Verdict:** PASS / FAIL @ <commit/run link>
