@@ -82,13 +82,24 @@ Option 3 alone is not acceptable as an endpoint. It is the correct posture *toda
 
 ## Decision
 
-**Pending.** See the `request_confirmation` on GOL-2755.
+**Pending.** The board picks on GOL-2755 — pending `ask_user_questions` interaction `ask:GOL-2755:state-lock-backend` (options: probe R2 / go straight to state-only PG / advisory guard only / HCP).
 
 ## Consequences (of the recommended path)
 
 - **Nothing lands inside the Train #2 window (2026-10-05 … 10-08).** PR #790's advisory guard is the control for that window. This ADR's migration is scheduled after teardown at the earliest.
 - **Prerequisite from Josh (blocking the probe):** a Cloudflare **account-scoped** API token with `Workers R2 Storage: Edit`, vaulted as `op://Goldberry Grove - Admin/Grove Infra/r2_*`. The zone-scoped token we hold today cannot create a bucket. The probe itself costs minutes once the token exists.
-- **Migration shape (option 5), per state, 6 times:** `tf-state-inventory` before → server-side copy of the object to R2 → `terraform init -reconfigure -backend-config=backend.hcl` → `terraform state list | wc -l` and `terraform plan` must come back **no changes** → `tf-state-inventory` after, same key, same managed count. Production goes last, behind a fresh backup of the Spaces object.
+- **Migration shape (option 5), per state, 6 times:** `tf-state-inventory.sh --json > before.json` → server-side copy of the object to R2 → `terraform init -reconfigure -backend-config=backend.hcl` → `terraform plan` must come back **no changes** → `tf-state-inventory.sh --compare before.json` must exit **0**. Production goes last, behind a fresh backup of the Spaces object.
+- **Count parity is not the gate; the fingerprint is.** `--compare` fails (exit 4) on a changed `lineage` — the signature of an `init` that started a *fresh* state instead of migrating one, which count parity cannot see — on a serial that went backwards, on a state key that vanished, and on any change to the sorted set of managed resource addresses (a lost resource offset by a gained one nets to the same count and is otherwise invisible until the next apply proposes a create for something that already exists). All four detections were exercised against the live bucket on 2026-09-30.
+- **Pre-migration baseline, captured 2026-09-30 (`--json`, read-only).** Rollback reference; the migration is only correct if these survive it unchanged:
+
+  | state key | lineage | managed | sha256(addresses) |
+  |---|---|---:|---|
+  | `production/terraform.tfstate` | `4faed703…` | 60 | `3665571af21b…` |
+  | `qa-app-platform/terraform.tfstate` | `ea0ab4ce…` | 13 | `312310528540…` |
+  | `cloudflare-edge/terraform.tfstate` | `a5a465fb…` | 8 | `9a9d369d25d9…` |
+  | `assets/terraform.tfstate` | `5b3fe35c…` | 7 | `fbd2ed759b93…` |
+  | `cloudflare-policy/terraform.tfstate` | `1f2c42b3…` | 4 | `058a6fd73c03…` |
+  | `observability/terraform.tfstate` | `a97fd0a9…` | 4 | `d2456deed4e3…` |
 - **Rollback is cheap and total** while the Spaces objects are left in place: revert `backend.hcl` to the Spaces endpoint and `init -reconfigure`. Do not delete anything from `grove-tf-state` until every env has run clean for one full train cycle.
-- **`scripts/tf-state-lock-check.sh probe` retires** the day the replacement backend answers 412 — that is its stated exit condition. `scripts/tf-state-inventory.sh` does not retire; it becomes the before/after parity check for this migration and the standing stale-lock detector.
+- **`scripts/tf-state-lock-check.sh probe` retires** the day the replacement backend answers 412 — that is its stated exit condition. `scripts/tf-state-inventory.sh` does not retire; `--compare` is the before/after parity gate for this migration and the table mode stays the standing stale-lock detector.
 - **Version drift surfaced by the inventory, tracked separately:** states are written by both 1.10.5 and 1.15.6. Terraform refuses to write a state last touched by a newer version, so whichever host performs the migration must be on 1.15.6 or later for all six.
