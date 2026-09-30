@@ -204,6 +204,51 @@ module "obs_droplet" {
 # TODO(live): front OpenObserve ingest with the Cloudflare-WAF Bearer endpoint
 # (spec §1) for the off-droplet GitHub Actions Playwright/Hurl crons whose IPs
 # are dynamic and can't be pinned to a /32 here.
+# ── ADR-010 firewall invariants, enforced at PLAN time ───────────────────────
+# The three allowlist variables below are CODIFIED as variables.tf defaults, but
+# a terraform.tfvars line silently beats a default — and that is not a
+# hypothetical: it is exactly how grove-obs-fw drifted to a lone stale
+# 74.47.41.38/32 on :22/:3034/:5080/:8080 while admitting 167.71.109.184/32 (a
+# rebuilt QA droplet's OLD egress IP, no longer ours) on ingest, with no
+# source_tags at all. For weeks the only defence was a prose warning in three
+# places. The preconditions on digitalocean_firewall.obs turn that warning into
+# a hard plan failure, so the operator cannot apply a firewall that violates
+# ADR-010 no matter how this env is invoked (GOL-2600).
+locals {
+  # ADR-010 decision #2: app-plane collectors are admitted to OpenObserve's
+  # 5080 ingest by DROPLET TAG, never by /32. grove-prod-odoo carries role-odoo
+  # and is where tier-1 synthetics (GOL-2325) and Beyla (GOL-2332) emit from;
+  # without this tag NOTHING observability from prod reaches OpenObserve, and
+  # it fails silently — the collectors come up and emit into a black hole.
+  # Tag matching also survives an immutable rebuild, which a /32 does not:
+  # grove-prod-odoo currently answers to a native public IP, a reserved IP AND
+  # a VPC-private IP, so no single /32 is even the right answer.
+  adr010_required_ingest_tags = ["role-odoo"]
+
+  # Addresses verified against the DO API on 2026-09-29 to no longer be ours.
+  # Re-admitting one is a security regression, so it fails the plan rather than
+  # waiting for the nightly drift watcher (GOL-2564) to notice after the fact.
+  #   167.71.109.184/32 — grove-qa-l3-odoo's egress IP BEFORE its 2026-09-08
+  #                       rebuild; released back to DO's pool since.
+  adr010_retired_source_cidrs = ["167.71.109.184/32"]
+
+  obs_fw_declared_sources = distinct(concat(
+    var.admin_ip_cidrs,
+    var.ingest_source_cidrs,
+    var.automation_ssh_cidrs,
+  ))
+
+  obs_fw_retired_sources_present = [
+    for cidr in local.obs_fw_declared_sources : cidr
+    if contains(local.adr010_retired_source_cidrs, cidr)
+  ]
+
+  obs_fw_missing_ingest_tags = [
+    for tag in local.adr010_required_ingest_tags : tag
+    if !contains(var.ingest_source_tags, tag)
+  ]
+}
+
 resource "digitalocean_firewall" "obs" {
   name        = "grove-obs-fw"
   droplet_ids = [module.obs_droplet.droplet_id]
@@ -306,5 +351,20 @@ resource "digitalocean_firewall" "obs" {
   outbound_rule {
     protocol              = "icmp"
     destination_addresses = ["0.0.0.0/0", "::/0"]
+  }
+
+  # Fail the plan — not the deadline — when an override defeats ADR-010. Both
+  # conditions are evaluated even under `-target=digitalocean_firewall.obs`,
+  # which is how this firewall is reconciled (a targeted apply keeps unrelated
+  # pending user_data drift, i.e. a droplet REPLACE, out of a firewall change).
+  lifecycle {
+    precondition {
+      condition     = length(local.obs_fw_missing_ingest_tags) == 0
+      error_message = "ADR-010: ingest_source_tags is missing ${join(", ", local.obs_fw_missing_ingest_tags)}. Without it grove-obs-fw admits NOTHING from the app plane on 5080 and every prod metric/trace is silently dropped. Remove the ingest_source_tags override from terraform.tfvars so the reviewed variables.tf default applies."
+    }
+    precondition {
+      condition     = length(local.obs_fw_retired_sources_present) == 0
+      error_message = "ADR-010: ${join(", ", local.obs_fw_retired_sources_present)} is no longer a Grove-owned address and must not be allowlisted on grove-obs-fw. Delete the admin_ip_cidrs / ingest_source_cidrs / automation_ssh_cidrs lines from this env's terraform.tfvars so the reviewed variables.tf defaults apply."
+    }
   }
 }
