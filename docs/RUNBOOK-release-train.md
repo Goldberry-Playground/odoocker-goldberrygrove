@@ -17,11 +17,13 @@ zone, reserved IP) survives every teardown, so a rebuild is unattended.
 ## The one command per leg
 
 Both legs are **local, human-run** (see the design decision below for why).
+The Wednesday **promote** leg has no Makefile target and is written up
+separately — see "The Wednesday promote leg" below.
 
 | Leg | When | Command | What it does |
 |-----|------|---------|--------------|
 | **train-up** | Mon | `make train-up` | `= make qa-l3-up`. Idempotent `terraform apply` of the QA env. Droplets re-bootstrap from cloud-init; Odoo reconnects to the surviving Managed PG. **Safe to re-run.** Hard-gated on the publish-webhook secret guard — see below. |
-| **train-teardown** | Thu | `make train-teardown` | `= make qa-l3-teardown` → `scripts/qa-l3-teardown.sh compute`. Destroys the 4 apps + the Odoo droplet + 2 volume attachments (the spend). Typed-confirm gated. **Data/DNS/certs survive**, and so does the exempt **grove-qa-l3-obs** droplet — see below. |
+| **train-teardown** | Thu | `make train-teardown` | `= make qa-l3-teardown` → `scripts/qa-l3-teardown.sh compute`. Destroys the 4 apps + the Odoo droplet + 2 volume attachments (the spend). Typed-confirm gated. **Data/DNS/certs survive.** There is no obs exemption any more — `grove-qa-l3-obs` was retired 2026-09-29 under ADR-010, see below. |
 
 Preview before either (read-only, no spend, no lock-and-leave):
 
@@ -83,6 +85,89 @@ Let's Encrypt issuance budget (ADR-005).
   resolves them into `TF_VAR_*` / `AWS_*` for the wrapped terraform. Values
   never touch shell history.
 - `terraform ~> 1.10`.
+
+---
+
+## The Wednesday promote leg
+
+`train-up` and `train-teardown` each have a Makefile target; **promote does
+not**, and that is deliberate — it is two independent legs against production
+with a human approval between them. Train #1 ran this leg ad hoc, which is how
+both footguns in "Retired caveats" below were found live on a revenue box. It
+is written down here so Train #2 onward runs it the same way twice.
+
+**Who runs it: Josh, from his own shell.** Not an agent, and not CI. The prod
+droplet's DO firewall does not admit the agent plane on port 22 — a TCP connect
+to the reserved IP hangs to timeout (GOL-2282; re-confirmed 2026-09-30). Leg A
+also stops at the `production` GitHub Environment gate, which only a configured
+reviewer can release.
+
+### Pin the bundle first
+
+Pin **explicit 40-char SHAs** for both repos before anything runs — one
+`grove-odoo-modules` SHA and one `grove-sites` SHA — and put them in the train
+issue. Never promote "main at promote time": main moves under you, and an
+out-of-train hotfix during the window will ride along unreviewed (it did during
+the 2026-09-29/30 GOL-2677 hotfix). Pinning is also what releases any PRs held
+back for the next train.
+
+### Order of operations
+
+| # | Step | Command |
+|---|------|---------|
+| 1 | **Gate on QA, at the pinned modules SHA.** `EXPECT_REF` makes the script refuse a QA box that is not actually on the bundle SHA. | `EXPECT_REF=<modules-sha> scripts/qa-module-upgrade.sh grove_headless` |
+| 2 | **e2e LAST.** Dispatch `e2e-nursery.yml` only after step 1 and after the final merge. Read the skip list — a spec that skipped is not a spec that passed. | — |
+| 3 | **Leg B pre-flight** (writes nothing; reports the recorded version and whether the tax migration is due). | `TARGET_REF=<modules-sha> scripts/prod-modules-promote.sh` |
+| 4 | **Leg B promote.** Rewrites `CUSTOM_MODULES_REF` in the droplet's `/etc/grove/.env`, waits for git-sync, runs the migrations, then **proves** the WV tax bound for every company. | `TARGET_REF=<modules-sha> CONFIRM=PROMOTE scripts/prod-modules-promote.sh` |
+| 5 | **Reconcile the committed pin** onto what is now live, or the next droplet rebuild rolls prod back. Drift-only; never touches prod. Merge the PR it opens. | `gh workflow run reconcile-modules-pin.yml -f modules_sha=<modules-sha>` |
+| 6 | **Leg A storefronts.** Then approve the `production` Environment gate, and merge the reconcile PR it opens. | `gh workflow run promote-storefronts.yml -f target_sha=<sites-sha> -f confirm=PROMOTE` |
+
+Steps 3–5 are Leg B (modules) and step 6 is Leg A (storefronts); the script
+header explains why they cannot be one workflow. **Order matters when a
+storefront change depends on a backend change** — promote modules first, so the
+frontend never goes live against an API that does not have its field yet.
+
+### Retired caveats — do NOT carry these forward
+
+Both workarounds that Train #1 needed were fixed on 2026-09-30 and are now
+wrong advice:
+
+- **`PROD_HOST` needs no override.** It defaults to prod's reserved IP, and the
+  script now refuses a Cloudflare-proxied hostname up front instead of hanging
+  on a connect that can never complete (#787).
+- **The first attempt no longer exits 6.** Bulk-sourcing `.env` used to export
+  the *old* `CUSTOM_MODULES_REF` into the payload shell, where compose
+  interpolation prefers it over `--env-file`, so git-sync was recreated on the
+  stale ref and the 300s wait timed out (#783, GOL-2657).
+
+**So run the promote once. A failure now is a real failure** — stop and
+diagnose it. Do not re-run on the assumption that the second attempt sticks;
+that assumption is exactly what hid GOL-2657 for a full train.
+
+### Rollback
+
+Leg A rolls back by re-running `promote-storefronts.yml` at the previous pin.
+
+Leg B does not. The script backs `/etc/grove/.env` up before it writes and
+prints the exact restore commands on both the failure and success paths, but
+**Odoo does not down-migrate**: once the upgrade pass has run, reverting the pin
+returns the *code* and not the *schema*. Treat a Leg B rollback as an incident,
+not a routine undo — which is why step 3's pre-flight tells you whether a
+migration is due before you commit to step 4.
+
+### Verification
+
+- **Step 4 is self-verifying, and its success condition is not "exit 0".**
+  `setup_wv_sales_tax` swallows per-company failures at WARNING, so a partial
+  bind exits 0 and looks fine while some companies mis-charge tax. The script
+  asserts the `WV 6% state sales tax bound for N of N companies` line *and*
+  re-reads the tax from the live DB.
+- **Read the live pin, not the PR badge.** `/etc/grove/.env`'s
+  `CUSTOM_MODULES_REF` is the truth for Leg B; the storefront build fingerprint
+  is the truth for Leg A. A merged reconcile PR only means committed HCL now
+  agrees with what was already live.
+- `scripts/test_prod_modules_promote.py` (27 tests, hermetic — no droplet) is
+  the regression suite for this leg, including the two retired caveats above.
 
 ---
 
