@@ -108,14 +108,21 @@
 # Usage:
 #   TARGET_REF=<40-char sha> scripts/prod-modules-promote.sh            # pre-flight only
 #   TARGET_REF=<40-char sha> CONFIRM=PROMOTE scripts/prod-modules-promote.sh
-#   PROD_HOST=root@<prod-odoo-host> TARGET_REF=<sha> CONFIRM=PROMOTE ...
+#   PROD_HOST=grove-prod-odoo TARGET_REF=<sha> CONFIRM=PROMOTE ...   # ~/.ssh/config alias
 #
 # After a successful run, converge committed HCL onto the now-live pin:
 #   gh workflow run reconcile-modules-pin.yml -f modules_sha=<TARGET_REF>
 ###############################################################################
 set -euo pipefail
 
-PROD_HOST="${PROD_HOST:-root@odoo.gatheringatthegrove.com}"
+# Default = prod's DigitalOcean RESERVED IP (digitalocean_reserved_ip.odoo in
+# infra/terraform/environments/production/odoo.tf) -- stable across droplet
+# replacement, unlike the droplet's own IPv4. NOT the odoo.gatheringatthegrove.com
+# hostname: that record is `proxied = true`, so it resolves to Cloudflare edge
+# IPs that never carry port 22, and ssh hangs until the OS TCP timeout. That
+# old default made every promote from a stock shell hang silently after the
+# banner (2026-09-30, GOL-2677 promote).
+PROD_HOST="${PROD_HOST:-root@174.138.119.171}"
 DEPLOY_DIR="${DEPLOY_DIR:-/etc/grove}"
 FILESTORE_DIR="${FILESTORE_DIR:-/mnt/odoo-filestore}"
 MARKER="${MARKER:-${FILESTORE_DIR}/.grove-modules-rev}"
@@ -142,6 +149,16 @@ WV_TAX_AMOUNT="${WV_TAX_AMOUNT:-6.0}"
 PERENUAL_API_KEY="${PERENUAL_API_KEY:-}"
 
 die() { echo "ERROR: $*" >&2; exit 2; }
+
+# Fail fast on the Cloudflare-proxied hostnames rather than hanging on a TCP
+# connect that can never complete (see the PROD_HOST default above).
+case "${PROD_HOST#*@}" in
+  odoo.gatheringatthegrove.com|*.gatheringatthegrove.com)
+    die "PROD_HOST=${PROD_HOST} is Cloudflare-proxied -- port 22 never reaches the droplet.
+       Use the reserved IP (the default, root@174.138.119.171) or an ~/.ssh/config
+       alias that points at it (e.g. PROD_HOST=grove-prod-odoo)."
+    ;;
+esac
 
 [ -n "${TARGET_REF}" ] || die "TARGET_REF is required (the reviewed grove-odoo-modules SHA to promote).
        usage: TARGET_REF=<40-char sha> [CONFIRM=PROMOTE] $0"
@@ -208,7 +225,7 @@ echo
 # guard") or `bash -n` instead.
 # shellcheck disable=SC2029  # we WANT the local vars expanded here, not on the droplet.
 printf '%s\n' "${PERENUAL_API_KEY}" |
-ssh -o StrictHostKeyChecking=yes "${PROD_HOST}" "
+ssh -o StrictHostKeyChecking=yes -o ConnectTimeout=15 "${PROD_HOST}" "
   set -euo pipefail
   IFS= read -r PERENUAL_WANT || PERENUAL_WANT=''
   PERENUAL_CONVERGE='${PERENUAL_CONVERGE}'

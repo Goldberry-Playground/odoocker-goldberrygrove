@@ -368,6 +368,27 @@ def test_rejects_non_sha():
         d.cleanup()
 
 
+def test_rejects_cloudflare_proxied_host():
+    # The proxied hostname resolves to Cloudflare edge IPs that never carry
+    # port 22; the script must refuse it up front, before any ssh, instead of
+    # hanging on the connect (2026-09-30).
+    d = Droplet()
+    try:
+        for host in ("root@odoo.gatheringatthegrove.com", "odoo.gatheringatthegrove.com"):
+            r = d.run(confirm="PROMOTE", extra_env={"PROD_HOST": host})
+            check(
+                f"rejects-proxied-host[{host}]",
+                r.returncode == 2 and "Cloudflare-proxied" in r.stderr,
+                f"rc={r.returncode} err={r.stderr[:120]}",
+            )
+            check(
+                f"rejects-proxied-host[{host}]-no-write",
+                f"CUSTOM_MODULES_REF={OLD}" in d.env_text(),
+            )
+    finally:
+        d.cleanup()
+
+
 def test_rejects_bad_confirm():
     d = Droplet()
     try:
