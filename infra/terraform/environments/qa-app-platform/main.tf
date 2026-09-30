@@ -440,6 +440,14 @@ resource "digitalocean_droplet" "odoo" {
     email_from    = var.email_from
     from_filter   = var.from_filter
 
+    # Stripe Tax per-tenant cutover flag (GOL-2568). Rendered for all three
+    # tenants so the compose environment: keys always exist; "1" only for the
+    # slugs in var.grove_stripe_tax_tenants, "" (= OFF = Odoo's WV tax line)
+    # otherwise. Empty set default => no behaviour change.
+    grove_stripe_tax_goldberry = contains(var.grove_stripe_tax_tenants, "goldberry") ? "1" : ""
+    grove_stripe_tax_ggg       = contains(var.grove_stripe_tax_tenants, "ggg") ? "1" : ""
+    grove_stripe_tax_nursery   = contains(var.grove_stripe_tax_tenants, "nursery") ? "1" : ""
+
     # Shippo fulfillment (GOL-988 shipping-notification leg). Both default-empty
     # => label purchase raises UserError and the webhook fails closed.
     shippo_api_key             = var.shippo_api_key

@@ -144,6 +144,23 @@ write_files:
       GROVE_PUBLISH_WEBHOOK_URL_NURSERY=https://nursery.${qa_zone}/api/webhooks/publish
       GROVE_PUBLISH_WEBHOOK_SECRET_NURSERY=${grove_publish_webhook_secret_nursery}
 
+      # Stripe Tax per-tenant cutover flag (GOL-2568, Train #2 GOL-2584).
+      # grove_headless controllers/main.py _stripe_tax_enabled(order) reads
+      # GROVE_STRIPE_TAX_{TENANT} from os.environ -- so these MUST also be
+      # listed in the odoo service's `environment:` block in
+      # docker-compose.qa.yml (the /.env mount only feeds odoo.conf, NOT
+      # os.environ; same rule as the stripe_test_* / GROVE_PUBLISH_* keys).
+      # Truthy = 1/true/yes/on; unset, empty, or an unresolvable tenant is OFF,
+      # and OFF keeps today's Odoo-computed WV tax line byte for byte. All
+      # three keys are written unconditionally so the key always exists on the
+      # box and flipping a tenant never needs a compose edit. Values come from
+      # var.grove_stripe_tax_tenants (empty by default => all three OFF).
+      # Rollback is this flag going back to empty. See
+      # grove-odoo-modules docs/stripe-tax-cutover.md.
+      GROVE_STRIPE_TAX_GOLDBERRY=${grove_stripe_tax_goldberry}
+      GROVE_STRIPE_TAX_GGG=${grove_stripe_tax_ggg}
+      GROVE_STRIPE_TAX_NURSERY=${grove_stripe_tax_nursery}
+
       # Mailgun SMTP - transactional order/shipping notifications (GOL-248/
       # GOL-995). odoo.conf's SMTP group reads SMTP_SERVER/PORT/SSL/USER/
       # PASSWORD + EMAIL_FROM/FROM_FILTER; entrypoint.sh + odoorc.sh substitute
