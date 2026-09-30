@@ -34,16 +34,48 @@
 #   bash scripts/tf-state-lock-check.sh probe                  # is enforcement fixed yet?
 #   bash scripts/tf-state-lock-check.sh guard <state-key>      # refuse if a lock is held
 #
-# Both modes need AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY for grove-tf-state
-# (i.e. run under `op run --env-file=<env>/.env.op`).
+# Both modes need AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY for the bucket under
+# test (i.e. run under `op run --env-file=<env>/.env.op`).
 #
-# `probe` is the regression test for the upstream fix: when DO ships conditional
-# -write support (or state moves to a locking backend), `probe` starts passing
-# and the guard can be retired. Re-run it before each release-train window.
+# `probe` is BACKEND-AGNOSTIC (GOL-2760). It judges whichever S3-compatible
+# endpoint you point it at, so it doubles as the acceptance test for a candidate
+# replacement backend -- you never have to believe a compatibility matrix:
+#
+#   # the incumbent (DO Spaces, nyc3) -- known FAIL, 200 instead of 412
+#   op run --env-file=infra/terraform/environments/production/.env.op -- \
+#     bash scripts/tf-state-lock-check.sh probe
+#
+#   # a candidate Cloudflare R2 bucket (ADR-011 option 5, GOL-2760).
+#   # R2 issues its own S3-compatible key pair; SigV4 region must be `auto`.
+#   AWS_ACCESS_KEY_ID=$(op read 'op://Goldberry Grove - Admin/Grove Infra/r2_access_key_id') \
+#   AWS_SECRET_ACCESS_KEY=$(op read 'op://Goldberry Grove - Admin/Grove Infra/r2_secret_access_key') \
+#   GROVE_S3_HOST=<account-id>.r2.cloudflarestorage.com \
+#   GROVE_S3_REGION=auto \
+#   GROVE_TF_STATE_BUCKET=grove-tf-state-probe \
+#     bash scripts/tf-state-lock-check.sh probe
+#
+#   # a MinIO / AWS S3 candidate -- same shape, different host/region
+#
+# ENV
+#   GROVE_TF_STATE_BUCKET   bucket to probe/guard (default: grove-tf-state)
+#   GROVE_S3_HOST           S3 endpoint host     (default: nyc3.digitaloceanspaces.com)
+#   GROVE_SPACES_HOST       deprecated alias for GROVE_S3_HOST, still honoured
+#   GROVE_S3_REGION         SigV4 region scope   (default: us-east-1; R2 wants `auto`)
+#
+# `probe` is also the regression test for the incumbent: when DO ships
+# conditional-write support (or state moves to a locking backend), `probe`
+# starts passing and the guard can be retired. Re-run it before each
+# release-train window, and against any candidate backend before migrating.
 set -euo pipefail
 
 BUCKET="${GROVE_TF_STATE_BUCKET:-grove-tf-state}"
-ENDPOINT_HOST="${GROVE_SPACES_HOST:-nyc3.digitaloceanspaces.com}"
+# GROVE_S3_HOST is the canonical name (matches scripts/tf-state-inventory.sh);
+# GROVE_SPACES_HOST is the pre-GOL-2760 name and stays honoured so existing
+# callers and runbooks do not silently fall back to the Spaces default.
+ENDPOINT_HOST="${GROVE_S3_HOST:-${GROVE_SPACES_HOST:-nyc3.digitaloceanspaces.com}}"
+# SigV4 credential-scope region. Spaces and AWS want a real region; R2 wants
+# `auto` and rejects the signature otherwise.
+S3_REGION="${GROVE_S3_REGION:-us-east-1}"
 MODE="${1:-}"
 
 if [ -z "${AWS_ACCESS_KEY_ID:-}" ] || [ -z "${AWS_SECRET_ACCESS_KEY:-}" ]; then
@@ -54,10 +86,10 @@ fi
 
 # Minimal SigV4 S3 client (stdlib only -- no awscli/boto on the ops hosts).
 _s3() { # _s3 <METHOD> <key> [body] [cond]
-  GROVE_S3_HOST="$ENDPOINT_HOST" python3 - "$@" <<'PY'
+  GROVE_S3_HOST="$ENDPOINT_HOST" GROVE_S3_REGION="$S3_REGION" python3 - "$@" <<'PY'
 import hashlib, hmac, os, sys, datetime, urllib.request, urllib.error
 AK=os.environ["AWS_ACCESS_KEY_ID"]; SK=os.environ["AWS_SECRET_ACCESS_KEY"]
-HOST=os.environ["GROVE_S3_HOST"]; REGION="us-east-1"; SERVICE="s3"
+HOST=os.environ["GROVE_S3_HOST"]; REGION=os.environ["GROVE_S3_REGION"]; SERVICE="s3"
 method, key = sys.argv[1], sys.argv[2]
 body = sys.argv[3].encode() if len(sys.argv) > 3 else b""
 cond = len(sys.argv) > 4 and sys.argv[4] == "cond"
@@ -87,21 +119,42 @@ PY
 case "$MODE" in
   probe)
     PROBE_KEY="$BUCKET/_locktest/lock-enforcement-probe.json"
-    echo "==> Probing conditional-PUT enforcement on $ENDPOINT_HOST/$BUCKET"
+    # Self-describing evidence: a pasted probe result has to say WHICH backend
+    # it judged and WHEN, or it becomes the next unverifiable "verified DO
+    # Spaces enforces it" comment (GOL-2584).
+    echo "==> Probing conditional-PUT enforcement"
+    echo "    endpoint : https://$ENDPOINT_HOST"
+    echo "    bucket   : $BUCKET"
+    echo "    region   : $S3_REGION  (SigV4 scope)"
+    echo "    measured : $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
     _s3 DELETE "$PROBE_KEY" >/dev/null 2>&1 || true
-    C1="$(_s3 PUT "$PROBE_KEY" first cond | head -1)"
-    C2="$(_s3 PUT "$PROBE_KEY" second cond | head -1)"
+    # Capture whole responses first: piping straight into `head -1` can SIGPIPE
+    # the python writer, and `set -o pipefail` would turn that into an abort.
+    R1="$(_s3 PUT "$PROBE_KEY" first cond)"; C1="$(printf '%s' "$R1" | head -1)"
+    R2="$(_s3 PUT "$PROBE_KEY" second cond)"; C2="$(printf '%s' "$R2" | head -1)"
     _s3 DELETE "$PROBE_KEY" >/dev/null 2>&1 || true
     echo "    first  conditional PUT : HTTP $C1  (expect 200)"
     echo "    second conditional PUT : HTTP $C2  (expect 412)"
+    if [ "$C1" != "200" ] && [ "$C1" != "201" ]; then
+      # Never read a 403/404/501 on the FIRST put as "enforcement works" or as
+      # "enforcement is broken" -- it means we never got to measure anything.
+      echo "INCONCLUSIVE: the first conditional PUT returned HTTP $C1, so this run"
+      echo "      measured nothing about locking. Check the credentials, the bucket"
+      echo "      name, and GROVE_S3_REGION (R2 needs \`auto\`). Response body:"
+      printf '%s\n' "$R1" | tail -n +2 | sed 's/^/        /'
+      exit 3
+    fi
     if [ "$C2" = "412" ]; then
-      echo "PASS: the backend enforces If-None-Match -- \`use_lockfile\` gives real"
-      echo "      mutual exclusion. The advisory guard can be retired (GOL-2584)."
+      echo "PASS: this backend enforces If-None-Match -- \`use_lockfile\` gives real"
+      echo "      mutual exclusion here. On the live state backend that means the"
+      echo "      advisory guard can be retired (GOL-2584); on a candidate backend"
+      echo "      it clears acceptance #1 for re-homing state (GOL-2755/GOL-2760)."
       exit 0
     fi
     echo "FAIL: second conditional PUT returned $C2, not 412. \`use_lockfile = true\`"
     echo "      is a NO-OP on this backend: concurrent applies are NOT serialized"
-    echo "      and can corrupt state. Do not run two applies against one state key."
+    echo "      and can corrupt state. Do not run two applies against one state key,"
+    echo "      and do not migrate state here (GOL-2755)."
     exit 1
     ;;
 
@@ -127,9 +180,9 @@ case "$MODE" in
     printf '%s\n' "$OUT" | tail -n +2 | sed 's/^/       /'
     cat >&2 <<'MSG'
 !!
-!! Terraform will NOT stop you: `use_lockfile` does not work on DO Spaces
-!! (GOL-2584), so this run would silently "acquire" the same lock and two
-!! concurrent applies can corrupt the state file.
+!! Terraform will NOT stop you: `use_lockfile` is a no-op on this backend
+!! (GOL-2584 -- re-run `probe` to confirm), so this run would silently
+!! "acquire" the same lock and two concurrent applies can corrupt the state.
 !!
 !! If that lock is stale (the run that wrote it crashed), delete the .tflock
 !! object from the grove-tf-state bucket and re-run. Otherwise WAIT for the
@@ -146,6 +199,7 @@ MSG
 
   *)
     echo "usage: $0 {probe|guard <state-key>}" >&2
+    echo "  probe exit codes: 0 enforced (412) | 1 NOT enforced | 3 inconclusive" >&2
     exit 2
     ;;
 esac
