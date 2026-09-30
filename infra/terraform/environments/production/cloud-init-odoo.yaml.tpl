@@ -179,6 +179,13 @@ write_files:
       # the TF-var validation forbids whitespace and shell metacharacters so
       # bash-sourcing this file under set -euo pipefail stays safe.
       PERENUAL_API_KEY=${perenual_api_key}
+      # Guides publish webhook sender (grove_headless models/grove_publish_event.py,
+      # GOL-985/986): "Publish Guide to Storefront" POSTs an HMAC-signed event to
+      # the tenant's /api/webhooks/publish. Nursery only for now (the tenant whose
+      # guides are live). SECRET must byte-match the nursery app's
+      # GROVE_PUBLISH_WEBHOOK_SECRET (apps.tf) -- both are grove_revalidate_secret.
+      GROVE_PUBLISH_WEBHOOK_URL_NURSERY=https://atthegrovenursery.com/api/webhooks/publish
+      GROVE_PUBLISH_WEBHOOK_SECRET_NURSERY=${grove_revalidate_secret}
       # Mailgun SMTP for Odoo transactional email (GOL-988) -- order-confirmation
       # + shipping-notification send. odoorc.sh substitutes these into the SMTP
       # group of /etc/odoo/odoo.conf (same image + path QA proved live under

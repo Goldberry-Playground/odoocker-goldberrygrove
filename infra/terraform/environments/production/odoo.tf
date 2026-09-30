@@ -229,7 +229,8 @@ resource "digitalocean_droplet" "odoo" {
     # => jobs stay queued (never faked done) and the cron is a no-op.
     # user_data is in ignore_changes (below), so landing this does NOT touch
     # the running droplet; activation rides Josh's -target'ed rebuild.
-    perenual_api_key = var.perenual_api_key
+    perenual_api_key        = var.perenual_api_key
+    grove_revalidate_secret = var.grove_revalidate_secret
     # Mailgun SMTP for Odoo transactional email (GOL-988). odoorc.sh substitutes
     # these into the SMTP group of /etc/odoo/odoo.conf. Empty smtp_password =>
     # SMTP auth inert (no send), so this scaffold is a safe no-op until the

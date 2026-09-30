@@ -174,6 +174,11 @@ services:
       # cloud-init writes from the TF var. Default-empty => the enrich cron
       # no-ops and jobs stay queued rather than draining into a fake `done`.
       PERENUAL_API_KEY: ${PERENUAL_API_KEY:-}
+      # Guides publish webhook (GOL-985/986) -- read from os.environ by
+      # grove_publish_event.py, so it must be passed here like the keys above.
+      # Empty => "Publish Guide to Storefront" raises "not configured".
+      GROVE_PUBLISH_WEBHOOK_URL_NURSERY: ${GROVE_PUBLISH_WEBHOOK_URL_NURSERY:-}
+      GROVE_PUBLISH_WEBHOOK_SECRET_NURSERY: ${GROVE_PUBLISH_WEBHOOK_SECRET_NURSERY:-}
     # GOL-746: gate the Odoo start on git-sync's FIRST clone. depends_on
     # (service_started) only guarantees the sidecar CONTAINER started, not
     # that /workspace/current is populated. On the 2026-07-22 droplet replace
