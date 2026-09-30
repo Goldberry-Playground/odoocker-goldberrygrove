@@ -171,3 +171,77 @@ GOL-2326.
   calling terraform. That typed-confirm IS the safe dry-run.
 - **reminder:** `gh workflow run release-train-reminder.yml -f leg=up` (or
   `down`) posts a test embed to the ops Discord channel immediately.
+
+---
+
+## Gate: shop-departments backward compatibility (Train #2, GOL-2584 / GOL-2744)
+
+grove-odoo-modules **#299** restructures `product.public.category` in place —
+backfills `grove_slug`, renames one category, reparents the orchard categories
+under a new "Orchard & food forest" department root and creates coming-soon
+children. The **storefront shipping in Train #2 predates all of that**: it
+browses with five hardcoded slugs in
+`grove-sites/apps/nursery/data/categories.ts` and matches them against
+`product.categories[].slug`. So the backend can silently unhook every pill on
+`/shop` while every check stays green. The storefront half (GOL-2745, #892)
+rides Train #3.
+
+`scripts/verify-shop-departments-compat.py` turns that into a before/after gate
+against the **public** API — no Odoo login, no 1Password, no SSH, so it runs in
+CI, on the agent plane, or from a laptop mid-window.
+
+```bash
+# 1. BEFORE `scripts/qa-module-upgrade.sh grove_headless`
+python3 scripts/verify-shop-departments-compat.py snapshot \
+  --base-url https://odoo.qa.gatheringatthegrove.com \
+  --out /tmp/qa-cats-before.json
+
+# 2. run the upgrade as usual (RUNBOOK-qa-module-upgrade.md)
+
+# 3. AFTER. The Guilds rename is the ONE intentional slug change; declare it.
+python3 scripts/verify-shop-departments-compat.py verify \
+  --base-url https://odoo.qa.gatheringatthegrove.com \
+  --baseline /tmp/qa-cats-before.json \
+  --allow-slug-change food-forest-packages=guilds
+```
+
+Exit `0` = compatible, `2` = regression (each problem printed), `1` =
+transport/usage. It asserts: no pre-upgrade category disappears; every slug
+still resolves to the same category unless declared; each category holds the
+same product ids; each of the five hardcoded pills returns the same count
+through the server-side `?cat=` filter; and one PDP per category still answers
+200 with its own id.
+
+**Hold rule.** A non-zero exit means #299 comes OUT of the bundle — pin
+`custom_modules_ref` to the commit before it (`dd8bf32`, the #298 merge) rather
+than debugging inside the window.
+
+### What is already known, without QA (verified against live prod 2026-09-30)
+
+Prod carries exactly seven public categories, ids 1-7, and their names slugify
+to exactly the five slugs the storefront hardcodes:
+
+| id | name | slugify(name) | published | after #299 |
+|----|------|---------------|-----------|------------|
+| 1 | Fruit Trees | `fruit-trees` | 10 | unchanged slug, reparented |
+| 2 | Native | `native` | 5 | unchanged slug, reparented |
+| 3 | Nut Trees | `nut-trees` | 1 | unchanged slug, reparented |
+| 4 | Berry & Nut Shrubs | `berry-nut-shrubs` | 1 | unchanged slug, reparented |
+| 5 | Fruiting Vines | `fruiting-vines` | 0 | unchanged slug, reparented |
+| 6 | Food Forest Packages | `food-forest-packages` | 5 | **renamed Guilds, re-slugged `guilds`** |
+| 7 | Mycoforestry | `mycoforestry` | 0 | unchanged slug, becomes a coming-soon department |
+
+Reparenting is invisible to the storefront because `?cat=` resolves an **exact**
+slug (non-recursive) and the pills count client-side off `product.categories`,
+which the migration never touches. No category is ever unlinked, so all seven
+ids survive.
+
+**The one real break is category 6.** `_backfill_public_slugs` preserves its
+URL as `food-forest-packages`, then step 2 immediately overwrites it with
+`guilds`. `/shop?cat=food-forest-packages` serves 5 products on prod today and
+will serve 0 after promote. Nothing in grove-sites links it (the pills are the
+other five), so the blast radius is bookmarks and anything indexed — accepted
+as an intentional, declared change, not a defect. If Josh wants it preserved,
+the cheap fixes are (a) leave `grove_slug = food-forest-packages` and resolve
+the Guilds collection by `grove_node_kind` instead of slug, or (b) a Cloudflare
+redirect rule on the query string.
