@@ -153,9 +153,20 @@ case "$cmd" in
       fi
       exit 0
     fi
-    # up -d --force-recreate --no-deps custom-modules-sync => adopt the .env ref
+    # up -d --force-recreate --no-deps custom-modules-sync => git-sync adopts the
+    # ref compose interpolates for GITSYNC_REF=${CUSTOM_MODULES_REF}. Real
+    # `docker compose` prefers a value found in its process ENVIRONMENT over the
+    # same key in --env-file (GOL-2657), and this stub is a subprocess of the
+    # payload shell, so honor an exported CUSTOM_MODULES_REF exactly as compose
+    # would. If the payload leaked the OLD ref via `set -a; . .env` before the
+    # rewrite, git-sync stays stale here and the caller's wait loop times out
+    # (exit 6) -- reproducing the real first-promote failure.
     if [ -f "$S/sync_fails" ]; then exit 0; fi
-    sed -n 's/^CUSTOM_MODULES_REF=//p' "$S/envfile" | tail -1 | tr -d '\r' > "$S/synced"
+    if [ -n "${CUSTOM_MODULES_REF:-}" ]; then
+      printf '%s\n' "$CUSTOM_MODULES_REF" > "$S/synced"
+    else
+      sed -n 's/^CUSTOM_MODULES_REF=//p' "$S/envfile" | tail -1 | tr -d '\r' > "$S/synced"
+    fi
     exit 0
     ;;
   restart)
@@ -630,6 +641,58 @@ def test_sync_timeout_leaves_odoo_alone():
         )
         check("sync-timeout-no-restart", not d.odoo_restarted())
         check("sync-timeout-offers-rollback", "Roll back the env file" in r.stderr)
+    finally:
+        d.cleanup()
+
+
+def test_promote_does_not_leak_stale_ref_to_gitsync():
+    """GOL-2657: the payload must not `set -a; . .env` the whole deploy env
+    before rewriting it. Sourcing exports the OLD CUSTOM_MODULES_REF, and docker
+    compose interpolation prefers the shell environment over --env-file, so the
+    `dc up --force-recreate custom-modules-sync` recreates git-sync on the stale
+    ref -- the wait loop then times out (exit 6) on the first promote. The stub
+    docker honors an exported ref exactly as real compose does, so a leak makes
+    git-sync stay on OLD and this test fails."""
+    d = Droplet(env_ref=OLD, synced=OLD, marker=OLD)
+    try:
+        r = d.run(confirm="PROMOTE")
+        synced = open(os.path.join(d.state, "synced")).read().strip()
+        check("no-stale-ref-leak-exit-0", r.returncode == 0,
+              f"rc={r.returncode} err={r.stderr[-400:]}")
+        check("no-stale-ref-leak-gitsync-on-target", synced == NEW,
+              f"git-sync landed on {synced!r}, expected {NEW!r} -- stale ref leaked")
+        check("no-stale-ref-leak-marker-advanced",
+              open(d.marker_path).read().strip() == NEW)
+    finally:
+        d.cleanup()
+
+
+# An ssh stub that captures the rendered remote payload instead of running it,
+# so a test can assert on the exact text that would reach the droplet.
+CAPTURE_SSH = '#!/usr/bin/env bash\nprintf "%s" "${@: -1}" > "$FAKE_STATE/payload"\n'
+
+
+def test_payload_does_not_bulk_source_env():
+    """GOL-2657 (static): render the remote payload and assert it never bulk
+    exports the deploy env (`set -a; . .env`). That bulk source is what leaks
+    every var the script later rewrites (CUSTOM_MODULES_REF, PERENUAL_API_KEY)
+    into the shell, where compose interpolation prefers it over --env-file. Only
+    the one var actually needed (DB_NAME) may be read, via a targeted sed."""
+    d = Droplet()
+    try:
+        Droplet._write(os.path.join(d.bin, "ssh"), CAPTURE_SSH)
+        os.chmod(os.path.join(d.bin, "ssh"), 0o755)
+        d.run(confirm="PROMOTE")
+        payload = open(os.path.join(d.state, "payload")).read()
+        # Assert on executable statements only -- the fix's own comment explains
+        # the `set -a` trap in prose, which is not itself a bulk source.
+        active = "\n".join(
+            ln for ln in payload.splitlines() if not ln.lstrip().startswith("#")
+        )
+        check("payload-no-bulk-source", "set -a" not in active,
+              "payload still bulk-sources .env (set -a) before the rewrite")
+        check("payload-extracts-db-name-targeted", "s/^DB_NAME=" in active,
+              "DB_NAME is no longer read via a targeted sed")
     finally:
         d.cleanup()
 
