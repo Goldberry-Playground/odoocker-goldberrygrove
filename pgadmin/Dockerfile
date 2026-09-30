@@ -91,25 +91,46 @@ RUN apk update && apk upgrade --no-cache && \
 # we install via the system pip targeting the venv's site-packages
 # directory directly.
 ARG PGADMIN_VENV_SITE_PACKAGES=/venv/lib/python3.14/site-packages
+#
+# GOL-2846: the dist-info removals below MUST be version-globbed, never pinned
+# to the version upstream happened to bundle when the entry was added. Trivy
+# reports a package as "installed" purely from the presence of a
+# `<name>-<ver>.dist-info/METADATA`, so an orphaned dist-info whose name we no
+# longer match survives the rm, outlives the pip install, and keeps getting
+# reported at the OLD version forever — even though the patched version is the
+# one actually importable on disk. That is exactly how GOL-2846 red'd: upstream
+# pgadmin 9.16 bundles urllib3 2.7.0 / PyJWT 2.13.0, the rm was still keyed to
+# 2.6.3 / 2.12.1, so `urllib3-2.7.0.dist-info` and `pyjwt-2.13.0.dist-info` were
+# left behind and Trivy flagged 8 HIGH/CRITICAL against versions this image had
+# already replaced. Raising the pin floor CANNOT fix that — only the glob can.
+# `cryptography-*.dist-info` (unquoted, so the shell expands it) was already
+# doing this correctly; every entry now follows suit. A non-matching unquoted
+# glob expands to the literal, which `rm -rf` ignores, so this stays idempotent.
+# PyJWT and Pillow are the two whose dist-info directory name has varied in
+# case across upstream builds (`pyjwt-`/`PyJWT-`, `pillow-`/`Pillow-`) and globs
+# are case-sensitive, so both spellings are listed for each. The rest are
+# canonically lower-case on PyPI.
 RUN rm -rf "${PGADMIN_VENV_SITE_PACKAGES}/urllib3" \
-           "${PGADMIN_VENV_SITE_PACKAGES}/urllib3-2.6.3.dist-info" \
+           ${PGADMIN_VENV_SITE_PACKAGES}/urllib3-*.dist-info \
            "${PGADMIN_VENV_SITE_PACKAGES}/cryptography" \
            ${PGADMIN_VENV_SITE_PACKAGES}/cryptography-*.dist-info \
            "${PGADMIN_VENV_SITE_PACKAGES}/jwt" \
-           "${PGADMIN_VENV_SITE_PACKAGES}/pyjwt-2.12.1.dist-info" \
+           ${PGADMIN_VENV_SITE_PACKAGES}/pyjwt-*.dist-info \
+           ${PGADMIN_VENV_SITE_PACKAGES}/PyJWT-*.dist-info \
            "${PGADMIN_VENV_SITE_PACKAGES}/socketio" \
-           "${PGADMIN_VENV_SITE_PACKAGES}/python_socketio-5.16.1.dist-info" \
+           ${PGADMIN_VENV_SITE_PACKAGES}/python_socketio-*.dist-info \
            "${PGADMIN_VENV_SITE_PACKAGES}/engineio" \
-           "${PGADMIN_VENV_SITE_PACKAGES}/python_engineio-4.13.1.dist-info" \
+           ${PGADMIN_VENV_SITE_PACKAGES}/python_engineio-*.dist-info \
            "${PGADMIN_VENV_SITE_PACKAGES}/PIL" \
            "${PGADMIN_VENV_SITE_PACKAGES}/pillow.libs" \
-           "${PGADMIN_VENV_SITE_PACKAGES}/pillow-12.2.0.dist-info" \
+           ${PGADMIN_VENV_SITE_PACKAGES}/pillow-*.dist-info \
+           ${PGADMIN_VENV_SITE_PACKAGES}/Pillow-*.dist-info \
            "${PGADMIN_VENV_SITE_PACKAGES}/pyasn1" \
-           "${PGADMIN_VENV_SITE_PACKAGES}/pyasn1-0.6.3.dist-info" \
+           ${PGADMIN_VENV_SITE_PACKAGES}/pyasn1-*.dist-info \
            "${PGADMIN_VENV_SITE_PACKAGES}/httplib2" \
-           "${PGADMIN_VENV_SITE_PACKAGES}/httplib2-0.31.2.dist-info" \
+           ${PGADMIN_VENV_SITE_PACKAGES}/httplib2-*.dist-info \
            "${PGADMIN_VENV_SITE_PACKAGES}/sqlparse" \
-           "${PGADMIN_VENV_SITE_PACKAGES}/sqlparse-0.5.5.dist-info" && \
+           ${PGADMIN_VENV_SITE_PACKAGES}/sqlparse-*.dist-info && \
     /usr/local/bin/pip3 install \
         --no-cache-dir \
         --target="${PGADMIN_VENV_SITE_PACKAGES}" \
