@@ -214,9 +214,16 @@ ssh -o StrictHostKeyChecking=yes "${PROD_HOST}" "
   PERENUAL_CONVERGE='${PERENUAL_CONVERGE}'
   cd '${DEPLOY_DIR}'
   # DB_NAME lives in the deploy env file; the tax reads below need it to pick
-  # the database. Same \`set -a; . ./.env\` shape scripts/qa-module-upgrade.sh
-  # already uses against this identical file.
-  set -a; . '${DEPLOY_DIR}/.env'; set +a
+  # the database. Extract ONLY that one var -- do NOT \`set -a; . .env\` the whole
+  # file (GOL-2657). Sourcing exports the OLD CUSTOM_MODULES_REF (and
+  # PERENUAL_API_KEY) into this shell, and docker compose interpolation prefers a
+  # variable found in the shell environment over the same key in --env-file. So
+  # the \`dc up --force-recreate custom-modules-sync\` below (which resolves
+  # GITSYNC_REF=\\\${CUSTOM_MODULES_REF}) would recreate git-sync on the STALE ref
+  # even after we rewrite .env to TARGET -> git-sync never advances -> exit 6.
+  # A targeted read leaks nothing compose consumes; --env-file remains the sole
+  # source of the rewritten keys.
+  DB_NAME=\"\$(sed -n 's/^DB_NAME=//p' '${DEPLOY_DIR}/.env' | tail -1 | tr -d '\r')\"
   dc() { docker compose --env-file '${DEPLOY_DIR}/.env' \"\$@\"; }
 
   # Run a python snippet inside the odoo container against the live DB.
