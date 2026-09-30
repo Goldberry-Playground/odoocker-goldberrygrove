@@ -127,6 +127,12 @@ op run --env-file="$ENV_FILE" -- bash -c '
   # .terraform/ cache from an older generator (e.g. pre-force_path_style) must
   # not abort with "Backend configuration changed". Same bucket/key, so no
   # state migration is ever wanted here.
+  # GOL-2584: `use_lockfile = true` is a NO-OP on DO Spaces (Spaces ignores
+  # If-None-Match, so every concurrent run "acquires" the same lock). That is
+  # how two QA teardowns both ran to completion on 2026-09-29, the second
+  # dying only on "Error releasing the state lock ... 404". Terraform will not
+  # stop a second destroy, so refuse here. Override: TF_LOCK_GUARD_OFF=1.
+  bash "'"$REPO_ROOT"'/scripts/tf-state-lock-check.sh" guard qa-app-platform/terraform.tfstate
   terraform -chdir="'"$TF_DIR"'" init -reconfigure -backend-config=backend.hcl -input=false >/dev/null
   # -auto-approve is safe here: this script already required the typed
   # destroy-qa-l3-<mode> confirmation above.
