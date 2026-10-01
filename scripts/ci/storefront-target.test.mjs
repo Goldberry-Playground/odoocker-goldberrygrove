@@ -7,7 +7,7 @@
 // commit instead, and an explicit image-less SHA must fail before the gate.
 import assert from "node:assert/strict";
 import {
-  appCodeHits, pickNewestBuilt, resolveTarget, renderSummary, makeGithub, makeGhcr, isFullSha,
+  appCodeHits, pickNewestBuilt, mdCell, resolveTarget, renderSummary, makeGithub, makeGhcr, isFullSha,
 } from "./storefront-target.mjs";
 
 const HEAD = "99d4d59f".padEnd(40, "0");  // grove-sites #933, docs/runbooks + scripts/ci
@@ -47,6 +47,9 @@ assert.deepEqual(appCodeHits(["pnpm-lock.yaml", ".github/workflows/docker.yml"])
 assert.deepEqual(appCodeHits([".github/workflows/ci.yml"]), [], "only docker.yml itself triggers a build");
 assert.equal(pickNewestBuilt([HEAD, BUILT, OLDER], [OLDER, BUILT]), BUILT, "newest by main order, not run order");
 assert.equal(pickNewestBuilt([HEAD], [BUILT]), null);
+assert.equal(mdCell("a | b"), "a \\| b");
+assert.equal(mdCell("trailing \\|x"), "trailing \\\\\\|x", "backslash escaped before pipe (CodeQL #575)");
+assert.equal(mdCell("one\ntwo"), "one two");
 
 // ── the incident: blank target, CI-only HEAD -> resolves to BUILT ───────────
 {

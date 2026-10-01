@@ -227,6 +227,11 @@ export async function resolveTarget({ inputSha, github, ghcr }) {
   return { ok: errors.length === 0, sha, source, head, compareStatus, images, skipped, errors, warnings };
 }
 
+// Commit subjects are third-party text going into a markdown table cell:
+// escape backslashes FIRST (else a trailing `\` would eat our `\|`), then
+// pipes, and flatten any newline so the row can't be split.
+export const mdCell = (s) => String(s).replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/[\r\n]+/g, " ");
+
 export function renderSummary(r) {
   const short = (s) => (s ? s.slice(0, 8) : "(none)");
   const out = ["## Build resolution", ""];
@@ -248,7 +253,7 @@ export function renderSummary(r) {
     out.push("| Commit | Subject | Touches app code? |", "|---|---|---|");
     for (const c of r.skipped) {
       const app = c.appHits === null ? "not checked (range too long)" : c.appHits.length ? `**YES** (\`${c.appHits[0]}\`${c.appHits.length > 1 ? ` +${c.appHits.length - 1}` : ""})` : "no";
-      out.push(`| [\`${short(c.sha)}\`](https://github.com/${SITES_REPO}/commit/${c.sha}) | ${c.subject.replace(/\|/g, "\\|")} | ${app} |`);
+      out.push(`| [\`${short(c.sha)}\`](https://github.com/${SITES_REPO}/commit/${c.sha}) | ${mdCell(c.subject)} | ${app} |`);
     }
   }
   for (const w of r.warnings) out.push("", `> [!WARNING]\n> ${w}`);
