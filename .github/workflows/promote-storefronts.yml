@@ -41,7 +41,7 @@ on:
   workflow_dispatch:
     inputs:
       target_sha:
-        description: "grove-sites commit SHA to promote (40-char hex). Leave blank to use grove-sites main HEAD."
+        description: "grove-sites commit SHA to promote (40-char hex). Leave blank to use the newest grove-sites main commit whose Docker — Frontends build succeeded."
         required: false
         type: string
       confirm:
@@ -76,27 +76,28 @@ jobs:
             exit 1
           fi
 
-      - name: Resolve + validate target SHA
+      - name: Checkout (resolver script + current pin for the summary)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        timeout-minutes: 2
+
+      # Resolve AND verify before the approval gate. On 2026-09-30 (run
+      # 36787550565) a blank target_sha resolved to grove-sites main HEAD, a
+      # CI-only commit that docker.yml's path filter never built -- the gate was
+      # approved against a SHA with no images and terraform 404'd on all four
+      # apps. Blank now means "newest main commit with a GREEN docker.yml run",
+      # and every run (blank or explicit) must find all four
+      # ghcr.io/goldberry-playground/grove-*:<sha> tags or it fails here, before
+      # anyone is asked to approve. The step summary lists the main commits
+      # being skipped and flags any that touch app code. Logic + tests live in
+      # scripts/ci/storefront-target{,.test}.mjs; run it locally as a dry run:
+      #   GH_TOKEN="$(gh auth token)" node scripts/ci/storefront-target.mjs
+      - name: Resolve + verify target build (images must exist)
         id: resolve
+        timeout-minutes: 3
         env:
           GH_TOKEN: ${{ github.token }}
           INPUT_SHA: ${{ inputs.target_sha }}
-        run: |
-          if [ -n "$INPUT_SHA" ]; then
-            SHA="$INPUT_SHA"
-          else
-            SHA="$(gh api repos/Goldberry-Playground/grove-sites/commits/main --jq '.sha')"
-            echo "No target_sha given -- resolved grove-sites main HEAD: $SHA"
-          fi
-          if ! [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::'$SHA' is not a 40-char lowercase hex commit SHA."
-            exit 1
-          fi
-          echo "target_sha=$SHA" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout (read current pin for the summary)
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        timeout-minutes: 2
+        run: node scripts/ci/storefront-target.mjs
 
       - name: Write plan summary
         env:
