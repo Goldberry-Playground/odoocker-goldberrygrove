@@ -443,6 +443,18 @@ variable "discord_orders_webhook_url" {
   default     = ""
 }
 
+# --- Stripe Tax per-tenant cutover flag (GOL-2568 / Train #2 GOL-2584) -------
+variable "grove_stripe_tax_tenants" {
+  description = "Storefront tenant slugs whose headless checkout hands sales tax to Stripe Tax instead of Odoo's computed WV line (GOL-2568). grove_headless controllers/main.py `_stripe_tax_enabled(order)` reads the per-tenant env flag GROVE_STRIPE_TAX_{TENANT} from os.environ and treats unset/empty/anything-but-a-truthy-value as OFF; OFF is byte-identical to the pre-GOL-2568 checkout and IS the documented rollback (docs/stripe-tax-cutover.md). Declared as ONE set of slugs rather than three booleans so the cutover state is a single reviewable line and no tenant can be half-flipped: cloud-init renders all three GROVE_STRIPE_TAX_* keys unconditionally, ON for the listed slugs and OFF for the rest. Empty default = every tenant on Odoo tax, i.e. today's behaviour; turning a tenant ON is the separate named step at promote, after the QA e2e gate asserts amounts for a WV and a non-WV address. Feeds cloud-init user_data - changing it REPLACES the QA odoo droplet (which is what train-up does anyway)."
+  type        = set(string)
+  default     = []
+
+  validation {
+    condition     = length(setsubtract(var.grove_stripe_tax_tenants, ["goldberry", "ggg", "nursery"])) == 0
+    error_message = "grove_stripe_tax_tenants may only contain the storefront tenant slugs goldberry, ggg, nursery (the values website_id.grove_tenant_slug() returns). A typo here would silently leave the intended tenant on Odoo tax."
+  }
+}
+
 variable "shippo_api_key" {
   description = "Shippo TEST API key for QA label purchase + rate quotes. grove_headless (models/sale_order.py) reads os.environ SHIPPO_API_KEY — raises UserError if unset, so the empty default keeps plan/apply working and label purchase inert until wired. 1P: op://Grove QA/Shippo Key/password (via TF_VAR_shippo_api_key in .env.op). Feeds cloud-init user_data — changing it REPLACES the QA odoo droplet."
   type        = string

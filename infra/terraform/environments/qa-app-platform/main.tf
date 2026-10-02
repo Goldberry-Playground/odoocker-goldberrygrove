@@ -210,21 +210,55 @@ resource "digitalocean_database_user" "odoo" {
   }
 }
 
-# Trusted-sources allowlist: lock the Managed PG cluster to the Odoo
-# droplet's IP + the operator CIDR. Without this the cluster is publicly
-# reachable on its assigned hostname (firewalled but exposed). With this,
+# ----------------------------------------------------------------------------
+# Trusted-sources allowlist: lock the Managed PG cluster to the Odoo droplet
+# and the operator CIDRs. Without this the cluster is publicly reachable on
+# its assigned hostname (credential-gated only, no network gate). With this,
 # the cluster only accepts connections from the listed sources.
 #
-# Note: trusted sources work alongside private networking — the Odoo
-# droplet connects over private IP (which is itself implicitly allowed),
-# but listing the droplet here makes the intent explicit and forces TF
-# to recreate the firewall rule if the droplet is recreated.
+# Trusted sources work alongside private networking: the Odoo droplet connects
+# over the private host (implicitly allowed), but naming it here makes the
+# intent explicit and keeps the public endpoint closed.
+#
+# WHY A TAG RULE AND NOT `type = "droplet"` (GOL-2581) ------------------------
+# The Odoo-droplet leg used to be `type = "droplet", value =
+# digitalocean_droplet.odoo.id`. That reference made this firewall a DEPENDENT
+# of the droplet, so the compute teardown
+# (`qa-l3-teardown.sh compute` -> `destroy -target=digitalocean_droplet.odoo`)
+# pulled the whole allowlist down with it — terraform destroys a target's
+# dependents, so a -target list is never the full blast radius (the same trap
+# as GOL-2474). The cluster survives teardown by design (`prevent_destroy`,
+# and QA Odoo has been the system of record for real order/inventory data
+# since 2026-07-09), so between a teardown and the next bring-up the surviving
+# cluster sat with `trusted_sources = []` — verified live 2026-09-29 against
+# the DO API (`/v2/databases/<id>/firewall` returned `{"rules": []}` for
+# grove-qa-l3-pg while grove-prod-pg returned its three), i.e. open to any
+# source holding the password for the whole inter-train window (days, on the
+# biweekly release-train cadence of GOL-2324).
+#
+# Allowing the droplet by TAG instead removes that edge: this resource now
+# depends on `digitalocean_tag.pg_client` (a dependency, not a dependent, of
+# the droplet), so destroying the droplet leaves the allowlist standing with
+# the operator CIDRs still in force. It also fixes the mirror-image problem —
+# a droplet REPLACE no longer needs the firewall recreated to re-grant access,
+# because the replacement droplet carries the tag from birth. That is the DB
+# analogue of the membership drift that left prod's :22 open for 13 days
+# (GOL-2565): bind access to a stable label, not to a mutable resource id.
+#
+# Blast radius of the tag: `qa-l3-pg-client` is a DEDICATED tag applied to the
+# Odoo droplet only — deliberately NOT one of `local.tags`, so tagging a new
+# droplet `env-qa-l3` does not silently hand it the QA database. A droplet has
+# to be marked a PG client on purpose.
+resource "digitalocean_tag" "pg_client" {
+  name = "qa-l3-pg-client"
+}
+
 resource "digitalocean_database_firewall" "pg" {
   cluster_id = digitalocean_database_cluster.pg.id
 
   rule {
-    type  = "droplet"
-    value = digitalocean_droplet.odoo.id
+    type  = "tag"
+    value = digitalocean_tag.pg_client.name
   }
 
   # One ip_addr rule per operator CIDR (GOL-1842); DO's ip_addr rule takes a
@@ -235,6 +269,23 @@ resource "digitalocean_database_firewall" "pg" {
       type  = "ip_addr"
       value = split("/", rule.value)[0]
     }
+  }
+
+  # Fail-closed tripwire (GOL-2582). The tag rule above is one careless edit
+  # from being a droplet-id rule again, and that edit does not LOOK dangerous
+  # -- the destroy it re-enables is implicit in `-target`, never named in the
+  # teardown script, and its only symptom is a cluster quietly reopening. With
+  # this, a teardown that would take the firewall ERRORS instead of emptying
+  # the allowlist of a cluster that holds real order data.
+  #
+  # It does NOT trip on the normal `compute` teardown: the tag rule above keeps
+  # this resource out of `-target=digitalocean_droplet.odoo`'s blast radius, so
+  # there is nothing to refuse. It only speaks up when the dependency edge is
+  # back, or on an untargeted `all` destroy -- which already has to clear the
+  # cluster's own prevent_destroy and the odoo_filestore volume's, so clearing
+  # all three in a reviewed PR is the established path for this env.
+  lifecycle {
+    prevent_destroy = true
   }
 }
 
@@ -368,7 +419,11 @@ resource "digitalocean_droplet" "odoo" {
   size   = var.odoo_droplet_size
   image  = var.droplet_image
   region = var.region
-  tags   = local.tags
+  # `qa-l3-pg-client` is what grants this droplet through the Managed PG
+  # trusted-sources allowlist (GOL-2581) -- see digitalocean_tag.pg_client.
+  # Keep it OUT of local.tags: membership in the DB allowlist must be opt-in
+  # per droplet, not a side effect of being tagged env-qa-l3.
+  tags = concat(local.tags, [digitalocean_tag.pg_client.name])
 
   ssh_keys = [
     data.digitalocean_ssh_key.qa_deploy.fingerprint,
@@ -439,6 +494,14 @@ resource "digitalocean_droplet" "odoo" {
     smtp_password = var.smtp_password
     email_from    = var.email_from
     from_filter   = var.from_filter
+
+    # Stripe Tax per-tenant cutover flag (GOL-2568). Rendered for all three
+    # tenants so the compose environment: keys always exist; "1" only for the
+    # slugs in var.grove_stripe_tax_tenants, "" (= OFF = Odoo's WV tax line)
+    # otherwise. Empty set default => no behaviour change.
+    grove_stripe_tax_goldberry = contains(var.grove_stripe_tax_tenants, "goldberry") ? "1" : ""
+    grove_stripe_tax_ggg       = contains(var.grove_stripe_tax_tenants, "ggg") ? "1" : ""
+    grove_stripe_tax_nursery   = contains(var.grove_stripe_tax_tenants, "nursery") ? "1" : ""
 
     # Shippo fulfillment (GOL-988 shipping-notification leg). Both default-empty
     # => label purchase raises UserError and the webhook fails closed.

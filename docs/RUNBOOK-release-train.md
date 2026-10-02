@@ -23,6 +23,15 @@ Both legs are **local, human-run** (see the design decision below for why).
 | **train-up** | Mon | `make train-up` | `= make qa-l3-up`. Idempotent `terraform apply` of the QA env. Droplets re-bootstrap from cloud-init; Odoo reconnects to the surviving Managed PG. **Safe to re-run.** Hard-gated on the publish-webhook secret guard — see below. |
 | **train-teardown** | Thu | `make train-teardown` | `= make qa-l3-teardown` → `scripts/qa-l3-teardown.sh compute`. Destroys the 4 apps + the Odoo droplet + 2 volume attachments (the spend). Typed-confirm gated. **Data/DNS/certs survive**, and so does the exempt **grove-qa-l3-obs** droplet — see below. |
 
+The **promote** leg (Wed) is not a `make` target: it is the odoocker modules-pin
+bump (`scripts/prod-modules-promote.sh`, see
+[`RUNBOOK-module-upgrade.md`](RUNBOOK-module-upgrade.md)) plus
+`promote-storefronts.yml`, and Josh approves the production environment.
+Any **per-tenant env flag** a train activates on prod — e.g. the Stripe Tax
+cutover `GROVE_STRIPE_TAX_{TENANT}` (GOL-2568) — is a *separate named step* in
+that runbook, because prod's `user_data` is in `ignore_changes` and no
+`terraform apply` injects it into the running droplet.
+
 Preview before either (read-only, no spend, no lock-and-leave):
 
 ```bash
