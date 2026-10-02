@@ -8,7 +8,7 @@
 You (or the CEO) can no longer `ssh`/`scp` to a Grove droplet and the failure is a **connection timeout on port 22** (not `Permission denied`). That means the source address is not in the firewall allowlist — almost always because a home/office ISP rotated the public IP. Symptoms:
 
 - `ssh -v root@<droplet>` hangs at `Connecting to <ip> port 22` then times out.
-- Affected hosts share one allowlist, so it fails on **all** of them at once: `grove-prod-odoo`, `grove-prod-blogs`, `grove-obs`, `grove-qa-l3-odoo`, `grove-qa-l3-obs`.
+- Affected hosts share one allowlist, so it fails on **all** of them at once: `grove-prod-odoo`, `grove-prod-blogs`, `grove-obs`, `grove-qa-l3-odoo`. (`grove-qa-l3-obs` was retired 2026-09-29 under ADR-010 and is gone; `grove-qa-l3-odoo` only exists inside a release-train window, so outside one the list is the three prod/obs hosts.)
 
 > **Not this runbook:** if you get `Permission denied (publickey)` you *reached* sshd — the allowlist is fine and it's a key problem. See "The key/hostname trap" below.
 
