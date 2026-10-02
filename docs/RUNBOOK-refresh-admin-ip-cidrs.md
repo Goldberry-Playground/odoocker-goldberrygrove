@@ -59,7 +59,51 @@ The `Prod plan must not destroy or replace a live resource` check (prod-plan-gua
 
 Merge the PR. The codified list is not live until `terraform apply` runs against the environment (prod apply is board/CEO-gated — see GOL-1844). **Apply before the next `promote-storefronts.yml` run**, or that pipeline's apply will strip any hand-added stopgap rule from step 2 and re-lock you.
 
-### 6. Prune stale addresses (housekeeping)
+### 6. Verify the applied firewall matches the code
+
+An apply that "succeeded" is not proof the allowlist is what the PR said — the
+`observability` env drifted for weeks exactly this way (ADR-010). Assert live vs.
+declared, read-only, no Terraform or state needed:
+
+```
+DO_TOKEN=<read-only DO token> \
+  infra/terraform/environments/observability/scripts/check-firewall.sh
+```
+
+Exit 0 = live `grove-obs-fw` matches what the code declares; exit 1 prints each
+drifting port with `MISSING` (declared, not live) vs. `UNEXPECTED` (live, not
+declared); **exit 2 means the check itself could not run** — no token, the DO API
+unreachable, no such firewall, or a variable it mirrors was renamed/lost its
+default. Treat exit 2 as "unknown", never as "clean" and never as drift: the
+nightly watcher retries exit 2 but never exit 1, so a broken check must not be
+able to impersonate a drift page.
+
+The script resolves each source list the way Terraform does — an assignment in
+that env's `terraform.tfvars` **wins** over the `variables.tf` default — and
+prints the provenance it used on its first line:
+
+```
+declared sources: admin<-variables.tf default  automation<-variables.tf default  ...
+```
+
+If that line says `admin<-terraform.tfvars`, a local tfvars value is shadowing
+the codified default, and the tfvars value is what an apply will push. That
+shadowing is precisely how `grove-obs-fw` drifted to the lone stale
+`74.47.41.38/32` while prod and QA carried the rotated address, so the script
+calls it out explicitly — fold the value into `variables.tf` and drop it from
+tfvars.
+
+The script reads that env's HCL, so it covers **grove-obs only** — prod and QA
+are still verified by their own `terraform plan` being empty.
+
+Regression tests for the exit-code contract and the precedence rule (no network,
+no DO, no Terraform):
+
+```
+python3 scripts/test_obs_firewall_check.py
+```
+
+### 7. Prune stale addresses (housekeeping)
 
 Once a rotated address is confirmed dead and no operator uses it, remove it from the list in a follow-up PR (same in-place check applies). Don't prune and add in the same panic — add first, prune later.
 
