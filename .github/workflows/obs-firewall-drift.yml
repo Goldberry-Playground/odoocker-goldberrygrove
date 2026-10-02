@@ -136,7 +136,20 @@ jobs:
 
           # Only the DRIFT/note lines, capped well under Discord's 4096-char
           # embed description limit.
-          DETAIL=$(grep -E '^( *DRIFT|note:|firewall:)' fw.out | head -12 | head -c 1200)
+          #
+          # `|| true` is LOAD-BEARING -- do not "clean it up" (GOL-2630).
+          # check-firewall.sh prints its first `firewall:` line only after the
+          # env checks pass, so on every exit-2 path (no DO token, unparseable
+          # variables.tf, DO API unreachable, no such firewall) fw.out has no
+          # matching line and this grep exits 1. Today that survives `set -e`
+          # only by accident: a `run:` with no `shell:` key gets `bash -e`
+          # WITHOUT pipefail, so the pipeline reports `head`'s 0 and swallows
+          # grep's 1. Add `shell: bash` (-eo pipefail) or drop the `| head`
+          # and the step dies here, BEFORE discord-status.sh runs -- so the
+          # "check BROKEN" alert never posts on any exit-2 path, which is the
+          # same silently-dead-alert class this PR exists to fix.
+          # Empty description is fine: discord-status.sh maps "" -> null.
+          DETAIL=$(grep -E '^( *DRIFT|note:|firewall:)' fw.out | head -12 | head -c 1200 || true)
 
           bash scripts/discord-status.sh \
             --status="$STATUS" \
