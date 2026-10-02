@@ -44,23 +44,6 @@ output "odoo_filestore_volume_id" {
   value       = digitalocean_volume.odoo_filestore.id
 }
 
-# === Observability outputs ===
-
-output "obs_droplet_ip" {
-  description = "Public IPv4 of the observability droplet. Tag-discoverable as env-qa-l3,role-observability."
-  value       = digitalocean_droplet.obs.ipv4_address
-}
-
-output "openobserve_url" {
-  description = "OpenObserve UI URL (admin-only via firewall allowlist). scripts/setup-monitoring.py POSTs monitors/alerts/dashboards here."
-  value       = "https://oo.${local.qa_zone}"
-}
-
-output "keep_url" {
-  description = "Keep alert-routing UI URL (admin-only via firewall allowlist)."
-  value       = "https://keep.${local.qa_zone}"
-}
-
 # === App Platform (Phase 2) outputs =========================================
 
 output "hub_url" {

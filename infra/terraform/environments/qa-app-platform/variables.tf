@@ -15,7 +15,7 @@ variable "cloudflare_api_token" {
 # === Operator inputs ===
 
 variable "admin_ip_cidrs" {
-  description = "Operator IPv4 CIDRs for the SSH allowlist (Odoo + obs droplets) and the Managed PG trusted-source rule. A LIST so more than one operator address can be authorised at once (GOL-1842) — an ISP-rotated IP no longer locks every operator out. Each entry is a `curl -4 ifconfig.me`/32. Codify a new address by appending it here, never as a hand-added DO rule (removed by the next apply)."
+  description = "Operator IPv4 CIDRs for the SSH allowlist (Odoo droplet) and the Managed PG trusted-source rule. A LIST so more than one operator address can be authorised at once (GOL-1842) — an ISP-rotated IP no longer locks every operator out. Each entry is a `curl -4 ifconfig.me`/32. Codify a new address by appending it here, never as a hand-added DO rule (removed by the next apply)."
   type        = list(string)
   # 173.84.140.152/32 = Josh's ISP-rotated operator address, kept in step with
   # production so the same machine reaches QA droplets too (GOL-1842).
@@ -122,25 +122,8 @@ variable "custom_modules_ref" {
   }
 }
 
-# === Observability droplet (Phase 1.5) ===
-
-variable "obs_droplet_size" {
-  description = "DigitalOcean droplet size for the observability droplet (OpenObserve + Keep + inline MinIO). s-1vcpu-2gb fits comfortably in QA per ADR-007 addendum. Cost ~$12/mo while running."
-  type        = string
-  default     = "s-1vcpu-2gb"
-}
-
-variable "openobserve_tag" {
-  description = "OpenObserve image tag (public.ecr.aws/zinclabs/openobserve:<tag>). DIGEST-PINNED since 2026-07-04: upstream prunes old tags from public ECR (v0.17.2 vanished and every fresh obs droplet failed the pull; the old droplet had only survived on its local image cache). Tag-only pins on this registry are time bombs -- keep the @sha256 suffix on updates. Update docker-compose.monitoring.yml (local) in the same commit."
-  type        = string
-  default     = "v0.91.1@sha256:e1ff0445fab3e748ac4cf630308cc8493579e50d19ad255bb3a3b8c1b710aaf7"
-}
-
-variable "keep_tag" {
-  description = "Keep (alert routing) image tag for both keep-api and keep-ui. Match docker-compose.monitoring.yml."
-  type        = string
-  default     = "latest"
-}
+# Observability droplet vars removed 2026-09-29: grove-qa-l3-obs retired per
+# ADR-010 (GOL-2333). The canonical obs plane is environments/observability/.
 
 # === ACME endpoint (Caddy / Let's Encrypt) ===
 

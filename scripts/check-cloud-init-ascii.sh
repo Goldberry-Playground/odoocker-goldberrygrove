@@ -34,11 +34,8 @@ DEFAULT_FILES=(
   # write_files/runcmd blocks entirely -- no docker, no /etc/grove, no compose.
   # Only diagnosed via SSH after 25+ min of watching URLs return 000.
   "infra/terraform/environments/qa-app-platform/cloud-init.yaml.tpl"
-  "infra/terraform/environments/qa-app-platform/cloud-init-obs.yaml.tpl"
   "infra/terraform/environments/qa-app-platform/compose/docker-compose.qa.yml"
-  "infra/terraform/environments/qa-app-platform/compose/docker-compose.obs.yml"
   "infra/terraform/environments/qa-app-platform/compose/Caddyfile.tpl"
-  "infra/terraform/environments/qa-app-platform/compose/Caddyfile-obs.tpl"
 
   # PRODUCTION -- added 2026-07-15 (GOL-382). This guard existed for QA only,
   # while cloud-init-odoo.yaml.tpl was carrying a U+2026 ellipsis the whole
