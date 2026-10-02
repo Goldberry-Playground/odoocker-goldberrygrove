@@ -24,6 +24,24 @@
 //      fully-built set of four images, and the reviewer sees the warning in
 //      the step summary before approving. (Typical cause: main HEAD's Docker
 //      run is still in flight or red.)
+//   4. REFUSE to roll production BACKWARD. The resolved target is compared
+//      against the SHA prod is currently pinned to (hub_image_tag /
+//      tenant_image_tag in infra/terraform/environments/production/
+//      variables.tf); a target behind or off the lineage of a live pin is a
+//      hard error on the auto-resolved path.
+//   5. Cross-check the two reads of main against each other. `mainHead()` and
+//      `mainShas()` must agree on main HEAD.
+//
+// Why 4 and 5 (2026-10-02, freeze-day dry run of this script): two identical
+// invocations 60s apart resolved differently. The second resolved main HEAD
+// 5a882147 correctly; the FIRST resolved 6a658d45 -- a 2026-09-08 commit, 50
+// behind main and 48 behind the live prod pin d4d248ef -- printed "all 4
+// storefront images present" (old images do still exist) and exited 0. The only
+// signal was a ::warning:: about skipped app-code commits, i.e. a human reading
+// a warning was the sole thing standing between a stale GitHub read and a
+// 3.5-week production rollback of all four storefronts. The cause was an
+// inconsistent upstream read, so the fix is not "retry harder": it is a
+// fail-closed invariant that no amount of API weirdness can talk us past.
 //
 // CLI (node builtins only; Node >= 18 for global fetch):
 //   env INPUT_SHA          optional 40-hex SHA (blank = auto-resolve)
@@ -32,13 +50,20 @@
 //                          at the 60 req/h anonymous rate limit)
 //   env GITHUB_OUTPUT      if set, `target_sha=<sha>` is appended
 //   env GITHUB_STEP_SUMMARY if set, a markdown resolution report is appended
-//   exit 0 -> resolved + all four images present
-//   exit 1 -> could not resolve, bad SHA, or at least one image missing
+//   env PROD_TF_VARIABLES  path to the prod variables.tf holding the live image
+//                          pins (default: the path below). Unreadable or
+//                          unparsable is a hard error -- the rollback guard
+//                          must never silently no-op.
+//   env PROD_PIN_SHAS      comma/space-separated pins, overriding the file read
+//                          (escape hatch; the file is the source of truth)
+//   exit 0 -> resolved + all four images present + not a rollback
+//   exit 1 -> could not resolve, bad SHA, at least one image missing,
+//             inconsistent view of main, or the target would roll prod back
 //
 // Dry run from a laptop (read-only; touches nothing):
 //   GH_TOKEN="$(gh auth token)" node scripts/ci/storefront-target.mjs
 //   INPUT_SHA=99d4d59f... node scripts/ci/storefront-target.mjs   # -> exit 1
-import { appendFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { globToRe } from "./protected-paths-carveout.mjs";
 
@@ -46,6 +71,29 @@ export const SITES_REPO = "Goldberry-Playground/grove-sites";
 export const DOCKER_WORKFLOW = "docker.yml";
 export const GHCR_OWNER = "goldberry-playground";
 export const STOREFRONT_IMAGES = ["grove-hub", "grove-nursery", "grove-goldberry", "grove-ggg"];
+
+// The committed production image pins. promote-storefronts.yml rewrites these
+// two defaults after a successful roll, so on `main` they are what prod serves.
+export const PROD_TF_VARIABLES = "infra/terraform/environments/production/variables.tf";
+export const PIN_VARIABLES = ["hub_image_tag", "tenant_image_tag"];
+
+// Read the `default = "<40-hex>"` INSIDE each `variable "<name>" {` block --
+// anchored the same way as promote-storefronts.yml's awk, so a `default` that
+// belongs to a neighbouring variable can never be picked up by accident.
+// Returns the distinct pins, newest-unknown order preserved. Throws if a named
+// variable is absent or carries no SHA: a pin we cannot read is a guard we
+// cannot run, and this is a production gate.
+export function parsePinnedShas(text, names = PIN_VARIABLES) {
+  const out = [];
+  for (const name of names) {
+    const block = new RegExp(`^variable\\s+"${name}"\\s*\\{([\\s\\S]*?)^\\}`, "m").exec(text || "");
+    if (!block) throw new Error(`no \`variable "${name}"\` block in the prod variables file`);
+    const sha = /default\s*=\s*"([0-9a-f]{40})"/.exec(block[1]);
+    if (!sha) throw new Error(`\`variable "${name}"\` has no 40-hex \`default\` SHA`);
+    if (!out.includes(sha[1])) out.push(sha[1]);
+  }
+  return out;
+}
 
 // Mirror of grove-sites .github/workflows/docker.yml `on.push.paths`. A commit
 // touching none of these never triggers an image build. Keep in sync by hand;
@@ -116,6 +164,8 @@ export function makeGithub({ fetchImpl = fetch, token = "", retryDelayMs = 2000 
       const c = await get(`repos/${SITES_REPO}/compare/${base}...${head}`);
       return {
         status: c.status,
+        aheadBy: c.ahead_by,
+        behindBy: c.behind_by,
         commits: c.commits.map((x) => ({ sha: x.sha, subject: (x.commit.message || "").split("\n")[0] })),
         files: (c.files || []).map((f) => f.filename),
         filesTruncated: (c.files || []).length >= 300,
@@ -159,11 +209,11 @@ export function makeGhcr({ fetchImpl = fetch, retryDelayMs = 2000 } = {}) {
 
 const MAX_PER_COMMIT_LOOKUPS = 30;
 
-export async function resolveTarget({ inputSha, github, ghcr }) {
+export async function resolveTarget({ inputSha, github, ghcr, pinnedShas = [] }) {
   const errors = [];
   const warnings = [];
   const input = (inputSha || "").trim();
-  const head = await github.mainHead();
+  let head = await github.mainHead();
   let sha;
   let source;
 
@@ -171,15 +221,33 @@ export async function resolveTarget({ inputSha, github, ghcr }) {
     sha = input;
     source = "input";
     if (!isFullSha(sha)) {
-      return { ok: false, sha, source, head, errors: [`'${sha}' is not a 40-char lowercase hex commit SHA.`], warnings, images: [], skipped: [] };
+      return { ok: false, sha, source, head, pinnedShas, errors: [`'${sha}' is not a 40-char lowercase hex commit SHA.`], warnings, images: [], skipped: [] };
     }
   } else {
     source = "newest-built";
-    const [mainShas, built] = await Promise.all([github.mainShas(), github.builtShas()]);
+    let [mainShas, built] = await Promise.all([github.mainShas(), github.builtShas()]);
+    // Both reads describe main; if they disagree on its HEAD, one of them is a
+    // stale replica and `pickNewestBuilt` would walk back to whatever the stale
+    // page ends at. Re-read once (a commit landing mid-read looks identical to
+    // a stale read), then fail closed rather than resolve off a torn view.
+    if (mainShas[0] !== head) {
+      [head, mainShas] = await Promise.all([github.mainHead(), github.mainShas()]);
+      if (mainShas[0] !== head) {
+        return {
+          ok: false, sha: null, source, head, warnings, images: [], skipped: [], pinnedShas,
+          errors: [
+            `GitHub returned an inconsistent view of grove-sites main twice: commits/main says ` +
+              `${head.slice(0, 8)} but the commit listing starts at ${(mainShas[0] || "(empty)").slice(0, 8)}. ` +
+              `Resolving against a torn view is how a 3.5-week-old SHA got picked on 2026-10-02 -- re-run, ` +
+              `or pass target_sha explicitly.`,
+          ],
+        };
+      }
+    }
     sha = pickNewestBuilt(mainShas, built);
     if (!sha) {
       return {
-        ok: false, sha: null, source, head, warnings, images: [], skipped: [],
+        ok: false, sha: null, source, head, warnings, images: [], skipped: [], pinnedShas,
         errors: [`No commit among the last ${mainShas.length} on grove-sites main has a successful '${DOCKER_WORKFLOW}' run. Pass target_sha explicitly.`],
       };
     }
@@ -198,6 +266,32 @@ export async function resolveTarget({ inputSha, github, ghcr }) {
       );
     }
   }
+
+  // Rollback guard: the target must be at or ahead of every live production
+  // pin. An auto-resolved target behind a pin means the resolution is wrong (no
+  // one asks a *blank* input to roll back), so it is fatal. An explicit SHA
+  // behind a pin is a human's deliberate recovery -- the documented way to roll
+  // back -- so it warns loudly and proceeds.
+  const rollback = [];
+  for (const pin of pinnedShas) {
+    if (!pin || pin === sha) continue;
+    const cmp = await github.compare(pin, sha);
+    if (cmp.status === "behind" || cmp.status === "diverged") {
+      const how =
+        cmp.status === "behind"
+          ? `${cmp.behindBy} commit(s) BEHIND`
+          : `NOT on the lineage of (diverged from)`;
+      rollback.push(
+        `target ${sha.slice(0, 8)} is ${how} the live production pin ${pin.slice(0, 8)} -- ` +
+          `rolling prod storefronts BACKWARD` +
+          (source === "input"
+            ? `. Explicit target_sha, so this is treated as a deliberate rollback; confirm that is what you want before approving.`
+            : `. A blank target_sha never means "roll back": the resolution is wrong (usually a stale GitHub read). Re-run; pass target_sha explicitly to roll back on purpose.`)
+      );
+    }
+  }
+  if (source === "input") warnings.push(...rollback);
+  else errors.push(...rollback);
 
   // Skipped commits: what's on main HEAD that this promotion will NOT ship.
   let skipped = [];
@@ -224,7 +318,7 @@ export async function resolveTarget({ inputSha, github, ghcr }) {
     }
   }
 
-  return { ok: errors.length === 0, sha, source, head, compareStatus, images, skipped, errors, warnings };
+  return { ok: errors.length === 0, sha, source, head, compareStatus, images, skipped, errors, warnings, pinnedShas };
 }
 
 // Commit subjects are third-party text going into a markdown table cell:
@@ -240,7 +334,11 @@ export function renderSummary(r) {
       ? `Target \`${r.sha}\` was given explicitly.`
       : `\`target_sha\` was blank -- resolved to the newest grove-sites \`main\` commit with a successful \`${DOCKER_WORKFLOW}\` run: \`${r.sha}\`.`
   );
-  out.push("", `grove-sites \`main\` HEAD: \`${r.head}\``, "");
+  out.push("", `grove-sites \`main\` HEAD: \`${r.head}\``);
+  if (r.pinnedShas && r.pinnedShas.length) {
+    out.push("", `live production pin: ${r.pinnedShas.map((p) => `\`${p}\``).join(" + ")}`);
+  }
+  out.push("");
   if (r.images.length) {
     out.push("| Image | Tag present |", "|---|---|");
     for (const i of r.images) out.push(`| \`ghcr.io/${GHCR_OWNER}/${i.image}:${short(r.sha)}…\` | ${i.ok ? "yes (200)" : `**NO (${i.status})**`} |`);
@@ -267,7 +365,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const github = makeGithub({ token: process.env.GH_TOKEN || process.env.GITHUB_TOKEN || "" });
   const ghcr = makeGhcr();
   try {
-    const r = await resolveTarget({ inputSha: process.env.INPUT_SHA, github, ghcr });
+    // A pin we cannot read is a guard we cannot run -- let the throw abort.
+    const pinnedShas = process.env.PROD_PIN_SHAS
+      ? process.env.PROD_PIN_SHAS.split(/[\s,]+/).filter(Boolean)
+      : parsePinnedShas(readFileSync(process.env.PROD_TF_VARIABLES || PROD_TF_VARIABLES, "utf8"));
+    const r = await resolveTarget({ inputSha: process.env.INPUT_SHA, github, ghcr, pinnedShas });
     const summary = renderSummary(r);
     if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary + "\n");
     else process.stdout.write(summary + "\n");
