@@ -607,3 +607,26 @@ variable "perenual_api_key" {
     error_message = "perenual_api_key must be empty or a plain API token with NO whitespace or shell metacharacters (A-Z a-z 0-9 and . _ ~ + / = : - only, 8-200 chars) — cloud-init writes it UNQUOTED into the bash-sourced /etc/grove/.env, so a space, quote or $ would break set -euo pipefail at boot."
   }
 }
+
+###############################################################################
+# GOL-2566 - legacy Ghost snowflake holding-action firewall. See
+# legacy-ghost-fw.tf for the full rationale and rollback.
+###############################################################################
+
+variable "legacy_ghost_firewall_enabled" {
+  description = "Attach `grove-legacy-ghost-fw` to the un-codified `ghostgoldberrygrove-nyc1` snowflake (droplet 468914087), closing its internet-wide :22 (and :80/:443, see legacy_ghost_http_public). Defaults FALSE so merging this file is not an apply -- the box is not Terraform-managed, and a holding action on a snowflake nobody has logged into in months is Josh's call to make deliberately, not a side effect of someone else's plan. Set true in tfvars (or `-var`) when applying. Flip back to false to detach."
+  type        = bool
+  default     = false
+}
+
+variable "legacy_ghost_droplet_name" {
+  description = "Name the legacy Ghost droplet is resolved by, rather than pinning the bare id 468914087 in code. The DO `droplet` data source has no id lookup, and the name is the stable handle: if the box is rebuilt the name is what gets reused. Only read when legacy_ghost_firewall_enabled is true."
+  type        = string
+  default     = "ghostgoldberrygrove-nyc1"
+}
+
+variable "legacy_ghost_http_public" {
+  description = "Keep :80/:443 on the legacy Ghost box open to the world. FALSE by default: verified 2026-09-29 that ZERO DNS records across all four Cloudflare zones resolve to 178.128.152.218 (every blog.* A record points at 159.89.243.121, every apex is an App Platform CNAME), and no DO load balancer or reserved IP references it -- so the box is DNS-orphaned and fencing HTTP breaks no routed path. What is listening on :443 is a Ghost ADMIN login behind a cert that expired 2025-10-07. Set true to restore world access if an unknown raw-IP consumer surfaces; the :22 fence is unaffected either way. Both legs resolve to var.admin_ip_cidrs, so a new operator address added there (GOL-1842) covers this box too."
+  type        = bool
+  default     = false
+}
