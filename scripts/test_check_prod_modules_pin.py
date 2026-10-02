@@ -26,6 +26,13 @@ decide whether the nightly watcher is trustworthy:
                               drift, match or error paths.
   real-file-parses            the REAL committed prod variables.tf yields a
                               40-hex ref through the shared block parser.
+  alert-path-decoupled        the nightly workflow loads DISCORD_OPS_WEBHOOK_URL
+                              in its OWN 1Password step, BEFORE the Odoo
+                              credential step. load-secrets-action resolves
+                              refs atomically, so co-loading them means a
+                              missing/rotated Odoo item takes the webhook down
+                              with it and the BROKEN alert never fires (review
+                              GOL-2624 on PR #752).
 
     python3 scripts/test_check_prod_modules_pin.py
 """
@@ -265,11 +272,66 @@ def test_real_file_parses() -> None:
           cp._find_block.__module__ == "reconcile_modules_pin")
 
 
+WORKFLOW = os.path.join(_ROOT, ".github", "workflows", "prod-modules-pin-drift.yml")
+
+
+def _op_steps(path: str) -> list[dict]:
+    """Split the workflow's steps and collect each one's `op://` env refs.
+
+    Deliberately hand-rolled: `promotion-script-tests` runs bare `python3` with
+    no pip install, so PyYAML is not available. We only need the step
+    boundaries (`      - name:`) and the `op://` lines inside each.
+    """
+    steps: list[dict] = []
+    for raw in open(path, encoding="utf-8"):
+        line = raw.rstrip("\n")
+        if line.startswith("      - name:"):
+            steps.append({"name": line.split(":", 1)[1].strip(), "refs": []})
+        elif steps and "op://" in line and not line.lstrip().startswith("#"):
+            var = line.strip().split(":", 1)[0]
+            steps[-1]["refs"].append(var)
+    return [s for s in steps if s["refs"]]
+
+
+def test_alert_path_decoupled() -> None:
+    print("alert-path-decoupled")
+    steps = _op_steps(WORKFLOW)
+    check("the workflow has 1Password steps at all", bool(steps))
+
+    webhook = [s for s in steps if "DISCORD_OPS_WEBHOOK_URL" in s["refs"]]
+    odoo = [s for s in steps if any(r.startswith("PROD_ODOO_") for r in s["refs"])]
+    check("exactly one step loads the webhook", len(webhook) == 1,
+          f"(got {len(webhook)})")
+    check("exactly one step loads the Odoo credential", len(odoo) == 1,
+          f"(got {len(odoo)})")
+    if not (webhook and odoo):
+        return
+
+    # THE regression: load-secrets-action resolves every op:// ref atomically.
+    # One unresolvable ref fails the step and exports NOTHING -- so a webhook
+    # sharing a step with the Odoo item is silenced by a missing Odoo item, and
+    # discord-status.sh then skips silently on the empty webhook (exit 0).
+    check("webhook step loads ONLY the webhook", webhook[0]["refs"] == ["DISCORD_OPS_WEBHOOK_URL"],
+          f"(loads {webhook[0]['refs']})")
+    check("webhook step is NOT the Odoo credential step", webhook[0] is not odoo[0])
+    check("webhook loads BEFORE the Odoo credential",
+          steps.index(webhook[0]) < steps.index(odoo[0]))
+
+    # The Odoo step must keep continue-on-error (it is what lets the job reach
+    # the Discord step to report its own brokenness); the webhook step must not
+    # need it, because a webhook that cannot load has nothing to report with.
+    body = open(WORKFLOW, encoding="utf-8").read()
+    odoo_block = body.split("- name: " + odoo[0]["name"], 1)[1]
+    check("Odoo credential step keeps continue-on-error",
+          "continue-on-error: true" in odoo_block.split("op://", 1)[0])
+
+
 def main() -> int:
     for fn in (test_read_only_by_construction, test_fail_closed_no_credential,
                test_drift_detected, test_match_is_silent, test_series_normalisation,
                test_transient_vs_config, test_waf_403_is_config,
-               test_credential_never_printed, test_real_file_parses):
+               test_credential_never_printed, test_real_file_parses,
+               test_alert_path_decoupled):
         fn()
     print()
     if FAILURES:

@@ -113,20 +113,47 @@ jobs:
       # NOT a gated `environment:` -- gating a nightly check behind production's
       # required reviewers would hang it every single night.
       #
-      # continue-on-error is load-bearing: if the Odoo - Prod Drift Readonly
-      # item has not been provisioned yet, this step errors, and we need the
-      # job to survive long enough to ALERT about it rather than die silently
-      # before the Discord step.
-      - name: Load secrets from 1Password
+      # ⚠️  THE ALERT PATH LOADS IN ITS OWN STEP, AND IT LOADS FIRST.
+      #
+      # `1password/load-secrets-action` resolves its refs ATOMICALLY: one
+      # unresolvable `op://` ref fails the step and exports NOTHING (the same
+      # fail-whole behaviour that bit obs #759 / GOL-2598). This workflow's
+      # CREDENTIAL header promises it will "alert every night as BROKEN" until
+      # Josh mints `Odoo - Prod Drift Readonly` -- but if the webhook shared a
+      # step with those two not-yet-provisioned refs, that step would fail,
+      # DISCORD_OPS_WEBHOOK_URL would never export, and discord-status.sh skips
+      # SILENTLY on an empty webhook (scripts/discord-status.sh: `::warning::`
+      # then exit 0). The alert the header promises would never fire during the
+      # exact provisioning window it exists for -- leaving only a red Actions
+      # run, i.e. "a human happens to notice", the failure mode GOL-2580 exists
+      # to kill. Same latent risk if the Odoo item is ever rotated or deleted.
+      #
+      # So: webhook first, alone, and NOT continue-on-error. If the alert path
+      # itself cannot load there is no way to report anything, and a loud red
+      # run with nothing else attempted is the honest signal.
+      - name: Load Discord webhook from 1Password
+        uses: 1password/load-secrets-action@v2
+        timeout-minutes: 2
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_CI_SA_TOKEN }}
+          DISCORD_OPS_WEBHOOK_URL: op://Grove Prod/odoocker/DISCORD_OPS_WEBHOOK_URL
+        with:
+          export-env: true
+
+      # continue-on-error is load-bearing HERE, and only here: if the
+      # Odoo - Prod Drift Readonly item has not been provisioned yet, this step
+      # errors, and we need the job to survive long enough to ALERT about it
+      # (over the webhook loaded above) rather than die silently before the
+      # Discord step. Nothing but the Odoo credential may share this step.
+      - name: Load prod Odoo credential from 1Password
         id: op
         continue-on-error: true
         uses: 1password/load-secrets-action@v2
         timeout-minutes: 2
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_CI_SA_TOKEN }}
-          PROD_ODOO_LOGIN:         op://Grove Prod/Odoo - Prod Drift Readonly/username
-          PROD_ODOO_SECRET:        op://Grove Prod/Odoo - Prod Drift Readonly/credential
-          DISCORD_OPS_WEBHOOK_URL: op://Grove Prod/odoocker/DISCORD_OPS_WEBHOOK_URL
+          PROD_ODOO_LOGIN:  op://Grove Prod/Odoo - Prod Drift Readonly/username
+          PROD_ODOO_SECRET: op://Grove Prod/Odoo - Prod Drift Readonly/credential
         with:
           export-env: true
 
