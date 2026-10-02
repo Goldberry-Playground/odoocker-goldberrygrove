@@ -179,7 +179,7 @@ Do NOT file a broker/credential outage issue. COPY-PASTE these:
   gh pr create --base main --head <branch-name> --title '...' --body '...'
 
   # raw broker mint, if you need the token yourself (owner= and repo= SEPARATE)
-  curl -s -H "Authorization: Bearer \\\$(cat $KEYFILE)" \\
+  curl -s -H "Authorization: Bearer \$(cat $KEYFILE)" \\
     "$BROKER/token?owner=$OWNER&repo=$REPO"
 
 If \`git push\` still fails after this passed, quote its VERBATIM stderr in the
