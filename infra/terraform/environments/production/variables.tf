@@ -434,6 +434,18 @@ variable "discord_orders_webhook_url" {
   }
 }
 
+# === Stripe Tax per-tenant cutover flag (GOL-2568 / Train #2 GOL-2584) =======
+variable "grove_stripe_tax_tenants" {
+  description = "Storefront tenant slugs whose PROD headless checkout hands sales tax to Stripe Tax instead of Odoo's computed WV line (GOL-2568). grove_headless controllers/main.py `_stripe_tax_enabled(order)` reads GROVE_STRIPE_TAX_{TENANT} from os.environ; unset/empty/anything-but-truthy is OFF, and OFF is byte-identical to the pre-GOL-2568 checkout AND the documented rollback (grove-odoo-modules docs/stripe-tax-cutover.md). ONE set of slugs rather than three booleans so the live cutover state is a single reviewable line and no tenant can be half-flipped; cloud-init renders all three GROVE_STRIPE_TAX_* keys unconditionally. Empty default = every tenant on Odoo tax, i.e. today's prod behaviour. THIS IS A MONEY PATH: turning a slug on changes what customers are charged, so it is a separate, named, board-approved promote step taken only after the QA e2e gate asserted amounts for a WV and a non-WV address. user_data input and user_data is in ignore_changes (GOL-385), so landing this scaffold does NOT touch the running droplet and a plain apply will NOT activate it - activation is the GOL-1772 Option B env-file upsert (see docs/RUNBOOK-release-train.md) or a droplet REPLACE."
+  type        = set(string)
+  default     = []
+
+  validation {
+    condition     = length(setsubtract(var.grove_stripe_tax_tenants, ["goldberry", "ggg", "nursery"])) == 0
+    error_message = "grove_stripe_tax_tenants may only contain the storefront tenant slugs goldberry, ggg, nursery (the values website_id.grove_tenant_slug() returns). A typo here would silently leave the intended tenant charging Odoo tax while the operator believed Stripe Tax was live."
+  }
+}
+
 variable "shippo_api_key" {
   description = "Shippo LIVE API key for prod label purchase + rate quotes (grove_headless models/sale_order.py reads os.environ SHIPPO_API_KEY; UserError when empty, so the empty default keeps plan/apply working and fulfillment inert). 1P: op://Grove Prod/Shippo Prod Key/password. Feeds cloud-init user_data => activating requires a droplet REPLACE — rides the board-approved GOL-484 go-live rebuild, not a standalone apply."
   type        = string

@@ -149,6 +149,15 @@ services:
       GROVE_PUBLISH_WEBHOOK_SECRET_GGG: ${GROVE_PUBLISH_WEBHOOK_SECRET_GGG:-}
       GROVE_PUBLISH_WEBHOOK_URL_NURSERY: ${GROVE_PUBLISH_WEBHOOK_URL_NURSERY:-}
       GROVE_PUBLISH_WEBHOOK_SECRET_NURSERY: ${GROVE_PUBLISH_WEBHOOK_SECRET_NURSERY:-}
+      # Stripe Tax per-tenant cutover flag (GOL-2568). controllers/main.py
+      # _stripe_tax_enabled(order) reads GROVE_STRIPE_TAX_{TENANT} from
+      # os.environ, so the key has to be listed HERE or the value in
+      # --env-file never reaches the process. Empty => OFF => Odoo's computed
+      # WV tax line, i.e. today's checkout unchanged; empty is also the
+      # rollback. cloud-init writes all three from var.grove_stripe_tax_tenants.
+      GROVE_STRIPE_TAX_GOLDBERRY: ${GROVE_STRIPE_TAX_GOLDBERRY:-}
+      GROVE_STRIPE_TAX_GGG: ${GROVE_STRIPE_TAX_GGG:-}
+      GROVE_STRIPE_TAX_NURSERY: ${GROVE_STRIPE_TAX_NURSERY:-}
       # Shippo fulfillment (GOL-988). Outbound: sale_order.py reads
       # SHIPPO_API_KEY via os.environ (UserError when empty). Inbound:
       # controllers/main.py compares GROVE_SHIPPO_WEBHOOK_TOKEN (empty =>
