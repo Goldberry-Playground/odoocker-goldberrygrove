@@ -270,6 +270,23 @@ resource "digitalocean_database_firewall" "pg" {
       value = split("/", rule.value)[0]
     }
   }
+
+  # Fail-closed tripwire (GOL-2582). The tag rule above is one careless edit
+  # from being a droplet-id rule again, and that edit does not LOOK dangerous
+  # -- the destroy it re-enables is implicit in `-target`, never named in the
+  # teardown script, and its only symptom is a cluster quietly reopening. With
+  # this, a teardown that would take the firewall ERRORS instead of emptying
+  # the allowlist of a cluster that holds real order data.
+  #
+  # It does NOT trip on the normal `compute` teardown: the tag rule above keeps
+  # this resource out of `-target=digitalocean_droplet.odoo`'s blast radius, so
+  # there is nothing to refuse. It only speaks up when the dependency edge is
+  # back, or on an untargeted `all` destroy -- which already has to clear the
+  # cluster's own prevent_destroy and the odoo_filestore volume's, so clearing
+  # all three in a reviewed PR is the established path for this env.
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 # ── Schema-owner grant — Gotcha 2, now CODIFIED (GOL-750) ────────────────────
