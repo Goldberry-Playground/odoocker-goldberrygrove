@@ -158,9 +158,19 @@ jobs:
         # world-open by design on two prod firewalls, so that collision would
         # turn the census red on production's front door), and checks the repo's
         # own allowlist parses with no expired or issue-less entry.
-        # Offline: no token, no network.
+        #
+        # GOL-2582 adds the managed-database leg, whose decode has the same
+        # shape of hazard: on DO an EMPTY trusted-sources list is not "closed",
+        # and a non-empty list holding one bare `0.0.0.0` is wider still -- both
+        # pinned against the two clusters' real API payloads.
+        #
+        # The second file is the parser + fetch-layer regression suite. It was
+        # added alongside the census and nothing ran it, so a regression in the
+        # HCL parsing or in "what happens when the DO API says no" would have
+        # landed green. Both files are offline: no token, no network.
         run: |
           python3 infra/terraform/scripts/check-firewall-membership.py --selftest
+          python3 infra/terraform/scripts/test_check_firewall_membership.py
 
   checkout-secrets-wired:
     name: checkout Stripe secrets wired
