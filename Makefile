@@ -172,11 +172,18 @@ qa-l3-plan: qa-l3-backend
 # commented out the TF vars default to "", so an apply here silently ZEROES the
 # live per-tenant HMAC secret on BOTH halves (droplet .env + DO app env) and the
 # publish path dies without an error. Override: ALLOW_EMPTY_PUBLISH_SECRETS=1.
+#
+# GOL-2584: also gated on the state-lock preflight. `use_lockfile = true` does
+# NOT work on DO Spaces (Spaces ignores If-None-Match, so every concurrent run
+# "acquires" the same lock -- this is how two QA teardowns both ran on
+# 2026-09-29). The guard refuses to start when a .tflock is already held.
+# Override: TF_LOCK_GUARD_OFF=1.
 .PHONY: qa-l3-up
 qa-l3-up: qa-l3-backend
 	@op run --env-file=$(QA_L3_ENV_FILE) -- bash -c '\
 		export TF_VAR_grove_brand_pr_token="$${GROVE_BRAND_PR_TOKEN:-}"; \
 		bash scripts/check-publish-webhook-secrets-wired.sh && \
+		bash scripts/tf-state-lock-check.sh guard qa-app-platform/terraform.tfstate && \
 		terraform -chdir=$(QA_L3_DIR) init -backend-config=backend.hcl -input=false >/dev/null && \
 		terraform -chdir=$(QA_L3_DIR) apply -input=false'
 
