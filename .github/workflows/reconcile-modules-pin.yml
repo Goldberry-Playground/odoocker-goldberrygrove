@@ -20,15 +20,29 @@ name: Reconcile prod modules pin
 # allowlisted-human APPROVED review, GOL-1478) — this workflow cannot merge it.
 # So the ssh pin recipe ends with:  gh workflow run reconcile-modules-pin.yml -f modules_sha=<sha>
 #
-# NOTE ON CHECKS (GOL-2114): the PR is opened with the default GITHUB_TOKEN, so
-# GitHub does NOT auto-fire `on: pull_request` workflows for it (a deliberate
-# recursion guard). The change is drift-only HCL, and merge already requires a
-# human SHA-bound approval through the guard; when the reviewer adds it to the
-# merge queue the `merge_group`-triggered required checks (ci.yml,
-# prod-plan-guard.yml) run and gate the merge. If you want checks on the PR
-# itself before queueing, close→reopen it once. A future upgrade is to open the
-# PR with a GitHub App token (would fire pull_request checks) — that needs an
-# app installation secret, which is Terra's to provision.
+# NOTE ON CHECKS (GOL-2114 / GOL-2504 / GOL-2607): the PR is opened with the
+# default GITHUB_TOKEN. GitHub deliberately suppresses `push` / `pull_request`
+# events for GITHUB_TOKEN actions (anti-recursion), so the four contexts that
+# `.github/required-checks.json` marks required for `main` — Lint Python (Odoo
+# Modules), Validate Docker Compose (Grove), Validate Nginx Config (all in
+# ci.yml) and prod-plan-guard — get NO check-run of any state on the PR head.
+# The PR then hangs at "Expected — waiting for status" and the GOL-1958
+# missing-required-check sweep files an issue against it (it did: PR #746 hung
+# ~4h and needed a manual admin "Approve and run workflows", GOL-2607).
+#
+# `workflow_dispatch` is NOT suppressed for GITHUB_TOKEN, and this repo's
+# ruleset pins required checks by CONTEXT NAME only (no app/source pin), so a
+# dispatched run at the reconcile branch reports check-runs on the very same
+# head SHA and satisfies the gate. The `Self-dispatch required checks` step
+# below does exactly that (GOL-2504 PR 2/2; the `workflow_dispatch:` triggers it
+# calls landed on the default branch in #728, and prod-plan-guard's `detect` job
+# already understands the dispatch event: BASE=main, HEAD=github.sha).
+#
+# Merge is UNCHANGED: still an allowlisted-human SHA-bound APPROVED review
+# through the protected-paths guard (GOL-1478). This only makes the required
+# checks actually run — it cannot approve or merge anything. `merge_group` also
+# still re-runs them on the queue path, so the dispatch is belt-and-suspenders,
+# not the sole gate.
 
 on:
   workflow_dispatch:
@@ -58,6 +72,7 @@ jobs:
     permissions:
       contents: write      # push the reconcile branch (a feature branch, not protected main)
       pull-requests: write # open the reconcile PR
+      actions: write       # gh workflow run — self-dispatch the required checks (GOL-2504)
     env:
       TF_FILE: infra/terraform/environments/production/variables.tf
       MODULES_SHA: ${{ inputs.modules_sha }}
@@ -107,6 +122,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Commit + open reconcile PR
+        id: pr
         if: steps.edit.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -145,11 +161,55 @@ jobs:
             exit 1
           }
           echo "Reconcile PR opened: $PR_URL"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
+
+      # GOL-2504 PR 2/2 / GOL-2607. The PR above was opened under GITHUB_TOKEN,
+      # which does NOT auto-fire `on: pull_request` — so the four required
+      # contexts would have no check-run and the PR would hang at "Expected".
+      # Dispatch them at the reconcile branch instead (same head SHA, so the
+      # context names satisfy the ruleset). See the header for the full why.
+      #
+      # Fail SOFT: the reconcile PR itself is already pushed and open, and the
+      # merge-queue `merge_group` path re-runs these same required checks
+      # regardless. A failed dispatch must not lose the PR — it only costs the
+      # reviewer a manual re-run, which is the pre-GOL-2504 status quo.
+      - name: Self-dispatch required checks
+        if: steps.edit.outputs.changed == 'true' && steps.pr.outputs.branch != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.pr.outputs.branch }}
+        run: |
+          rc=0
+          for wf in ci.yml prod-plan-guard.yml; do
+            if gh workflow run "$wf" --ref "$BRANCH"; then
+              echo "dispatched $wf @ $BRANCH"
+            else
+              echo "::warning::could not dispatch $wf at '$BRANCH' — re-run the required checks by hand, or let the merge queue's merge_group run them (GOL-2504)."
+              rc=1
+            fi
+          done
+          if [ "$rc" -ne 0 ]; then
+            echo "DISPATCH_OK=false" >> "$GITHUB_ENV"
+          else
+            echo "DISPATCH_OK=true" >> "$GITHUB_ENV"
+          fi
+
+      - name: Reconcile summary
+        if: steps.edit.outputs.changed == 'true'
+        env:
+          PR_URL: ${{ steps.pr.outputs.pr_url }}
+        run: |
           {
             echo "## Modules pin reconcile PR opened"
             echo ""
             echo "- Target pin: \`$MODULES_SHA\`"
             echo "- PR: $PR_URL"
+            echo "- Required checks self-dispatched: \`${DISPATCH_OK:-false}\` (ci.yml + prod-plan-guard.yml at the reconcile branch, GOL-2504)"
             echo ""
-            echo "Merge it through the SHA-bound protected-paths-guard to un-drift \`main\`. See this workflow's header for the GITHUB_TOKEN-checks caveat (GOL-2114)."
+            echo "Merge it through the SHA-bound protected-paths-guard to un-drift \`main\`."
+            if [ "${DISPATCH_OK:-false}" != "true" ]; then
+              echo ""
+              echo "> The self-dispatch did NOT succeed. The four required contexts may have no check-run on the PR head - re-run \`CI\` + \`Production Plan Guard\` at the reconcile branch by hand, or queue the PR and let \`merge_group\` run them (GOL-2114 caveat)."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"

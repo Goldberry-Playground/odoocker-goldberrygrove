@@ -257,6 +257,19 @@ resource "digitalocean_app" "tenant" {
         scope = "RUN_AND_BUILD_TIME"
       }
 
+      # Guides publish webhook receiver (/api/webhooks/publish, GOL-985/986).
+      # tenant.secrets.ts reads GROVE_PUBLISH_WEBHOOK_SECRET; unset => the
+      # receiver fails closed (401 on every delivery), which is why Odoo's
+      # "Publish Guide to Storefront" never reached prod. Reuses the shared
+      # revalidate secret (same Odoo -> storefront signed-webhook trust domain)
+      # rather than minting a new credential. Must byte-match the Odoo sender's
+      # GROVE_PUBLISH_WEBHOOK_SECRET_<TENANT> (cloud-init-odoo.yaml.tpl).
+      env {
+        key   = "GROVE_PUBLISH_WEBHOOK_SECRET"
+        value = var.grove_revalidate_secret
+        scope = "RUN_TIME"
+      }
+
       env {
         key   = "GHOST_URL"
         value = local.ghost_urls[each.key]

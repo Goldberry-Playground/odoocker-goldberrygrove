@@ -13,10 +13,11 @@
 #              data), the caddy-data volume (LE certs -- rate-limit
 #              protection, see ADR-005), the DNS zone, and the reserved
 #              IP all survive.
-#              The grove-qa-l3-obs droplet is EXEMPT by default
-#              (GOL-2333 / GOL-2472, docs/ADR/010) -- it and its
-#              firewall + oo/keep DNS records survive. Opt it back in
-#              with QA_L3_TEARDOWN_OBS=1.
+#              There is no obs droplet in this env any more:
+#              grove-qa-l3-obs was retired 2026-09-29 (ADR-010 accepted,
+#              GOL-2333). The canonical obs plane (grove-obs) lives in
+#              environments/observability/ with its own state, out of
+#              this script's reach.
 #              Re-create with `make qa-l3-up`; the droplets re-bootstrap
 #              unattended from cloud-init and Odoo reconnects to the
 #              surviving DB.
@@ -69,18 +70,17 @@ if [ "$MODE" = "all" ]; then
 else
   echo "'compute' destroys: 4 App Platform apps, the Odoo droplet,"
   echo "2 volume attachments (caddy_data + odoo_filestore), plus their"
-  echo "DEPENDENTS terraform pulls in via -target: the Odoo droplet firewall,"
-  echo "the odoo/apex DNS records, and the PG trusted-sources firewall."
-  if [ "${QA_L3_TEARDOWN_OBS:-0}" = "1" ]; then
-    echo "QA_L3_TEARDOWN_OBS=1: ALSO the grove-qa-l3-obs droplet + its firewall"
-    echo "and oo/keep DNS records (15 resources total, GOL-418 inventory)."
-  else
-    echo "grove-qa-l3-obs is EXEMPT (GOL-2333) and survives; set"
-    echo "QA_L3_TEARDOWN_OBS=1 to include it. Check the plan count below."
-  fi
+  echo "DEPENDENTS terraform pulls in via -target: the Odoo droplet firewall"
+  echo "and the odoo/apex DNS records."
   echo "Survives: Managed PG cluster+data, the LE-cert + filestore volumes,"
-  echo "the reserved IP, the qa DNS zone + CF delegation. NOTE: with the PG"
-  echo "firewall destroyed the DB endpoint is password-only until rebuild."
+  echo "the reserved IP, the qa DNS zone + CF delegation, and -- since"
+  echo "GOL-2581 -- the PG trusted-sources allowlist: its droplet leg is a"
+  echo "TAG rule (digitalocean_tag.pg_client), so the allowlist is no longer"
+  echo "a dependent of the droplet and the surviving cluster keeps its"
+  echo "operator-CIDR network gate through the whole inter-train window."
+  echo "Verify after the destroy (expect the ip_addr rules, not []):"
+  echo "  doctl databases firewalls list \$(doctl databases list \\"
+  echo "    --format Name,ID --no-header | awk '/grove-qa-l3-pg/{print \$2}')"
   echo "Rebuild: make qa-l3-up"
 fi
 printf "Type 'destroy-qa-l3-%s' to continue: " "$MODE"
@@ -114,28 +114,6 @@ if [ "$MODE" = "compute" ]; then
   # -target on the bare for_each address (digitalocean_app.tenant)
   # covers all its instances.
   TARGETS="-target=digitalocean_app.hub -target=digitalocean_app.tenant -target=digitalocean_volume_attachment.caddy_data -target=digitalocean_droplet.odoo"
-  # grove-qa-l3-obs is EXEMPT from the release-train teardown (GOL-2323 EPIC /
-  # GOL-2333) until the CEO ratifies its fate in docs/ADR/010. Opt in with
-  # QA_L3_TEARDOWN_OBS=1. NB: this is only the QA obs box -- the canonical obs
-  # plane (grove-obs, environments/observability/) has its own state and is
-  # never touched by this script.
-  if [ "${QA_L3_TEARDOWN_OBS:-0}" = "1" ]; then
-    TARGETS="$TARGETS -target=digitalocean_droplet.obs"
-  fi
-
-  # Fail-closed tripwire (GOL-2472). The exemption above is one `if` away from
-  # being lost to a bad merge/rebase -- this asserts the built target list
-  # actually honours it rather than trusting that the edit above survived.
-  # It aborts BEFORE the destroy, so a regression costs a re-run, not a droplet.
-  case "$TARGETS" in
-    *digitalocean_droplet.obs*)
-      if [ "${QA_L3_TEARDOWN_OBS:-0}" != "1" ]; then
-        echo "FATAL: obs droplet is in the destroy targets but QA_L3_TEARDOWN_OBS is not 1." >&2
-        echo "       The GOL-2333 teardown exemption has regressed -- refusing to destroy." >&2
-        exit 3
-      fi
-      ;;
-  esac
 fi
 
 echo "==> terraform destroy ($MODE)..."
@@ -151,44 +129,71 @@ op run --env-file="$ENV_FILE" -- bash -c '
   # Optional passthrough -- no 1Password home yet (GOL-293), so it is not in
   # .env.op. The TF var defaults to "" when unset.
   export TF_VAR_grove_brand_pr_token="${GROVE_BRAND_PR_TOKEN:-}"
-  terraform -chdir="'"$TF_DIR"'" init -backend-config=backend.hcl -input=false >/dev/null
+  # -reconfigure: backend.hcl is regenerated above on every run, so a stale
+  # .terraform/ cache from an older generator (e.g. pre-force_path_style) must
+  # not abort with "Backend configuration changed". Same bucket/key, so no
+  # state migration is ever wanted here.
+  terraform -chdir="'"$TF_DIR"'" init -reconfigure -backend-config=backend.hcl -input=false >/dev/null
   # -auto-approve is safe here: this script already required the typed
   # destroy-qa-l3-<mode> confirmation above.
   terraform -chdir="'"$TF_DIR"'" destroy '"$TARGETS"' -input=false -auto-approve
 '
 
 echo "==> Post-destroy state summary:"
-# Captured (not just printed) so the exemption check below can read it back.
-# `set -e` would abort on a failed command substitution, so the rc is taken
-# explicitly: "could not read state" must NOT be reported as "obs was destroyed".
-STATE_LIST=""
-STATE_RC=0
-STATE_LIST="$(op run --env-file="$ENV_FILE" -- bash -c '
+op run --env-file="$ENV_FILE" -- bash -c '
   terraform -chdir="'"$TF_DIR"'" state list
-')" || STATE_RC=$?
-printf '%s\n' "$STATE_LIST"
+'
 
-# Acceptance check for the exemption (GOL-2472): `-target` also destroys
-# DEPENDENTS, so proving obs is absent from the target list is not the same as
-# proving it survived. Read it back out of state.
-if [ "$MODE" = "compute" ] && [ "${QA_L3_TEARDOWN_OBS:-0}" != "1" ]; then
-  if [ "$STATE_RC" -ne 0 ]; then
-    echo "WARN: could not read terraform state (rc=$STATE_RC) -- the obs exemption" >&2
-    echo "      is UNVERIFIED. Re-run \`terraform state list\` before signing off." >&2
-    exit 5
+# ── Post-destroy readback tripwire: PG trusted sources (GOL-2581) ────────────
+# The surviving Managed PG cluster holds REAL order/inventory data (system of
+# record since 2026-07-09) and stays up between release-train windows, so its
+# trusted-sources allowlist is the ONLY network gate on its public endpoint
+# once the droplet is gone. The allowlist used to be a terraform DEPENDENT of
+# the droplet, so `destroy -target=digitalocean_droplet.odoo` silently took it
+# with the droplet and the cluster sat at `trusted_sources = []` -- credential-
+# only, for the whole inter-train window (found live 2026-09-29). The TF fix is
+# a tag rule instead of a droplet-id rule (digitalocean_tag.pg_client), which
+# removes the dependency edge; this is the readback that PROVES it held, in the
+# GOL-2474 post-destroy-verification style. `state list` above cannot show it:
+# a resource can be present in state and still have had its remote rules
+# emptied, and absence in state does not prove the remote is open either -- only
+# the live API answers that. Non-fatal by design (the destroy already
+# succeeded); it prints a LOUD remediation line instead of failing a teardown
+# that cannot be un-run.
+echo "==> Trusted-sources readback on grove-qa-l3-pg:"
+if ! command -v doctl >/dev/null 2>&1; then
+  echo "!! doctl not on PATH -- SKIPPED the trusted-sources readback."
+  echo "!! Check by hand: DO console > Databases > grove-qa-l3-pg > Settings"
+  echo "!! > Trusted sources. It MUST NOT be empty."
+else
+  PG_ID="$(doctl databases list --format Name,ID --no-header 2>/dev/null \
+             | awk '/^grove-qa-l3-pg[[:space:]]/{print $2}')"
+  if [ -z "${PG_ID:-}" ]; then
+    # Expected in `all` mode (the cluster is gone); a real problem in compute.
+    if [ "$MODE" = "compute" ]; then
+      echo "!! grove-qa-l3-pg NOT FOUND after a 'compute' teardown -- the"
+      echo "!! cluster was supposed to survive. Investigate before rebuilding."
+    else
+      echo "grove-qa-l3-pg is gone (expected for mode 'all')."
+    fi
+  else
+    RULES="$(doctl databases firewalls list "$PG_ID" --format Type,Value --no-header 2>/dev/null || true)"
+    if [ -z "${RULES//[[:space:]]/}" ]; then
+      echo "!! ============================================================"
+      echo "!! EXPOSURE: grove-qa-l3-pg has NO trusted sources. Its public"
+      echo "!! endpoint is now password-only, and it holds real order data."
+      echo "!! This is the GOL-2581 regression -- the allowlist should have"
+      echo "!! survived this teardown. Re-gate it NOW with the operator CIDRs"
+      echo "!! from var.admin_ip_cidrs in the qa-app-platform env, e.g.:"
+      echo "!!   doctl databases firewalls append $PG_ID \\"
+      echo "!!     --rule ip_addr:<operator-ip>"
+      echo "!! then fix the dependency edge before the next teardown."
+      echo "!! ============================================================"
+    else
+      echo "OK -- trusted sources survived the teardown:"
+      echo "$RULES" | sed 's/^/     /'
+    fi
   fi
-  MISSING=""
-  for ADDR in digitalocean_droplet.obs digitalocean_firewall.obs \
-               digitalocean_record.oo digitalocean_record.keep; do
-    printf '%s\n' "$STATE_LIST" | grep -qx -- "$ADDR" || MISSING="$MISSING $ADDR"
-  done
-  if [ -n "$MISSING" ]; then
-    echo "FATAL: exempt obs resource(s) GONE from state after teardown:$MISSING" >&2
-    echo "       Expected them to survive (GOL-2333 / docs/ADR/010). Rebuild with" >&2
-    echo "       \`make qa-l3-up\` and report on GOL-2472 before the next train." >&2
-    exit 4
-  fi
-  echo "==> Exemption OK: obs droplet + firewall + oo/keep DNS records still in state."
 fi
 
 echo "Done. Rebuild any time with: make qa-l3-up"

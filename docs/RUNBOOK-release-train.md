@@ -20,8 +20,17 @@ Both legs are **local, human-run** (see the design decision below for why).
 
 | Leg | When | Command | What it does |
 |-----|------|---------|--------------|
-| **train-up** | Mon | `make train-up` | `= make qa-l3-up`. Idempotent `terraform apply` of the QA env. Droplets re-bootstrap from cloud-init; Odoo reconnects to the surviving Managed PG. **Safe to re-run.** |
+| **train-up** | Mon | `make train-up` | `= make qa-l3-up`. Idempotent `terraform apply` of the QA env. Droplets re-bootstrap from cloud-init; Odoo reconnects to the surviving Managed PG. **Safe to re-run.** Hard-gated on the publish-webhook secret guard — see below. |
 | **train-teardown** | Thu | `make train-teardown` | `= make qa-l3-teardown` → `scripts/qa-l3-teardown.sh compute`. Destroys the 4 apps + the Odoo droplet + 2 volume attachments (the spend). Typed-confirm gated. **Data/DNS/certs survive**, and so does the exempt **grove-qa-l3-obs** droplet — see below. |
+
+The **promote** leg (Wed) is not a `make` target: it is the odoocker modules-pin
+bump (`scripts/prod-modules-promote.sh`, see
+[`RUNBOOK-module-upgrade.md`](RUNBOOK-module-upgrade.md)) plus
+`promote-storefronts.yml`, and Josh approves the production environment.
+Any **per-tenant env flag** a train activates on prod — e.g. the Stripe Tax
+cutover `GROVE_STRIPE_TAX_{TENANT}` (GOL-2568) — is a *separate named step* in
+that runbook, because prod's `user_data` is in `ignore_changes` and no
+`terraform apply` injects it into the running droplet.
 
 Preview before either (read-only, no spend, no lock-and-leave):
 
@@ -33,33 +42,42 @@ Teardown's dry-run is its **typed-confirm gate**: `scripts/qa-l3-teardown.sh
 compute` prints the exact resource list and refuses to proceed until you type
 `destroy-qa-l3-compute`. Any other input aborts before touching infra.
 
-### The obs droplet is exempt from teardown (GOL-2333 / GOL-2472)
+### If train-up aborts on the publish-webhook secret guard (GOL-2518)
 
-`compute` mode deliberately **does not** destroy `digitalocean_droplet.obs`
-(**grove-qa-l3-obs**), its firewall, or the `oo.qa` / `keep.qa` DNS records.
-Until the CEO ratifies ADR-010 (`docs/ADR/010-observability-droplet-home.md`,
-which lands with PR #698), the exemption is enforced in code rather than in an
-operator's memory:
+`make train-up` now runs `scripts/check-publish-webhook-secrets-wired.sh` and
+**refuses to apply** while any `TF_VAR_grove_publish_webhook_secret_<tenant>`
+would resolve empty. That is deliberate: an apply from that state silently zeroes
+the live per-tenant HMAC secret on both halves and kills the tenant's publish
+path with no error anywhere (it happened to goldberry for ~8 weeks). The abort
+names the tenants and the fix.
 
-- The `-target` list omits the obs droplet unless `QA_L3_TEARDOWN_OBS=1`.
-- A **pre-flight tripwire** aborts with exit 3 if the obs droplet ever appears
-  in the targets without that opt-in — so a bad merge or rebase costs a re-run,
-  not a droplet.
-- A **post-destroy check** re-reads `terraform state list` and exits non-zero
-  unless the obs droplet, its firewall and both DNS records are still there.
-  `-target` also destroys *dependents*, so absence from the target list is not
-  by itself proof of survival; the check is the proof. A clean run prints
-  `==> Exemption OK: obs droplet + firewall + oo/keep DNS records still in state.`
+**Do the 5-minute fix, do not reach for the override.**
+`docs/RUNBOOK-publish-webhook-secrets.md` → "Making it durable": create three
+1Password items in vault `Grove QA`, then merge PR #731. Both steps need a
+human — the ops service account is read-only on every vault, and `.env.op` is a
+protected path.
 
-To include the obs droplet on purpose (after ratification, or to retire it):
+`ALLOW_EMPTY_PUBLISH_SECRETS=1` exists for the case where you genuinely accept
+zeroing them. While **GOL-2518** is open it is the wrong button: it re-breaks
+nursery, which is the tenant the GOL-1896 sellout verification runs against.
 
-```bash
-QA_L3_TEARDOWN_OBS=1 make train-teardown
-```
+**Teardown is the deadline, not the train.** `make train-teardown` destroys
+`digitalocean_app.tenant` and `digitalocean_droplet.odoo`, which are the only
+two places an un-vaulted secret lives. Any secret that is live-only and not in
+1Password is **gone** after teardown, guard or no guard — the guard covers
+applies, not destroys.
 
-> **Not the same box.** This exemption is about **grove-qa-l3-obs**, the QA-only
-> Phase-1.5 stack. The canonical observability plane — **grove-obs**, in
-> `infra/terraform/environments/observability/` — has its own Terraform state
+### No obs droplet in the QA env (retired 2026-09-29, ADR-010)
+
+The QA-only **grove-qa-l3-obs** droplet and its firewall and `oo.qa` / `keep.qa`
+records were retired when the CEO accepted ADR-010
+(`docs/ADR/010-observability-droplet-home.md`, GOL-2333). The teardown
+exemption (`QA_L3_TEARDOWN_OBS`, pre-flight tripwire, post-destroy state check)
+went with it. There is nothing obs-shaped left in `qa-app-platform/` for
+`train-up` to create or `train-teardown` to destroy.
+
+> The canonical observability plane, **grove-obs** in
+> `infra/terraform/environments/observability/`, has its own Terraform state
 > and is never reachable by this script under any flag.
 
 **Never run the DNS script as part of a teardown.** The qa zone and the
@@ -151,8 +169,5 @@ GOL-2326.
 - **train-teardown dry-run:** run `scripts/qa-l3-teardown.sh compute` and enter
   anything other than `destroy-qa-l3-compute` at the prompt — it aborts without
   calling terraform. That typed-confirm IS the safe dry-run.
-- **teardown obs exemption:** `python3 scripts/test_qa_l3_teardown_guard.py`
-  runs the real script against stubbed `op`/`terraform` and asserts the obs
-  droplet is not in the destroy targets. No network, no spend.
 - **reminder:** `gh workflow run release-train-reminder.yml -f leg=up` (or
   `down`) posts a test embed to the ops Discord channel immediately.

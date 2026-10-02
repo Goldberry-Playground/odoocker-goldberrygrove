@@ -12,6 +12,7 @@
     "shellcheck (scripts/)",
     "Reject tracked .env files",
     "cloud-init ASCII guard",
+    "ssh payload render guard",
     "Terraform fmt + validate",
     "Promotion script tests"
   ],

@@ -82,17 +82,80 @@
 # into a documented no-op). A resumed/retried run converges; it does not
 # accrete.
 #
+# ACTIVATING A NEW CONTAINER ENV VAR IN THE SAME TOUCH (GOL-2507, GOL-2822)
+# ---------------------------------------------------------------------------
+# A secret that grove_headless reads from `os.environ` needs BOTH the droplet's
+# /etc/grove/.env line AND the odoo service's compose `environment:`
+# passthrough -- the /.env mount only feeds odoorc.sh's odoo.conf, so a var
+# present only there NEVER reaches the process (the GOL-1935 footgun). Both
+# points are rendered from `user_data`, which prod's droplet carries in
+# `lifecycle { ignore_changes = [...] }` -- so merging the Terraform chain is a
+# provable no-op and the running box only picks the var up on a REBUILD.
+#
+# Rather than make that a second hand-edited prod touch on promote day, pass
+# the value in and this script converges both points in place and recreates
+# odoo (a plain `restart` would keep the OLD container env). It is a bridge,
+# not a snowflake: the committed cloud-init already renders both lines, so the
+# next rebuild reproduces the box without this step.
+#
+#   PERENUAL_API_KEY="$(op read 'op://Goldberry Grove - Admin/perenual_api_key/credential')" \
+#     TARGET_REF=<sha> CONFIRM=PROMOTE scripts/prod-modules-promote.sh
+#
+# Unset => the whole converge is skipped and the promote behaves exactly as it
+# did before. The value travels to the droplet on STDIN, never in argv (so it
+# is never in either machine's process list), and is never echoed.
+#
+# THE STRIPE TAX CUTOVER FLAG RIDES THE SAME MACHINERY (GOL-2568 / GOL-2822)
+# ---------------------------------------------------------------------------
+# GROVE_STRIPE_TAX_{TENANT} is the same SHAPE of problem -- a key grove_headless
+# reads from `os.environ` (controllers/main.py `_stripe_tax_enabled`), rendered
+# by cloud-init into /etc/grove/.env AND by the odoo service's compose
+# `environment:` block, both inside prod's ignored `user_data`. So activating it
+# used to be the GOL-1772 Option B hand-edit: a second prod touch on promote
+# day, verified by eye. Pass it here instead and the pin bump and the flag flip
+# are ONE converge with process-level verification:
+#
+#   GROVE_STRIPE_TAX_NURSERY=1 TARGET_REF=<sha> CONFIRM=PROMOTE \
+#     scripts/prod-modules-promote.sh
+#
+# THIS IS A MONEY PATH: the flag decides whether Stripe or Odoo computes what a
+# customer is charged. Flip it only as a named, board-approved step, and only
+# after the QA e2e gate asserted amounts for a WV and a non-WV address
+# (grove-odoo-modules docs/stripe-tax-cutover.md, Gate 4).
+#
+# Accepted values are exactly the tokens `_stripe_tax_enabled` recognises --
+# truthy 1/true/yes/on, falsey 0/false/no/off -- matched case-insensitively and
+# written lowercase. Anything else is REFUSED locally, before any SSH: the
+# module treats an unrecognised value as OFF, so a typo would leave prod
+# charging Odoo tax while the operator believed Stripe Tax was live (the exact
+# failure var.grove_stripe_tax_tenants' own validation block calls out). Passing
+# a falsey token is the one-command ROLLBACK -- it converges and verifies the
+# same three points, so "off" is proven off rather than assumed.
+#
+# Per-tenant vars: GROVE_STRIPE_TAX_GOLDBERRY / _GGG / _NURSERY. Each is
+# independent; unset ones are not touched. The pre-flight reports the three-way
+# state (.env / deployed compose / process env) for ALL THREE on every run, so
+# a read-only pre-flight always answers "which tenants are on Stripe Tax right
+# now?" without being asked to converge anything.
+#
 # Usage:
 #   TARGET_REF=<40-char sha> scripts/prod-modules-promote.sh            # pre-flight only
 #   TARGET_REF=<40-char sha> CONFIRM=PROMOTE scripts/prod-modules-promote.sh
-#   PROD_HOST=root@<prod-odoo-host> TARGET_REF=<sha> CONFIRM=PROMOTE ...
+#   PROD_HOST=grove-prod-odoo TARGET_REF=<sha> CONFIRM=PROMOTE ...   # ~/.ssh/config alias
 #
 # After a successful run, converge committed HCL onto the now-live pin:
 #   gh workflow run reconcile-modules-pin.yml -f modules_sha=<TARGET_REF>
 ###############################################################################
 set -euo pipefail
 
-PROD_HOST="${PROD_HOST:-root@odoo.gatheringatthegrove.com}"
+# Default = prod's DigitalOcean RESERVED IP (digitalocean_reserved_ip.odoo in
+# infra/terraform/environments/production/odoo.tf) -- stable across droplet
+# replacement, unlike the droplet's own IPv4. NOT the odoo.gatheringatthegrove.com
+# hostname: that record is `proxied = true`, so it resolves to Cloudflare edge
+# IPs that never carry port 22, and ssh hangs until the OS TCP timeout. That
+# old default made every promote from a stock shell hang silently after the
+# banner (2026-09-30, GOL-2677 promote).
+PROD_HOST="${PROD_HOST:-root@174.138.119.171}"
 DEPLOY_DIR="${DEPLOY_DIR:-/etc/grove}"
 FILESTORE_DIR="${FILESTORE_DIR:-/mnt/odoo-filestore}"
 MARKER="${MARKER:-${FILESTORE_DIR}/.grove-modules-rev}"
@@ -114,8 +177,33 @@ TAX_MIGRATION="${TAX_MIGRATION:-19.0.1.47.0}"
 # is a one-line edit here plus the module.
 WV_TAX_NAME="${WV_TAX_NAME:-WV State Sales Tax 6%}"
 WV_TAX_AMOUNT="${WV_TAX_AMOUNT:-6.0}"
+# Optional: the Perenual plant-facts key to activate in the SAME touch
+# (GOL-2507). Empty => no converge at all, byte-for-byte the old behaviour.
+PERENUAL_API_KEY="${PERENUAL_API_KEY:-}"
+# Optional: the per-tenant Stripe Tax cutover flags to converge in the SAME
+# touch (GOL-2568 / GOL-2822). Each is independent; UNSET means "do not touch
+# this tenant", which is NOT the same as OFF -- OFF is an explicit falsey token.
+# All unset => byte-for-byte the old behaviour.
+GROVE_STRIPE_TAX_GOLDBERRY="${GROVE_STRIPE_TAX_GOLDBERRY:-}"
+GROVE_STRIPE_TAX_GGG="${GROVE_STRIPE_TAX_GGG:-}"
+GROVE_STRIPE_TAX_NURSERY="${GROVE_STRIPE_TAX_NURSERY:-}"
+# The tenant slugs this script knows about, upper-cased. Same closed set
+# var.grove_stripe_tax_tenants' validation block enforces, and the same set
+# website_id.grove_tenant_slug() can return. Exposed only so the test harness
+# can narrow it; leave it alone in real use.
+STRIPE_TAX_TENANTS="${STRIPE_TAX_TENANTS:-GOLDBERRY GGG NURSERY}"
 
 die() { echo "ERROR: $*" >&2; exit 2; }
+
+# Fail fast on the Cloudflare-proxied hostnames rather than hanging on a TCP
+# connect that can never complete (see the PROD_HOST default above).
+case "${PROD_HOST#*@}" in
+  odoo.gatheringatthegrove.com|*.gatheringatthegrove.com)
+    die "PROD_HOST=${PROD_HOST} is Cloudflare-proxied -- port 22 never reaches the droplet.
+       Use the reserved IP (the default, root@174.138.119.171) or an ~/.ssh/config
+       alias that points at it (e.g. PROD_HOST=grove-prod-odoo)."
+    ;;
+esac
 
 [ -n "${TARGET_REF}" ] || die "TARGET_REF is required (the reviewed grove-odoo-modules SHA to promote).
        usage: TARGET_REF=<40-char sha> [CONFIRM=PROMOTE] $0"
@@ -130,6 +218,75 @@ if [ -n "${CONFIRM}" ] && [ "${CONFIRM}" != "PROMOTE" ]; then
   die "CONFIRM must be exactly PROMOTE to mutate production (got: ${CONFIRM})"
 fi
 
+# Validate the optional key LOCALLY, before we reach the droplet, against the
+# same contract var.perenual_api_key's own validation block enforces: cloud-init
+# writes it UNQUOTED into /etc/grove/.env, which is bash-sourced under
+# `set -euo pipefail`, so a space/quote/$ would break the NEXT boot -- long
+# after this run looked successful. The error deliberately does not echo the
+# value.
+PERENUAL_CONVERGE=0
+if [ -n "${PERENUAL_API_KEY}" ]; then
+  printf '%s' "${PERENUAL_API_KEY}" | grep -Eq '^[A-Za-z0-9._~+/=:-]{8,200}$' \
+    || die "PERENUAL_API_KEY must be a plain API token with NO whitespace or shell
+       metacharacters (A-Za-z0-9 and . _ ~ + / = : - only, 8-200 chars). Value not
+       echoed. cloud-init writes it unquoted into the bash-sourced /etc/grove/.env."
+  PERENUAL_CONVERGE=1
+fi
+
+# Validate the optional Stripe Tax flags LOCALLY too, but against a much
+# tighter contract than Perenual's charset: the ONLY safe values are the tokens
+# grove_headless actually recognises. `_stripe_tax_enabled` does
+# `(os.environ.get(key) or "").strip().lower() in ("1","true","yes","on")` --
+# so ANY unrecognised string is silently OFF. That is the dangerous failure:
+# `GROVE_STRIPE_TAX_NURSERY=ture` would converge, verify, print success, and
+# leave prod charging Odoo tax while the operator believed Stripe Tax was live.
+# Refuse it here instead of letting the box accept it.
+#
+# STRIPE_TAX_WANTS accumulates "TENANT=value" pairs (lowercased value) for the
+# tenants actually being converged. Empty => no Stripe Tax converge at all.
+STRIPE_TAX_WANTS=""
+STRIPE_TAX_CONVERGE=0
+for _t in ${STRIPE_TAX_TENANTS}; do
+  case "${_t}" in
+    GOLDBERRY) _v="${GROVE_STRIPE_TAX_GOLDBERRY}" ;;
+    GGG)       _v="${GROVE_STRIPE_TAX_GGG}" ;;
+    NURSERY)   _v="${GROVE_STRIPE_TAX_NURSERY}" ;;
+    *)
+      die "STRIPE_TAX_TENANTS contains an unknown tenant slug '${_t}'. Only GOLDBERRY,
+       GGG and NURSERY exist (the values website_id.grove_tenant_slug() returns,
+       upper-cased). A typo here would silently skip the tenant you meant to flip."
+      ;;
+  esac
+  # Unset/empty => not requested. Deliberately NOT treated as "set it to OFF":
+  # an operator who wants OFF says so with a falsey token, and then gets the
+  # same converge + process-level proof the ON path gets.
+  if [ -z "${_v}" ]; then
+    continue
+  fi
+  _v="$(printf '%s' "${_v}" | tr '[:upper:]' '[:lower:]')"
+  case "${_v}" in
+    1|true|yes|on|0|false|no|off) ;;
+    *)
+      # Echo the offending value -- a typo is undiagnosable otherwise -- but
+      # TRUNCATE it. A recognised token is at most 5 chars, so anything longer
+      # is a mis-set variable, and a promote log gets pasted into tickets and
+      # Discord. GOL-2531 is the precedent for assuming the worst about what a
+      # wrong value might be holding.
+      _shown="$(printf '%s' "${_v}" | cut -c1-12)"
+      if [ "${#_v}" -gt 12 ]; then
+        _shown="${_shown}... (truncated)"
+      fi
+      die "GROVE_STRIPE_TAX_${_t}='${_shown}' is not a recognised value. Use a truthy token
+       (1, true, yes, on) to hand this tenant's sales tax to Stripe Tax, or a falsey
+       one (0, false, no, off) to keep/return it to Odoo's computed WV line.
+       grove_headless treats anything else as OFF WITHOUT COMPLAINING, so this run
+       would have reported success while prod kept charging Odoo tax."
+      ;;
+  esac
+  STRIPE_TAX_WANTS="${STRIPE_TAX_WANTS}${STRIPE_TAX_WANTS:+ }${_t}=${_v}"
+  STRIPE_TAX_CONVERGE=1
+done
+
 # Explicit if/then rather than `A && B` (repo shell audit 2026-06-29): under
 # `set -e` an AND-list whose left side is false is exempt from errexit, but the
 # explicit form is the one this repo reads consistently.
@@ -142,20 +299,58 @@ echo "== prod modules promote (${MODE}) =="
 echo "   host:       ${PROD_HOST}"
 echo "   deploy dir: ${DEPLOY_DIR}"
 echo "   target ref: ${TARGET_REF}"
+if [ "${PERENUAL_CONVERGE}" = "1" ]; then
+  echo "   also converging: PERENUAL_API_KEY (GOL-2507) -- value read from the"
+  echo "                    environment, sent on stdin, never printed"
+fi
+if [ "${STRIPE_TAX_CONVERGE}" = "1" ]; then
+  echo "   also converging: Stripe Tax cutover flags (GOL-2568) -- ${STRIPE_TAX_WANTS}"
+  echo "                    *** MONEY PATH: this changes what customers are charged. ***"
+fi
 if [ "${MODE}" = "preflight" ]; then
   echo "   NOTE: read-only pre-flight. Nothing will be written."
   echo "         Re-run with CONFIRM=PROMOTE to execute."
 fi
 echo
 
+# The optional secret goes over STDIN, not argv: the remote payload is visible
+# in the droplet's process list while it runs, so interpolating a key into it
+# would leak it there (and into the local `ps` too). First line of the payload
+# consumes it; `|| true` keeps `set -e` happy on an empty send.
+# WARNING (GOL-2531): everything between the opening and closing double quote
+# below is expanded by THIS shell before ssh runs -- comments included. An
+# unescaped backtick or $ in prose executes/interpolates LOCALLY: a comment
+# reading "inspect it with `printenv`" once spliced the whole local environment
+# (a 1Password service-account token among it) into this payload and forced a
+# rotation. Escape prose as \` and \$; write remote substitutions as \$( ... ).
+# Never print the rendered payload from a shell that holds secrets -- run
+# `python3 scripts/check-ssh-payload-escaping.py` (CI: "ssh payload render
+# guard") or `bash -n` instead.
 # shellcheck disable=SC2029  # we WANT the local vars expanded here, not on the droplet.
-ssh -o StrictHostKeyChecking=yes "${PROD_HOST}" "
+printf '%s\n' "${PERENUAL_API_KEY}" |
+ssh -o StrictHostKeyChecking=yes -o ConnectTimeout=15 "${PROD_HOST}" "
   set -euo pipefail
+  IFS= read -r PERENUAL_WANT || PERENUAL_WANT=''
+  PERENUAL_CONVERGE='${PERENUAL_CONVERGE}'
+  # The Stripe Tax flags are NOT secrets (they are one of eight literal tokens,
+  # already validated locally against that closed set), so unlike the Perenual
+  # key they ride the payload rather than stdin -- there is nothing here a
+  # process list could leak, and the promote log WANTS to show them.
+  STRIPE_TAX_WANTS='${STRIPE_TAX_WANTS}'
+  STRIPE_TAX_CONVERGE='${STRIPE_TAX_CONVERGE}'
+  STRIPE_TAX_TENANTS='${STRIPE_TAX_TENANTS}'
   cd '${DEPLOY_DIR}'
   # DB_NAME lives in the deploy env file; the tax reads below need it to pick
-  # the database. Same \`set -a; . ./.env\` shape scripts/qa-module-upgrade.sh
-  # already uses against this identical file.
-  set -a; . '${DEPLOY_DIR}/.env'; set +a
+  # the database. Extract ONLY that one var -- do NOT \`set -a; . .env\` the whole
+  # file (GOL-2657). Sourcing exports the OLD CUSTOM_MODULES_REF (and
+  # PERENUAL_API_KEY) into this shell, and docker compose interpolation prefers a
+  # variable found in the shell environment over the same key in --env-file. So
+  # the \`dc up --force-recreate custom-modules-sync\` below (which resolves
+  # GITSYNC_REF=\\\${CUSTOM_MODULES_REF}) would recreate git-sync on the STALE ref
+  # even after we rewrite .env to TARGET -> git-sync never advances -> exit 6.
+  # A targeted read leaks nothing compose consumes; --env-file remains the sole
+  # source of the rewritten keys.
+  DB_NAME=\"\$(sed -n 's/^DB_NAME=//p' '${DEPLOY_DIR}/.env' | tail -1 | tr -d '\r')\"
   dc() { docker compose --env-file '${DEPLOY_DIR}/.env' \"\$@\"; }
 
   # Run a python snippet inside the odoo container against the live DB.
@@ -253,7 +448,112 @@ PY
       echo '   -> recorded version unreadable; the post-upgrade guard reads the database directly anyway.' ;;
   esac
 
-  if [ \"\$CURRENT\" = \"\$TARGET\" ] && [ \"\$SYNCED\" = \"\$TARGET\" ] && [ \"\$LAST\" = \"\$TARGET\" ]; then
+  # --- pre-flight 7: PERENUAL_API_KEY activation state (GOL-2507) ----------
+  # Reported on EVERY run, converge requested or not, so the pre-flight always
+  # answers 'is the Perenual half live on prod?'. The VALUE is never printed --
+  # only set / empty / unset.
+  PERENUAL_ENV_COUNT=\"\$(grep -c '^PERENUAL_API_KEY=' '${DEPLOY_DIR}/.env' || true)\"
+  PERENUAL_ENV_VALUE=\"\$(sed -n 's/^PERENUAL_API_KEY=//p' '${DEPLOY_DIR}/.env' | tail -1 | tr -d '\r')\"
+  PERENUAL_COMPOSE='no'
+  if grep -Eq '^[[:space:]]*PERENUAL_API_KEY:' '${DEPLOY_DIR}/docker-compose.yml' 2>/dev/null; then
+    PERENUAL_COMPOSE='yes'
+  fi
+  if [ -n \"\$PERENUAL_ENV_VALUE\" ]; then
+    PERENUAL_ENV_STATE='set'
+  elif [ \"\$PERENUAL_ENV_COUNT\" != '0' ]; then
+    PERENUAL_ENV_STATE='empty'
+  else
+    PERENUAL_ENV_STATE='unset'
+  fi
+  # What the RUNNING container actually has -- the only thing perenual.py reads.
+  # Non-EMPTY, not merely present: \`printenv\` exits 0 on a var that compose
+  # interpolated to the empty string, which is exactly the unkeyed state
+  # PerenualProvider.configured treats as 'not configured'.
+  PERENUAL_RUNTIME='no'
+  if [ -n \"\$(dc exec -T odoo printenv PERENUAL_API_KEY 2>/dev/null | tr -d '\r\n' || true)\" ]; then
+    PERENUAL_RUNTIME='yes'
+  fi
+  echo \">> PERENUAL_API_KEY (GOL-2507): /etc/grove/.env = \$PERENUAL_ENV_STATE, deployed compose passthrough = \$PERENUAL_COMPOSE, odoo process env = \$PERENUAL_RUNTIME\"
+
+  # Pending only when a converge was actually requested. Any of the three
+  # points being wrong means the enrich cron still no-ops, so all three gate.
+  PERENUAL_PENDING='no'
+  if [ \"\$PERENUAL_CONVERGE\" = '1' ]; then
+    if [ \"\$PERENUAL_ENV_VALUE\" != \"\$PERENUAL_WANT\" ] \\
+       || [ \"\$PERENUAL_ENV_COUNT\" != '1' ] \\
+       || [ \"\$PERENUAL_COMPOSE\" != 'yes' ] \\
+       || [ \"\$PERENUAL_RUNTIME\" != 'yes' ]; then
+      PERENUAL_PENDING='yes'
+    fi
+  fi
+  if [ \"\$PERENUAL_PENDING\" = 'yes' ]; then
+    echo '   -> converge PENDING: will write the .env line, add the compose passthrough if'
+    echo '      missing, and RECREATE odoo (a plain restart keeps the old container env).'
+  elif [ \"\$PERENUAL_CONVERGE\" = '1' ]; then
+    echo '   -> already converged; nothing to do for Perenual.'
+  fi
+
+  # --- pre-flight 8: GROVE_STRIPE_TAX_{TENANT} activation state (GOL-2568) --
+  # Reported for EVERY tenant on EVERY run, converge requested or not, so a
+  # read-only pre-flight always answers 'which tenants are on Stripe Tax right
+  # now?'. Unlike the Perenual key the VALUE is printed -- it is a cutover
+  # flag, not a secret, and '1' vs '<empty>' IS the answer.
+  STRIPE_TAX_PENDING='no'
+  STRIPE_TAX_PENDING_LIST=''
+  for T in \$STRIPE_TAX_TENANTS; do
+    K=\"GROVE_STRIPE_TAX_\$T\"
+    # \`grep -c\` exits 1 on zero matches and this payload runs under
+    # \`set -e\`, so the \`|| true\` is load-bearing, not decoration.
+    ST_COUNT=\"\$(grep -c \"^\$K=\" '${DEPLOY_DIR}/.env' || true)\"
+    ST_VALUE=\"\$(sed -n \"s/^\$K=//p\" '${DEPLOY_DIR}/.env' | tail -1 | tr -d '\r')\"
+    ST_COMPOSE='no'
+    if grep -Eq \"^[[:space:]]*\$K:\" '${DEPLOY_DIR}/docker-compose.yml' 2>/dev/null; then
+      ST_COMPOSE='yes'
+    fi
+    # The process env is the ONLY thing _stripe_tax_enabled reads. Files
+    # converged + process not is the state that looks live and still charges
+    # Odoo tax -- exactly the state this pre-flight exists to expose.
+    ST_RUNTIME=\"\$(dc exec -T odoo printenv \"\$K\" 2>/dev/null | tr -d '\r\n' || true)\"
+    # Report the EFFECT, not just the string: grove_headless lower-cases and
+    # strips before matching, so 'On' is ON and 'ture' is silently off.
+    ST_LC=\"\$(printf '%s' \"\$ST_RUNTIME\" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')\"
+    case \"\$ST_LC\" in
+      1|true|yes|on) ST_EFFECT='STRIPE TAX' ;;
+      *)             ST_EFFECT='odoo WV tax line (off)' ;;
+    esac
+    echo \">> \$K (GOL-2568): /etc/grove/.env = '\$ST_VALUE' (x\$ST_COUNT), deployed compose passthrough = \$ST_COMPOSE, odoo process env = '\$ST_RUNTIME' -> \$ST_EFFECT\"
+
+    # Pending only for the tenants this run was actually asked to converge.
+    ST_WANT=''
+    for PAIR in \$STRIPE_TAX_WANTS; do
+      if [ \"\${PAIR%%=*}\" = \"\$T\" ]; then
+        ST_WANT=\"\${PAIR#*=}\"
+      fi
+    done
+    if [ -n \"\$ST_WANT\" ]; then
+      # All four points gate: a missing compose passthrough makes the .env
+      # value unreachable (GOL-1772/GOL-1786), and a stale container makes it
+      # invisible even when both files are right.
+      if [ \"\$ST_VALUE\" != \"\$ST_WANT\" ] \\
+         || [ \"\$ST_COUNT\" != '1' ] \\
+         || [ \"\$ST_COMPOSE\" != 'yes' ] \\
+         || [ \"\$ST_RUNTIME\" != \"\$ST_WANT\" ]; then
+        STRIPE_TAX_PENDING='yes'
+        STRIPE_TAX_PENDING_LIST=\"\$STRIPE_TAX_PENDING_LIST\${STRIPE_TAX_PENDING_LIST:+ }\$T=\$ST_WANT\"
+        echo \"   -> converge PENDING for \$T -> '\$ST_WANT': will write the .env line, add the\"
+        echo '      compose passthrough if missing, and RECREATE odoo.'
+      else
+        echo \"   -> already converged at '\$ST_WANT'; nothing to do for \$T.\"
+      fi
+    fi
+  done
+
+  # The NO-OP shortcut must account for the converge too: a droplet already on
+  # TARGET but still missing the key would otherwise exit 0 here and silently
+  # skip the activation this run was asked to do.
+  if [ \"\$CURRENT\" = \"\$TARGET\" ] && [ \"\$SYNCED\" = \"\$TARGET\" ] && [ \"\$LAST\" = \"\$TARGET\" ] \\
+     && [ \"\$PERENUAL_PENDING\" = 'no' ] \\
+     && [ \"\$STRIPE_TAX_PENDING\" = 'no' ]; then
     echo
     echo \">> NO-OP: env pin, git-sync checkout and upgrade marker are all already \$TARGET.\"
     echo '>> Nothing to promote. (Re-running is safe; this is the idempotent path.)'
@@ -264,6 +564,15 @@ PY
     echo
     echo '>> Pre-flight only -- stopping here, nothing written.'
     echo \">> Would set CUSTOM_MODULES_REF \${CURRENT:-<unset>} -> \$TARGET, resync, and restart odoo.\"
+    if [ \"\$PERENUAL_PENDING\" = 'yes' ]; then
+      echo '>> Would also converge PERENUAL_API_KEY into /etc/grove/.env + the deployed compose'
+      echo '   and recreate odoo instead of restarting it (GOL-2507).'
+    fi
+    if [ \"\$STRIPE_TAX_PENDING\" = 'yes' ]; then
+      echo \">> Would also converge Stripe Tax flags \$STRIPE_TAX_PENDING_LIST into /etc/grove/.env +\"
+      echo '   the deployed compose and recreate odoo instead of restarting it (GOL-2568).'
+      echo '   *** MONEY PATH: this changes what customers are charged. ***'
+    fi
     echo '>> Re-run with CONFIRM=PROMOTE to execute.'
     exit 0
   fi
@@ -314,12 +623,132 @@ PY
   fi
   echo \">> git-sync checkout confirmed at \$TARGET\"
 
+  ###########################################################################
+  # OPTIONAL ENV CONVERGE (GOL-2507, generalised by GOL-2822) -- runs BEFORE
+  # the odoo start so the one restart below both migrates the code and
+  # activates the keys. Ordered after git-sync so a converge can never leave
+  # prod on half-synced code.
+  ###########################################################################
+  RECREATE_ODOO='no'
+
+  # Shared compose patcher. A key that grove_headless reads from os.environ has
+  # to be listed in the odoo service's \`environment:\` block or the value in
+  # --env-file never reaches the process (GOL-1772/GOL-1786: an unlisted key
+  # made the Shippo env-file upsert inject nothing). Anchored on
+  # AUTO_UPGRADE_MODULES, which pre-flight 4 has already proven is present in
+  # that block. Only the \${...} interpolation is written here -- a VALUE never
+  # touches this file, so the patcher is safe for secrets and flags alike.
+  #
+  # ONE backup per run, taken lazily on the first real edit: restoring it undoes
+  # every key this run added, which is the fail-safe we want (all-or-nothing
+  # beats a compose the daemon half-accepted).
+  COMPOSE_BACKUP=''
+  cat > /tmp/grove-compose-env-key.py <<'PY'
+import re
+import sys
+
+path, key = sys.argv[1], sys.argv[2]
+lines = open(path).readlines()
+if any(re.match(r'^\s*' + re.escape(key) + r':', line) for line in lines):
+    print('COMPOSE|already-present|' + key)
+    raise SystemExit(0)
+for i, line in enumerate(lines):
+    m = re.match(r'^(\s*)AUTO_UPGRADE_MODULES:', line)
+    if m:
+        lines.insert(i + 1, m.group(1) + key + ': \${' + key + ':-}\n')
+        open(path, 'w').writelines(lines)
+        print('COMPOSE|inserted-after-AUTO_UPGRADE_MODULES|' + key)
+        raise SystemExit(0)
+print('COMPOSE|no-anchor: AUTO_UPGRADE_MODULES not found', file=sys.stderr)
+raise SystemExit(1)
+PY
+
+  ensure_compose_key() {
+    _key=\"\$1\"
+    if grep -Eq \"^[[:space:]]*\$_key:\" '${DEPLOY_DIR}/docker-compose.yml' 2>/dev/null; then
+      echo \"   compose passthrough for \$_key already present\"
+      return 0
+    fi
+    if [ -z \"\$COMPOSE_BACKUP\" ]; then
+      COMPOSE_BACKUP=\"${DEPLOY_DIR}/docker-compose.yml.bak.\$STAMP\"
+      cp -p '${DEPLOY_DIR}/docker-compose.yml' \"\$COMPOSE_BACKUP\"
+    fi
+    if ! python3 /tmp/grove-compose-env-key.py '${DEPLOY_DIR}/docker-compose.yml' \"\$_key\"; then
+      cp -p \"\$COMPOSE_BACKUP\" '${DEPLOY_DIR}/docker-compose.yml'
+      echo \"ERROR: could not add the \$_key compose passthrough; compose restored from backup.\" >&2
+      exit 10
+    fi
+    # Fail closed on a compose the daemon can no longer parse -- restoring here
+    # is the difference between a bad edit and an outage.
+    if ! dc config -q >/dev/null 2>&1; then
+      cp -p \"\$COMPOSE_BACKUP\" '${DEPLOY_DIR}/docker-compose.yml'
+      echo 'ERROR: edited docker-compose.yml failed \`docker compose config\`; restored from' >&2
+      echo \"       \$COMPOSE_BACKUP. Nothing was recreated.\" >&2
+      exit 10
+    fi
+    echo \"   compose passthrough for \$_key added (backup: \$COMPOSE_BACKUP)\"
+  }
+  if [ \"\$PERENUAL_PENDING\" = 'yes' ]; then
+    echo '>> converging PERENUAL_API_KEY (GOL-2507)'
+
+    # Point 1 -- /etc/grove/.env. Delete-then-append so a pre-existing EMPTY
+    # line (what cloud-init renders before the key is vaulted) or an accidental
+    # duplicate collapses to exactly one. printf is a shell builtin, so the
+    # value never appears in the droplet's process list. .env is already backed
+    # up to \$BACKUP above; that backup is the rollback source for this too.
+    sed -i '/^PERENUAL_API_KEY=/d' '${DEPLOY_DIR}/.env'
+    printf 'PERENUAL_API_KEY=%s\n' \"\$PERENUAL_WANT\" >> '${DEPLOY_DIR}/.env'
+    [ \"\$(grep -c '^PERENUAL_API_KEY=' '${DEPLOY_DIR}/.env')\" = '1' ] \\
+      || { echo 'ERROR: duplicate PERENUAL_API_KEY lines in .env -- refusing to continue' >&2; exit 5; }
+    [ \"\$(sed -n 's/^PERENUAL_API_KEY=//p' '${DEPLOY_DIR}/.env' | tail -1 | tr -d '\r')\" = \"\$PERENUAL_WANT\" ] \\
+      || { echo 'ERROR: PERENUAL_API_KEY upsert did not take (value not echoed)' >&2; exit 5; }
+    echo '   /etc/grove/.env line written (value not echoed)'
+
+    # Point 2 -- the deployed compose passthrough. Without it the var stops at
+    # odoorc.sh and never reaches os.environ. See ensure_compose_key above.
+    ensure_compose_key PERENUAL_API_KEY
+
+    # A \`restart\` reuses the EXISTING container, whose env was fixed at create
+    # time -- the whole converge would be invisible to the process. Recreate.
+    RECREATE_ODOO='yes'
+  fi
+
+  if [ \"\$STRIPE_TAX_PENDING\" = 'yes' ]; then
+    echo \">> converging Stripe Tax cutover flags (GOL-2568): \$STRIPE_TAX_PENDING_LIST\"
+    echo '   *** MONEY PATH: this changes what customers are charged. ***'
+    for PAIR in \$STRIPE_TAX_PENDING_LIST; do
+      T=\"\${PAIR%%=*}\"
+      W=\"\${PAIR#*=}\"
+      K=\"GROVE_STRIPE_TAX_\$T\"
+      # Delete-then-append so the EMPTY line cloud-init renders for an
+      # un-flipped tenant (GROVE_STRIPE_TAX_NURSERY=) collapses to exactly one
+      # line rather than gaining a second. compose reads the LAST occurrence,
+      # so a duplicate is a silent split-brain between what the file appears to
+      # say and what the checkout actually charges. .env is already backed up to
+      # \$BACKUP above; that backup is the rollback source for this too.
+      sed -i \"/^\$K=/d\" '${DEPLOY_DIR}/.env'
+      printf '%s=%s\n' \"\$K\" \"\$W\" >> '${DEPLOY_DIR}/.env'
+      [ \"\$(grep -c \"^\$K=\" '${DEPLOY_DIR}/.env')\" = '1' ] \\
+        || { echo \"ERROR: duplicate \$K lines in .env -- refusing to continue\" >&2; exit 5; }
+      [ \"\$(sed -n \"s/^\$K=//p\" '${DEPLOY_DIR}/.env' | tail -1 | tr -d '\r')\" = \"\$W\" ] \\
+        || { echo \"ERROR: \$K upsert did not take\" >&2; exit 5; }
+      echo \"   /etc/grove/.env: \$K=\$W\"
+      ensure_compose_key \"\$K\"
+    done
+    RECREATE_ODOO='yes'
+  fi
+
   # The blocking upgrade runs in the entrypoint on boot: the revision advanced,
   # so it fires --init=base,<mods> --update=<mods> --stop-after-init BEFORE the
   # server starts, and writes the marker only on success (a failed migration
   # aborts boot and retries -- it never serves a half-migrated DB).
-  echo '>> restarting odoo (entrypoint runs the blocking GOL-1009 upgrade pass)'
-  dc restart odoo
+  if [ \"\$RECREATE_ODOO\" = 'yes' ]; then
+    echo '>> recreating odoo (env converged; entrypoint runs the blocking GOL-1009 upgrade pass)'
+    dc up -d --force-recreate --no-deps odoo
+  else
+    echo '>> restarting odoo (entrypoint runs the blocking GOL-1009 upgrade pass)'
+    dc restart odoo
+  fi
 
   echo \">> waiting up to ${UPGRADE_TIMEOUT}s for the upgrade marker to reach \$TARGET\"
   deadline=\$(( \$(date +%s) + ${UPGRADE_TIMEOUT} ))
@@ -336,6 +765,61 @@ PY
     exit 7
   fi
   echo \">> upgrade marker recorded \$TARGET -- migrations ran\"
+
+  # The converge is only real if the var reached the PROCESS. Checked against
+  # the value we sent, but never printed: a mismatch here means compose
+  # interpolated something else (stale container, second env file).
+  if [ \"\$PERENUAL_CONVERGE\" = '1' ]; then
+    echo
+    echo '>> verifying PERENUAL_API_KEY reached the odoo process (GOL-2507)'
+    GOT=\"\$(dc exec -T odoo printenv PERENUAL_API_KEY 2>/dev/null | tr -d '\r\n' || true)\"
+    if [ -z \"\$GOT\" ]; then
+      echo 'ERROR: odoo has no PERENUAL_API_KEY in its process env after the recreate.' >&2
+      echo '       The enrich cron will keep no-opping and every Perenual job stays queued.' >&2
+      echo '       The module promote itself SUCCEEDED -- this is the Perenual half only.' >&2
+      echo \"       Check the odoo service environment: block in ${DEPLOY_DIR}/docker-compose.yml.\" >&2
+      exit 10
+    fi
+    if [ \"\$GOT\" != \"\$PERENUAL_WANT\" ]; then
+      echo 'ERROR: odoo has a DIFFERENT PERENUAL_API_KEY than the one supplied (values not' >&2
+      echo '       echoed). Something else is interpolating it -- do not assume either is' >&2
+      echo '       the vaulted key.' >&2
+      exit 10
+    fi
+    echo \"   OK -- odoo process env carries the supplied key (\${#GOT} chars)\"
+  fi
+
+  # Same rule for the cutover flags, and for the same reason: files converged +
+  # process not is the state that looks live and still charges Odoo tax. The
+  # values ARE printed -- they are flags, not secrets, and on a money path the
+  # promote log should record exactly what was activated.
+  if [ \"\$STRIPE_TAX_CONVERGE\" = '1' ]; then
+    echo
+    echo '>> verifying the Stripe Tax flags reached the odoo process (GOL-2568)'
+    ST_FAIL=0
+    for PAIR in \$STRIPE_TAX_WANTS; do
+      T=\"\${PAIR%%=*}\"
+      W=\"\${PAIR#*=}\"
+      K=\"GROVE_STRIPE_TAX_\$T\"
+      GOT_ST=\"\$(dc exec -T odoo printenv \"\$K\" 2>/dev/null | tr -d '\r\n' || true)\"
+      if [ \"\$GOT_ST\" != \"\$W\" ]; then
+        echo \"ERROR: odoo process env has \$K='\$GOT_ST', not the requested '\$W'.\" >&2
+        ST_FAIL=1
+      else
+        case \"\$W\" in
+          1|true|yes|on) echo \"   OK -- \$K='\$W' : this tenant's checkout now hands sales tax to STRIPE TAX\" ;;
+          *)             echo \"   OK -- \$K='\$W' : this tenant's checkout keeps Odoo's computed WV tax line\" ;;
+        esac
+      fi
+    done
+    if [ \"\$ST_FAIL\" != '0' ]; then
+      echo '       The module promote itself SUCCEEDED -- this is the Stripe Tax half only.' >&2
+      echo '       Until it is fixed, those tenants are on whatever the process env above says,' >&2
+      echo '       NOT on what /etc/grove/.env claims. Do not announce the cutover.' >&2
+      echo \"       Check the odoo service environment: block in ${DEPLOY_DIR}/docker-compose.yml.\" >&2
+      exit 10
+    fi
+  fi
 
   ###########################################################################
   # THE MONEY GUARD -- see this file's header.
@@ -489,4 +973,30 @@ if [ "${MODE}" = "promote" ]; then
    the PR needs SHA-bound human review. Merge != deploy -- prod is ALREADY on
    this SHA; the PR only stops the next rebuild rolling prod backward.
 EOF
+  if [ "${PERENUAL_CONVERGE}" = "1" ]; then
+    cat <<'EOF'
+3. Perenual (GOL-2507) is now live on prod. Confirm it drains rather than
+   assuming it: press "Fetch facts" on a plant product, then check that the
+   grove.enrich.job row reaches `done` and that
+   ir.config_parameter `grove_headless.perenual_calls.<UTC-today>` increments.
+   Prod's daily budget stays 80 (`grove_headless.perenual_daily_budget`); QA
+   holds the other 20 of the shared vendor quota.
+EOF
+  fi
+  if [ "${STRIPE_TAX_CONVERGE}" = "1" ]; then
+    cat <<EOF
+4. Stripe Tax (GOL-2568) is now live on prod as: ${STRIPE_TAX_WANTS}. The
+   process-env check above proves the FLAG reached Odoo; it does not prove the
+   MONEY. Place one real test order per address class (a WV and a non-WV
+   ship-to) and confirm sale.order.grove_stripe_tax_amount /
+   grove_stripe_tax_jurisdictions are written back by the
+   checkout.session.completed webhook, and that the charged total matches what
+   Stripe computed.
+   ROLLBACK is this same script, no code change and no data migration:
+       GROVE_STRIPE_TAX_<TENANT>=0 TARGET_REF=${TARGET_REF} CONFIRM=PROMOTE \\
+         scripts/prod-modules-promote.sh
+   In-flight Stripe sessions settle normally; new sessions go back to Odoo's
+   computed WV tax line.
+EOF
+  fi
 fi

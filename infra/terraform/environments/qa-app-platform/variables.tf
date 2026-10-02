@@ -15,7 +15,7 @@ variable "cloudflare_api_token" {
 # === Operator inputs ===
 
 variable "admin_ip_cidrs" {
-  description = "Operator IPv4 CIDRs for the SSH allowlist (Odoo + obs droplets) and the Managed PG trusted-source rule. A LIST so more than one operator address can be authorised at once (GOL-1842) — an ISP-rotated IP no longer locks every operator out. Each entry is a `curl -4 ifconfig.me`/32. Codify a new address by appending it here, never as a hand-added DO rule (removed by the next apply)."
+  description = "Operator IPv4 CIDRs for the SSH allowlist (Odoo droplet) and the Managed PG trusted-source rule. A LIST so more than one operator address can be authorised at once (GOL-1842) — an ISP-rotated IP no longer locks every operator out. Each entry is a `curl -4 ifconfig.me`/32. Codify a new address by appending it here, never as a hand-added DO rule (removed by the next apply)."
   type        = list(string)
   # 173.84.140.152/32 = Josh's ISP-rotated operator address, kept in step with
   # production so the same machine reaches QA droplets too (GOL-1842).
@@ -122,25 +122,8 @@ variable "custom_modules_ref" {
   }
 }
 
-# === Observability droplet (Phase 1.5) ===
-
-variable "obs_droplet_size" {
-  description = "DigitalOcean droplet size for the observability droplet (OpenObserve + Keep + inline MinIO). s-1vcpu-2gb fits comfortably in QA per ADR-007 addendum. Cost ~$12/mo while running."
-  type        = string
-  default     = "s-1vcpu-2gb"
-}
-
-variable "openobserve_tag" {
-  description = "OpenObserve image tag (public.ecr.aws/zinclabs/openobserve:<tag>). DIGEST-PINNED since 2026-07-04: upstream prunes old tags from public ECR (v0.17.2 vanished and every fresh obs droplet failed the pull; the old droplet had only survived on its local image cache). Tag-only pins on this registry are time bombs -- keep the @sha256 suffix on updates. Update docker-compose.monitoring.yml (local) in the same commit."
-  type        = string
-  default     = "v0.91.1@sha256:e1ff0445fab3e748ac4cf630308cc8493579e50d19ad255bb3a3b8c1b710aaf7"
-}
-
-variable "keep_tag" {
-  description = "Keep (alert routing) image tag for both keep-api and keep-ui. Match docker-compose.monitoring.yml."
-  type        = string
-  default     = "latest"
-}
+# Observability droplet vars removed 2026-09-29: grove-qa-l3-obs retired per
+# ADR-010 (GOL-2333). The canonical obs plane is environments/observability/.
 
 # === ACME endpoint (Caddy / Let's Encrypt) ===
 
@@ -324,7 +307,7 @@ variable "grove_publish_webhook_secret_ggg" {
 }
 
 variable "grove_publish_webhook_secret_nursery" {
-  description = "HMAC secret for the nursery publish webhook. Not provisioned yet; wired-but-empty (receiver 401s) until the 1Password `Grove QA`/grove-publish-webhook-nursery-qa/secret item + .env.op ref exist."
+  description = "HMAC secret for the nursery publish webhook (Odoo sender <-> grove-sites receiver). Provisioned LIVE 2026-09-23 (GOL-2337: droplet /etc/grove/.env + `doctl apps update` on grove-nursery-qa) to make the GOL-1896 sellout fast path testable at Train #1; the durable value still awaits 1Password `Grove QA`/grove-publish-webhook-nursery-qa/secret + the .env.op ref, so an apply with this empty default ZEROES the live pipeline. Generate with `openssl rand -hex 32`."
   type        = string
   sensitive   = true
   default     = ""
@@ -458,6 +441,18 @@ variable "discord_orders_webhook_url" {
   type        = string
   sensitive   = true
   default     = ""
+}
+
+# --- Stripe Tax per-tenant cutover flag (GOL-2568 / Train #2 GOL-2584) -------
+variable "grove_stripe_tax_tenants" {
+  description = "Storefront tenant slugs whose headless checkout hands sales tax to Stripe Tax instead of Odoo's computed WV line (GOL-2568). grove_headless controllers/main.py `_stripe_tax_enabled(order)` reads the per-tenant env flag GROVE_STRIPE_TAX_{TENANT} from os.environ and treats unset/empty/anything-but-a-truthy-value as OFF; OFF is byte-identical to the pre-GOL-2568 checkout and IS the documented rollback (docs/stripe-tax-cutover.md). Declared as ONE set of slugs rather than three booleans so the cutover state is a single reviewable line and no tenant can be half-flipped: cloud-init renders all three GROVE_STRIPE_TAX_* keys unconditionally, ON for the listed slugs and OFF for the rest. Empty default = every tenant on Odoo tax, i.e. today's behaviour; turning a tenant ON is the separate named step at promote, after the QA e2e gate asserts amounts for a WV and a non-WV address. Feeds cloud-init user_data - changing it REPLACES the QA odoo droplet (which is what train-up does anyway)."
+  type        = set(string)
+  default     = []
+
+  validation {
+    condition     = length(setsubtract(var.grove_stripe_tax_tenants, ["goldberry", "ggg", "nursery"])) == 0
+    error_message = "grove_stripe_tax_tenants may only contain the storefront tenant slugs goldberry, ggg, nursery (the values website_id.grove_tenant_slug() returns). A typo here would silently leave the intended tenant on Odoo tax."
+  }
 }
 
 variable "shippo_api_key" {

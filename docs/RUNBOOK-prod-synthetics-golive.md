@@ -46,7 +46,7 @@ password. Scope it as tight as the money path allows:
    No accounting, no payments, no admin/settings.
 3. Generate an **API key** for that user (Preferences → Account Security → New
    API Key). This is the secret; the login is not.
-4. Store both in 1Password (vault `Grove Production`), then update the two
+4. Store both in 1Password (vault `Grove Prod`), then update the two
    `REPLACE_ITEM_ID` refs in `scripts/prod-monitoring.env.op`:
    - `synthetic_canary_odoo_login`
    - `synthetic_canary_odoo_api_key`

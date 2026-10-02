@@ -4,10 +4,15 @@
 
 region        = "nyc3"
 droplet_size  = "s-2vcpu-4gb"
-# admin_ip_cidrs / ingest_source_cidrs / ingest_source_tags are CODIFIED as
-# variables.tf defaults (GOL-2333) — leave them OUT of terraform.tfvars, or the
-# tfvars value silently overrides the reviewed default and the firewall drifts.
-# Refresh an operator IP via docs/RUNBOOK-refresh-admin-ip-cidrs.md.
+# admin_ip_cidrs / ingest_source_cidrs / ingest_source_tags / automation_ssh_cidrs
+# are CODIFIED as variables.tf defaults (GOL-2333) — leave them OUT of
+# terraform.tfvars, or the tfvars value silently overrides the reviewed default
+# and the firewall drifts. Refresh an operator IP via
+# docs/RUNBOOK-refresh-admin-ip-cidrs.md.
+# Two of those overrides are no longer merely discouraged: since GOL-2600,
+# digitalocean_firewall.obs fails the PLAN if ingest_source_tags loses
+# "role-odoo" (prod ingest would go to a black hole) or if the retired
+# 167.71.109.184/32 is allowlisted again.
 
 # SSH
 ci_ssh_public_key  = "ssh-ed25519 AAAA... grove-obs-deploy"

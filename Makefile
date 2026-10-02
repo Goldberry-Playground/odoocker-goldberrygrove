@@ -205,9 +205,21 @@ qa-l3-teardown-all:
 # cadence; the human running it IS the approval on spend. See
 # docs/RUNBOOK-release-train.md.
 
+## train-preflight: assert the pre-window invariants (volumes, state locking) — read-only
+.PHONY: train-preflight
+train-preflight:
+	@bash scripts/train-preflight.sh
+
 ## train-up: (Mon) bring the biweekly QA window up — alias for qa-l3-up (idempotent apply)
+# GOL-2584: gated on train-preflight. The prerequisites used to be hand-audited
+# out of the manifest issue every train, and the manifest drifted from reality
+# (it still called the GOL-2436 durable-volume program "QA-only" long after both
+# prod volumes were attached). Recursive $(MAKE) rather than a prerequisite list
+# so the ordering holds even under -j. Escapes are on the script:
+# TRAIN_PREFLIGHT_ACK_LOCK=1 (locking unverified, see GOL-2755 / #790).
 .PHONY: train-up
-train-up: qa-l3-up
+train-up: train-preflight
+	@$(MAKE) qa-l3-up
 
 ## train-teardown: (Thu) tear the QA compute down — alias for qa-l3-teardown (typed-confirm)
 .PHONY: train-teardown

@@ -6,6 +6,19 @@ on:
   merge_group:
   push:
     branches: [main]
+  # GOL-2504: PRs opened by the promote/reconcile workflows are authored by the
+  # default GITHUB_TOKEN, so GitHub's anti-recursion guard never fires the
+  # `on: pull_request` run for them -- the three required CI contexts (Lint
+  # Python, Validate Docker Compose, Validate Nginx Config) are created as
+  # `action_required` and never execute, wedging the PR at "Expected -- waiting
+  # for status". Those workflows re-dispatch THIS workflow at the reconcile
+  # branch ref (`gh workflow run ci.yml --ref <branch>`) so the required
+  # contexts report a real check-run at the PR head SHA. Dispatchable only
+  # because this trigger lives on the default branch. Every job here is a
+  # read-only validator/linter/test -- there is no deploy or publish job -- so
+  # running them on a manual dispatch is safe. See prod-plan-guard.yml for the
+  # fourth required context's matching dispatch handling.
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -100,6 +113,29 @@ jobs:
         # This guard existed but ran nowhere until GOL-93 QA apply (2026-07-13)
         # was bitten by a U+2026 ellipsis on cloud-init.yaml.tpl:131.
         run: bash scripts/check-cloud-init-ascii.sh
+
+  ssh-payload-escaping:
+    name: ssh payload render guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Verify ssh payloads do not execute locally at render time
+        # GOL-2531: our operator scripts pass the droplet one big DOUBLE-quoted
+        # string, so every un-backslashed backtick or `$` in it -- comments
+        # included -- is evaluated by the LOCAL shell before ssh runs. A comment
+        # in prod-modules-promote.sh reading "inspect it with `printenv`" did
+        # exactly that: it ran printenv on the operator box and spliced the
+        # agent runtime's whole environment (OP_SERVICE_ACCOUNT_TOKEN included)
+        # into the payload, forcing a 1Password service-account rotation. An
+        # unescaped ${...} is the same bug pointed at a caller-side secret.
+        # shellcheck cannot see this -- SC2029 is disabled in these scripts on
+        # purpose, because local expansion IS the intent for a few allowlisted
+        # vars. Self-tested: `--selftest` asserts both rules fire.
+        run: |
+          python3 scripts/check-ssh-payload-escaping.py --selftest
+          python3 scripts/check-ssh-payload-escaping.py
 
   checkout-secrets-wired:
     name: checkout Stripe secrets wired
@@ -206,10 +242,16 @@ jobs:
           python3 scripts/test_provision_project_agents_shell.py
       - name: Run Odoo Caddyfile routing tests (bus on the evented worker)
         run: python3 scripts/test_caddy_odoo_routes.py
+      # GOL-2582. Static, so it fails on the PR that reintroduces the droplet
+      # reference rather than on the release train that acts on it.
+      - name: Run QA PG firewall independence guard (GOL-2582)
+        run: python3 scripts/test_qa_pg_firewall_independence.py
       - name: Run modules-pin reconcile tests (GOL-2281)
         run: python3 scripts/test_reconcile_modules_pin.py
       - name: Run prod modules-promote tests (GOL-2346 Leg B money guard)
         run: python3 scripts/test_prod_modules_promote.py
+      - name: Run prod publish-webhook wiring tests (guides publish, 2026-09-30 hotfix)
+        run: python3 scripts/test_publish_webhook_prod_wired.py
 
   validate-compose:
     name: Validate Docker Compose (Grove)
