@@ -252,6 +252,10 @@ jobs:
         run: python3 scripts/test_prod_modules_promote.py
       - name: Run prod publish-webhook wiring tests (guides publish, 2026-09-30 hotfix)
         run: python3 scripts/test_publish_webhook_prod_wired.py
+      # GOL-3061. `train-up` depends on `train-preflight`, so a credential the
+      # preflight cannot resolve stalls the whole Release Train window.
+      - name: Run train-preflight credential-resolution tests (GOL-3061)
+        run: python3 scripts/test_train_preflight_credentials.py
 
   validate-compose:
     name: Validate Docker Compose (Grove)
