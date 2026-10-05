@@ -66,9 +66,37 @@ GROUP_XMLIDS = [
 # Write escalation: inventory adjustments. Opt-in only.
 STOCK_MANAGER_XMLID = "stock.group_stock_manager"
 
+# Where --set-password drops the credential for the owning agent to self-inject
+# with bootstrap_otto_env.py. See GOL-2963.
+DEFAULT_SIDECAR_OUT = "/paperclip/work/gol2963/otto-odoo.env"
+
 
 def _log(*a: object) -> None:
     print("[provision]", *a, file=sys.stderr, flush=True)
+
+
+def _write_sidecar(path: str, url: str, db: str, login: str, password: str) -> None:
+    """Write the credential to a mode-0600 env file and log only the path.
+
+    The secret must not reach stdout/stderr: these scripts run inside agent
+    runs, where anything printed is captured into the run transcript.
+    """
+    directory = os.path.dirname(os.path.abspath(path))
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    # Create with 0600 from the start, so the value is never briefly world-readable.
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(f"ODOO_URL={url}\n")
+        f.write(f"ODOO_DB={db}\n")
+        f.write(f"ODOO_LOGIN={login}\n")
+        f.write(f"ODOO_API_KEY={password}\n")
+    os.chmod(path, 0o600)
+    _log(f"credential written to {path} (mode 0600, not printed)")
+    _log(
+        "the owning agent consumes it with "
+        "`python3 scripts/bootstrap_otto_env.py`, which self-injects into its "
+        "own adapterConfig.env and then shreds this file"
+    )
 
 
 def _env(name: str, *fallbacks: str) -> str:
@@ -94,12 +122,23 @@ def main() -> int:
         "--set-password",
         action="store_true",
         help=(
-            "generate a 40-char random password for the user and print it once "
-            "between BEGIN/END markers. Use when mint_logistics_key.py is "
-            "unreachable (no Odoo shell / no prod SSH): common.authenticate() "
-            "accepts a password wherever it accepts an API key, so the value "
-            "can be injected as ODOO_API_KEY. Rotate to a real scoped API key "
-            "when a shell is available again."
+            "generate a 40-char random password for the user and write it to "
+            "--sidecar-out as a mode-0600 env file. Use when "
+            "mint_logistics_key.py is unreachable (no Odoo shell / no prod "
+            "SSH): common.authenticate() accepts a password wherever it "
+            "accepts an API key, so the value can be injected as "
+            "ODOO_API_KEY. Rotate to a real scoped API key when a shell is "
+            "available again."
+        ),
+    )
+    ap.add_argument(
+        "--sidecar-out",
+        default=DEFAULT_SIDECAR_OUT,
+        help=(
+            "where --set-password writes the credential: a mode-0600 env file "
+            "holding ODOO_URL / ODOO_DB / ODOO_LOGIN / ODOO_API_KEY, for the "
+            "owning agent to consume with bootstrap_otto_env.py. The secret is "
+            "NEVER printed — only this path is. (default: %(default)s)"
         ),
     )
     args = ap.parse_args()
@@ -190,10 +229,12 @@ def main() -> int:
 
     print(user_id)
     if new_password:
-        print("----BEGIN LOGISTICS_OTTO_PASSWORD----")
-        print(new_password)
-        print("----END LOGISTICS_OTTO_PASSWORD----")
-        _log("password printed once — capture it now, then clear scrollback")
+        # Deliberately NOT printed. An earlier version echoed the password to
+        # stdout between BEGIN/END markers, which in an agent run means the
+        # credential lands in the run transcript and the issue's log — CodeQL
+        # flagged it as py/clear-text-logging-sensitive-data and was right.
+        # Write it straight to a mode-0600 sidecar instead and print the path.
+        _write_sidecar(args.sidecar_out, url, db, args.login, new_password)
     _log(
         "NEXT: mint this user's API key headlessly — "
         "`odoo shell -d $ODOO_DB --no-http < mint_logistics_key.py` — then "
@@ -203,7 +244,10 @@ def main() -> int:
         "--set-password to write a 40-char random password instead; "
         "common.authenticate() accepts a password wherever it accepts an API "
         "key, so ODOO_API_KEY can carry it. Rotate to a real scoped API key "
-        "once an Odoo shell is reachable again."
+        "once an Odoo shell is reachable again. "
+        "HAND-OFF: DevOps cannot write another agent's env (403 "
+        "deny_missing_grant) — the owning agent consumes the sidecar with "
+        "`bootstrap_otto_env.py`, which self-injects and shreds it."
     )
     return 0
 

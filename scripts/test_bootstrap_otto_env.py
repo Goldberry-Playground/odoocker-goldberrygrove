@@ -21,6 +21,14 @@ would silently break Otto's prod Odoo access again:
   secret-not-logged     the progress line redacts ODOO_API_KEY. The whole point
                         of the sidecar hand-off is that the credential never
                         reaches a log, a comment, or an issue thread.
+  sidecar-write-0600    provision_logistics_user._write_sidecar() creates the
+                        file 0600 from the open() flags (never briefly
+                        world-readable), round-trips cleanly into
+                        read_sidecar(), and does NOT print the password. An
+                        earlier version echoed it to stdout between BEGIN/END
+                        markers, which in an agent run puts the credential in
+                        the run transcript — CodeQL
+                        py/clear-text-logging-sensitive-data, alert 576.
 
     python3 scripts/test_bootstrap_otto_env.py
 """
@@ -30,13 +38,14 @@ from __future__ import annotations
 import importlib.util
 import io
 import os
+import stat
 import sys
 import tempfile
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_MODULE_PATH = os.path.join(
-    os.path.dirname(_HERE), "skills", "odoo-logistics", "scripts", "bootstrap_otto_env.py"
-)
+_SKILL_SCRIPTS = os.path.join(os.path.dirname(_HERE), "skills", "odoo-logistics", "scripts")
+_MODULE_PATH = os.path.join(_SKILL_SCRIPTS, "bootstrap_otto_env.py")
+_PROVISION_PATH = os.path.join(_SKILL_SCRIPTS, "provision_logistics_user.py")
 
 FULL_SIDECAR = (
     "ODOO_URL=https://odoo.gatheringatthegrove.com\n"
@@ -46,9 +55,9 @@ FULL_SIDECAR = (
 )
 
 
-def _load():
-    spec = importlib.util.spec_from_file_location("bootstrap_otto_env", _MODULE_PATH)
-    assert spec and spec.loader, f"cannot load {_MODULE_PATH}"
+def _load(path: str = _MODULE_PATH, name: str = "bootstrap_otto_env"):
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec and spec.loader, f"cannot load {path}"
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -165,6 +174,41 @@ def test_sibling_env_preserved_and_secret_not_logged(mod) -> None:
     print("ok  secret-not-logged")
 
 
+def test_sidecar_write_0600(mod) -> None:
+    prov = _load(_PROVISION_PATH, "provision_logistics_user")
+    secret = "P" * 40
+    directory = tempfile.mkdtemp(prefix="gol2963-")
+    path = os.path.join(directory, "nested", "otto-odoo.env")
+
+    out, err = io.StringIO(), io.StringIO()
+    real_out, real_err = sys.stdout, sys.stderr
+    sys.stdout, sys.stderr = out, err
+    try:
+        prov._write_sidecar(path, "https://odoo.example", "odoo", "logistics-otto", secret)
+    finally:
+        sys.stdout, sys.stderr = real_out, real_err
+
+    mode = stat.S_IMODE(os.stat(path).st_mode)
+    assert mode == 0o600, f"sidecar must be 0600, got {oct(mode)}"
+    assert secret not in out.getvalue(), "the password was printed to stdout"
+    assert secret not in err.getvalue(), "the password was printed to stderr"
+    assert path in err.getvalue(), "the sidecar path should be logged so the operator can find it"
+
+    # Round-trips into the consumer: the two scripts agree on the file format.
+    got = mod.read_sidecar(path)
+    assert got == {
+        "ODOO_URL": "https://odoo.example",
+        "ODOO_DB": "odoo",
+        "ODOO_LOGIN": "logistics-otto",
+        "ODOO_API_KEY": secret,
+    }, got
+
+    os.remove(path)
+    os.rmdir(os.path.dirname(path))
+    os.rmdir(directory)
+    print("ok  sidecar-write-0600")
+
+
 def _expected(key: str) -> str:
     return {
         "ODOO_URL": "https://odoo.gatheringatthegrove.com",
@@ -178,6 +222,7 @@ def main() -> int:
     mod = _load()
     test_sidecar_contract(mod)
     test_host_header_trap(mod)
+    test_sidecar_write_0600(mod)
     test_sibling_env_preserved_and_secret_not_logged(_load())
     print("\nall bootstrap_otto_env tests passed")
     return 0

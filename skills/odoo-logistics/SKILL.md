@@ -178,10 +178,12 @@ Done once by DevOps against the running Odoo; the agent never does this.
    `ODOO_API_KEY`. It is weaker (it also permits web-UI login) — rotate to a
    real scoped key once a shell is reachable again (GOL-2993).
 3. **Hand off, don't inject:** DevOps cannot write another agent's env (403
-   `deny_missing_grant`). Write the four vars to a mode-0600 sidecar at
-   `/paperclip/work/gol2963/otto-odoo.env` and have the owning agent run
-   `scripts/bootstrap_otto_env.py` (see **First-run bootstrap** above). Then
-   clear scrollback.
+   `deny_missing_grant`). `--set-password` already writes the four vars to a
+   mode-0600 sidecar (`--sidecar-out`, default
+   `/paperclip/work/gol2963/otto-odoo.env`) and **never prints the secret** —
+   printing it would put the credential in the agent run transcript. Then have
+   the owning agent run `scripts/bootstrap_otto_env.py` (see **First-run
+   bootstrap** above), which self-injects and shreds the sidecar.
 
 ## Prod Odoo shape traps (verified 2026-10-05 on 19.0-20260513)
 
