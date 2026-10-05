@@ -240,12 +240,6 @@ jobs:
         run: |
           python3 scripts/test_provision_ceo_user_shell.py
           python3 scripts/test_provision_project_agents_shell.py
-      # GOL-2963: the odoo-logistics self-service env bootstrap. Guards the
-      # sidecar contract, the in-cluster-base/Host-header split, the shallow
-      # adapterConfig merge (which would otherwise drop sibling secrets), and
-      # that the credential never reaches a log line.
-      - name: Run odoo-logistics bootstrap tests (GOL-2963)
-        run: python3 scripts/test_bootstrap_otto_env.py
       - name: Run Odoo Caddyfile routing tests (bus on the evented worker)
         run: python3 scripts/test_caddy_odoo_routes.py
       # GOL-2582. Static, so it fails on the PR that reintroduces the droplet
@@ -258,6 +252,18 @@ jobs:
         run: python3 scripts/test_prod_modules_promote.py
       - name: Run prod publish-webhook wiring tests (guides publish, 2026-09-30 hotfix)
         run: python3 scripts/test_publish_webhook_prod_wired.py
+      # GOL-2963: the odoo-logistics self-service env bootstrap. Guards the
+      # sidecar contract, the in-cluster-base/Host-header split, the shallow
+      # adapterConfig merge (which would otherwise drop sibling secrets), and
+      # that the credential never reaches a log line.
+      # Deliberately LAST in this job (GOL-3017): `scripts/test_bootstrap_otto_env.py`
+      # arrives in #839, so if this lands first the step fails on a missing file.
+      # A failing step skips every step after it, and `Promotion script tests` is
+      # not a required context — ahead of the guards below, a merge-order slip
+      # would silently disarm the GOL-2346 Leg B money guard instead of just
+      # showing one red step.
+      - name: Run odoo-logistics bootstrap tests (GOL-2963)
+        run: python3 scripts/test_bootstrap_otto_env.py
 
   validate-compose:
     name: Validate Docker Compose (Grove)
