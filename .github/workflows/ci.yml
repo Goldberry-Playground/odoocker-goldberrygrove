@@ -252,6 +252,8 @@ jobs:
         run: python3 scripts/test_prod_modules_promote.py
       - name: Run prod publish-webhook wiring tests (guides publish, 2026-09-30 hotfix)
         run: python3 scripts/test_publish_webhook_prod_wired.py
+      - name: Run pgadmin dist-info purge tests (GOL-2846 Trivy orphan-metadata guard)
+        run: python3 scripts/test_pgadmin_distinfo_glob.py
 
   validate-compose:
     name: Validate Docker Compose (Grove)
