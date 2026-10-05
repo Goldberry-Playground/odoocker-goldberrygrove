@@ -254,6 +254,8 @@ jobs:
         run: python3 scripts/test_tf_state_lock_check.py
       - name: Run prod publish-webhook wiring tests (guides publish, 2026-09-30 hotfix)
         run: python3 scripts/test_publish_webhook_prod_wired.py
+      - name: Run obs firewall-check tests (GOL-2631 broken-check-is-not-drift)
+        run: python3 scripts/test_obs_firewall_check.py
 
   validate-compose:
     name: Validate Docker Compose (Grove)
