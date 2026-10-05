@@ -76,6 +76,9 @@ ENDPOINT_HOST="${GROVE_S3_HOST:-${GROVE_SPACES_HOST:-nyc3.digitaloceanspaces.com
 # SigV4 credential-scope region. Spaces and AWS want a real region; R2 wants
 # `auto` and rejects the signature otherwise.
 S3_REGION="${GROVE_S3_REGION:-us-east-1}"
+# Test seam only (scripts/test_tf_state_lock_check.py points this at a local
+# stub server); real runs always talk https. Same canonical/legacy pairing.
+ENDPOINT_SCHEME="${GROVE_S3_SCHEME:-${GROVE_SPACES_SCHEME:-https}}"
 MODE="${1:-}"
 
 if [ -z "${AWS_ACCESS_KEY_ID:-}" ] || [ -z "${AWS_SECRET_ACCESS_KEY:-}" ]; then
@@ -86,10 +89,10 @@ fi
 
 # Minimal SigV4 S3 client (stdlib only -- no awscli/boto on the ops hosts).
 _s3() { # _s3 <METHOD> <key> [body] [cond]
-  GROVE_S3_HOST="$ENDPOINT_HOST" GROVE_S3_REGION="$S3_REGION" python3 - "$@" <<'PY'
+  GROVE_S3_HOST="$ENDPOINT_HOST" GROVE_S3_REGION="$S3_REGION" GROVE_S3_SCHEME="$ENDPOINT_SCHEME" python3 - "$@" <<'PY'
 import hashlib, hmac, os, sys, datetime, urllib.request, urllib.error
 AK=os.environ["AWS_ACCESS_KEY_ID"]; SK=os.environ["AWS_SECRET_ACCESS_KEY"]
-HOST=os.environ["GROVE_S3_HOST"]; REGION=os.environ["GROVE_S3_REGION"]; SERVICE="s3"
+HOST=os.environ["GROVE_S3_HOST"]; REGION=os.environ["GROVE_S3_REGION"]; SCHEME=os.environ.get("GROVE_S3_SCHEME","https"); SERVICE="s3"
 method, key = sys.argv[1], sys.argv[2]
 body = sys.argv[3].encode() if len(sys.argv) > 3 else b""
 cond = len(sys.argv) > 4 and sys.argv[4] == "cond"
@@ -105,7 +108,7 @@ scope=f"{datestamp}/{REGION}/{SERVICE}/aws4_request"
 sts=f"AWS4-HMAC-SHA256\n{amzdate}\n{scope}\n"+hashlib.sha256(cr.encode()).hexdigest()
 k=sign(("AWS4"+SK).encode(),datestamp); k=sign(k,REGION); k=sign(k,SERVICE); k=sign(k,"aws4_request")
 sig=hmac.new(k,sts.encode(),hashlib.sha256).hexdigest()
-r=urllib.request.Request(f"https://{HOST}/{key}", data=body or None, method=method)
+r=urllib.request.Request(f"{SCHEME}://{HOST}/{key}", data=body or None, method=method)
 for kk,vv in h.items(): r.add_header(kk,vv)
 r.add_header("Authorization", f"AWS4-HMAC-SHA256 Credential={AK}/{scope}, SignedHeaders={sh}, Signature={sig}")
 try:
@@ -113,6 +116,13 @@ try:
         sys.stdout.write(f"{resp.status}\n"); sys.stdout.write(resp.read().decode("utf-8","replace"))
 except urllib.error.HTTPError as e:
     sys.stdout.write(f"{e.code}\n"); sys.stdout.write(e.read().decode("utf-8","replace"))
+except (urllib.error.URLError, OSError) as e:
+    # DNS failure, refused connection, timeout: no HTTP answer at all. Report
+    # status 000 so the caller's "inconclusive -> proceed" branch handles it.
+    # An uncaught traceback here exits non-zero, and both release-train legs
+    # run the guard under `&&` / `set -e`, so a network blip would otherwise
+    # abort train-up / teardown -- the guard must never be its own outage.
+    sys.stdout.write("000\n"); sys.stdout.write(f"{e}")
 PY
 }
 
@@ -165,7 +175,7 @@ case "$MODE" in
     echo "==> Lock preflight: $KEY"
     OUT="$(_s3 GET "$LOCK_KEY")"
     CODE="$(printf '%s' "$OUT" | head -1)"
-    if [ "$CODE" = "404" ] || [ "$CODE" = "403" ]; then
+    if [ "$CODE" = "404" ]; then
       echo "    no lockfile present -- proceeding."
       exit 0
     fi

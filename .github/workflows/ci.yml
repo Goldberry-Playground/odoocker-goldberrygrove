@@ -242,10 +242,18 @@ jobs:
           python3 scripts/test_provision_project_agents_shell.py
       - name: Run Odoo Caddyfile routing tests (bus on the evented worker)
         run: python3 scripts/test_caddy_odoo_routes.py
+      # GOL-2582. Static, so it fails on the PR that reintroduces the droplet
+      # reference rather than on the release train that acts on it.
+      - name: Run QA PG firewall independence guard (GOL-2582)
+        run: python3 scripts/test_qa_pg_firewall_independence.py
       - name: Run modules-pin reconcile tests (GOL-2281)
         run: python3 scripts/test_reconcile_modules_pin.py
       - name: Run prod modules-promote tests (GOL-2346 Leg B money guard)
         run: python3 scripts/test_prod_modules_promote.py
+      - name: Run Terraform state-lock guard tests (GOL-2584, gates train-up + teardown)
+        run: python3 scripts/test_tf_state_lock_check.py
+      - name: Run prod publish-webhook wiring tests (guides publish, 2026-09-30 hotfix)
+        run: python3 scripts/test_publish_webhook_prod_wired.py
 
   validate-compose:
     name: Validate Docker Compose (Grove)
