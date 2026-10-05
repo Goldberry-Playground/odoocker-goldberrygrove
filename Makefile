@@ -159,12 +159,18 @@ qa-l3-backend:
 	@echo "$$QA_L3_BACKEND_HCL" > $(QA_L3_DIR)/backend.hcl
 
 ## qa-l3-plan: preview changes to the Level 3 QA env (read-only; run before qa-l3-up)
+# -reconfigure: the qa-l3-backend prerequisite REGENERATES backend.hcl on every
+# run, so a .terraform/ cache left by an older generator (e.g. pre-force_path_style)
+# makes a plain `init` abort with "Backend configuration changed". Same bucket and
+# key either way, so no state migration is ever wanted -- just adopt the freshly
+# written config. qa-l3-teardown.sh already does this; qa-l3-plan / qa-l3-up did
+# not, which is a stale-backend-cache trap on the Monday train-up (GOL-2917).
 .PHONY: qa-l3-plan
 qa-l3-plan: qa-l3-backend
 	@op run --env-file=$(QA_L3_ENV_FILE) -- bash -c '\
 		export TF_VAR_grove_brand_pr_token="$${GROVE_BRAND_PR_TOKEN:-}"; \
 		PUBLISH_SECRET_GUARD_WARN_ONLY=1 bash scripts/check-publish-webhook-secrets-wired.sh; \
-		terraform -chdir=$(QA_L3_DIR) init -backend-config=backend.hcl -input=false >/dev/null; \
+		terraform -chdir=$(QA_L3_DIR) init -reconfigure -backend-config=backend.hcl -input=false >/dev/null; \
 		terraform -chdir=$(QA_L3_DIR) plan -input=false'
 
 ## qa-l3-up: apply the full Level 3 QA env (droplets re-bootstrap from cloud-init)
@@ -177,7 +183,7 @@ qa-l3-up: qa-l3-backend
 	@op run --env-file=$(QA_L3_ENV_FILE) -- bash -c '\
 		export TF_VAR_grove_brand_pr_token="$${GROVE_BRAND_PR_TOKEN:-}"; \
 		bash scripts/check-publish-webhook-secrets-wired.sh && \
-		terraform -chdir=$(QA_L3_DIR) init -backend-config=backend.hcl -input=false >/dev/null && \
+		terraform -chdir=$(QA_L3_DIR) init -reconfigure -backend-config=backend.hcl -input=false >/dev/null && \
 		terraform -chdir=$(QA_L3_DIR) apply -input=false'
 
 ## qa-check-publish-secrets: verify an apply would not zero a publish-webhook secret
