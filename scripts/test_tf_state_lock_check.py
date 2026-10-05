@@ -21,6 +21,10 @@ Spaces, no credentials -- and pin the properties that matter:
                                -> exit 0 (locking works; guard can retire).
   probe-ignoring-fails         backend overwrites (DO Spaces today) -> exit 1,
                                and both PUTs carried If-None-Match: *.
+  probe-first-put-rejected     403 on the FIRST PUT (bad token/region) -> exit 3
+                               INCONCLUSIVE, never FAIL (GOL-2760).
+  region-and-canonical-host    GROVE_S3_HOST + GROVE_S3_REGION=auto reach the
+                               request and the SigV4 scope (R2, GOL-2760).
 
     python3 scripts/test_tf_state_lock_check.py
 """
@@ -77,6 +81,9 @@ class _Stub:
                 self._record()
                 body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
                 conditional = self.headers.get("If-None-Match") == "*"
+                if stub.mode == "reject":  # e.g. mis-scoped token / wrong region
+                    self._reply(403, b"<Error><Code>AccessDenied</Code></Error>")
+                    return
                 if stub.mode == "enforcing" and conditional and self.path in stub.objects:
                     self._reply(412)
                     return
@@ -214,6 +221,37 @@ def test_probe_ignoring_fails():
         assert all(h.get("if-none-match") == "*" for h in puts), puts
         # The probe cleans up after itself.
         assert not stub.objects, stub.objects
+    finally:
+        stub.close()
+
+
+def test_probe_first_put_rejected_is_inconclusive():
+    """GOL-2760: a 403 on the FIRST conditional PUT is a credential/region
+    problem, not evidence the backend ignores If-None-Match. It must exit 3
+    (INCONCLUSIVE), never 1 (FAIL), or a token typo would kill ADR-011 option 5."""
+    stub = _Stub("reject")
+    try:
+        r = _run(["probe"], stub.port)
+        assert r.returncode == 3, (r.returncode, r.stdout, r.stderr)
+        assert "FAIL" not in r.stdout, r.stdout
+    finally:
+        stub.close()
+
+
+def test_region_and_canonical_host_reach_the_signature():
+    """GOL-2760: GROVE_S3_HOST (canonical) + GROVE_S3_REGION=auto (R2) must be
+    what the request is sent to and signed for."""
+    stub = _Stub("ignoring", lock_status=404)
+    try:
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("AWS_", "TF_LOCK_", "GROVE_"))}
+        env.update(AWS_ACCESS_KEY_ID="AKIATEST", AWS_SECRET_ACCESS_KEY="secrettest",
+                   GROVE_S3_SCHEME="http", GROVE_S3_HOST=f"127.0.0.1:{stub.port}",
+                   GROVE_S3_REGION="auto")
+        r = subprocess.run(["bash", SCRIPT, "guard", STATE_KEY], env=env,
+                           capture_output=True, text=True, timeout=60)
+        assert r.returncode == 0, (r.returncode, r.stdout, r.stderr)
+        auth = [h for m, _p, h in stub.requests if m == "GET"][0]["authorization"]
+        assert "/auto/s3/aws4_request" in auth, auth
     finally:
         stub.close()
 
