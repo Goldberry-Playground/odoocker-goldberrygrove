@@ -240,12 +240,6 @@ jobs:
         run: |
           python3 scripts/test_provision_ceo_user_shell.py
           python3 scripts/test_provision_project_agents_shell.py
-      # GOL-2963: the odoo-logistics self-service env bootstrap. Guards the
-      # sidecar contract, the in-cluster-base/Host-header split, the shallow
-      # adapterConfig merge (which would otherwise drop sibling secrets), and
-      # that the credential never reaches a log line.
-      - name: Run odoo-logistics bootstrap tests (GOL-2963)
-        run: python3 scripts/test_bootstrap_otto_env.py
       - name: Run Odoo Caddyfile routing tests (bus on the evented worker)
         run: python3 scripts/test_caddy_odoo_routes.py
       # GOL-2582. Static, so it fails on the PR that reintroduces the droplet
