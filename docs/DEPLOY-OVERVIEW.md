@@ -77,7 +77,7 @@ Public URLs after deploy (monolith QA):
 - `https://nursery.qa.gatheringatthegrove.com` (tenant)
 - `https://odoo.qa.gatheringatthegrove.com` (Odoo admin)
 
-**Cutover complete (accelerated Phase 4, 2026-07-04):** the `qa.` hostnames above are served by the **Level 3 env** (`infra/terraform/environments/qa-app-platform/`) — App Platform frontends + Managed Postgres + tiny Odoo droplet + obs droplet. The `qa-l3.*` hostnames are retired. Admin URLs live on the same plain zone: `odoo.qa.*`, `oo.qa.*`, `keep.qa.*` (latter two firewall-allowlisted).
+**Cutover complete (accelerated Phase 4, 2026-07-04):** the `qa.` hostnames above are served by the **Level 3 env** (`infra/terraform/environments/qa-app-platform/`) — App Platform frontends + Managed Postgres + tiny Odoo droplet. The `qa-l3.*` hostnames are retired. The admin URL is `odoo.qa.*` on the same plain zone (firewall-allowlisted). The QA-only obs droplet `grove-qa-l3-obs` and its `oo.qa.*` / `keep.qa.*` records were **retired 2026-09-29** under ADR-010 — observability now lives only on `grove-obs` (`infra/terraform/environments/observability/`). **And the QA env itself only exists inside a release-train window** (`docs/RUNBOOK-release-train.md`): the compute is destroyed every Thursday teardown, so between trains these hostnames resolve to nothing running.
 
 The monolith is fully torn down (2026-07-04): droplet destroyed, TF state emptied, env directory + all pipeline workflows deleted. Frontend deploys no longer go through this repo at all: grove-sites CI pushes images to GHCR and the App Platform apps auto-redeploy (`deploy_on_push`); the Odoo/obs droplets redeploy via `terraform apply` in the qa-app-platform env.
 

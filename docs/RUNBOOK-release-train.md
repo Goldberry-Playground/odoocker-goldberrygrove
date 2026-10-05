@@ -3,8 +3,13 @@
 **Owner:** DevOps (Terra) · **Epic:** GOL-2324 · **Automation issue:** GOL-2326
 **Cadence:** biweekly. Train-up **Monday**, promote **Wednesday**, teardown **Thursday**.
 **Train #1 anchor:** Mon **2026-09-21** (promote Wed **2026-09-23**, first
-teardown Thu **2026-09-24**). The weekday is authoritative — 2026-09-25 is a
-Friday.
+teardown **scheduled** Thu **2026-09-24**). The weekday is authoritative —
+2026-09-25 is a Friday. **That first teardown actually ran 2026-09-29**, five
+days late and five days of QA spend; it is the concrete reason
+`release-train-reminder.yml` exists.
+**Train #2:** up Mon **2026-10-05**, promote Wed **2026-10-07**, teardown Thu
+**2026-10-08** — the *Oct 5* week. (Any "Oct 6 week" wording in an older copy is
+wrong.)
 
 The train exists to cut idle QA compute ~70%: the Level 3 QA env
 (`infra/terraform/environments/qa-app-platform` — 4 App Platform apps + 2
@@ -17,13 +22,17 @@ zone, reserved IP) survives every teardown, so a rebuild is unattended.
 ## The one command per leg
 
 Both legs are **local, human-run** (see the design decision below for why).
+**Josh runs them, from his own shell** — both resolve `op://` refs out of the
+`Goldberry Grove - Admin` vault, which no agent service account can read.
+**Terra conducts** the train (bundle, manifest, gate reading, promote PRs,
+verification) and executes neither leg.
 The Wednesday **promote** leg has no Makefile target and is written up
 separately — see "The Wednesday promote leg" below.
 
 | Leg | When | Command | What it does |
 |-----|------|---------|--------------|
 | **train-up** | Mon | `make train-up` | `= make qa-l3-up`. Idempotent `terraform apply` of the QA env. Droplets re-bootstrap from cloud-init; Odoo reconnects to the surviving Managed PG. **Safe to re-run.** Hard-gated on the publish-webhook secret guard — see below. |
-| **train-teardown** | Thu | `make train-teardown` | `= make qa-l3-teardown` → `scripts/qa-l3-teardown.sh compute`. Destroys the 4 apps + the Odoo droplet + 2 volume attachments (the spend). Typed-confirm gated. **Data/DNS/certs survive.** There is no obs exemption any more — `grove-qa-l3-obs` was retired 2026-09-29 under ADR-010, see below. |
+| **train-teardown** | Thu | `make train-teardown` | `= make qa-l3-teardown` → `scripts/qa-l3-teardown.sh compute`. Destroys the 4 apps + the Odoo droplet + 2 volume attachments (the spend) — GOL-2327 resolved as **Option A: destroy**, not park and not scale-to-zero, so anything live-only on an app (an un-vaulted env secret) is gone. Typed-confirm gated. **Data/DNS/certs survive.** There is no obs exemption any more — `grove-qa-l3-obs` was retired 2026-09-29 under ADR-010, see below. |
 
 The **promote** leg (Wed) is not a `make` target: it is the odoocker modules-pin
 bump (`scripts/prod-modules-promote.sh`, see
@@ -130,9 +139,20 @@ back for the next train.
 | 4 | **Leg B promote.** Rewrites `CUSTOM_MODULES_REF` in the droplet's `/etc/grove/.env`, waits for git-sync, runs the migrations, then **proves** the WV tax bound for every company. | `TARGET_REF=<modules-sha> CONFIRM=PROMOTE scripts/prod-modules-promote.sh` |
 | 5 | **Reconcile the committed pin** onto what is now live, or the next droplet rebuild rolls prod back. Drift-only; never touches prod. Merge the PR it opens. | `gh workflow run reconcile-modules-pin.yml -f modules_sha=<modules-sha>` |
 | 6 | **Leg A storefronts.** Then approve the `production` Environment gate, and merge the reconcile PR it opens. | `gh workflow run promote-storefronts.yml -f target_sha=<sites-sha> -f confirm=PROMOTE` |
+| 7 | **Named flag step — only if this train carries a per-tenant env flag.** See "Flag flips are conditional" below. Skipping it is a valid outcome. | see `RUNBOOK-module-upgrade.md` |
 
 Steps 3–5 are Leg B (modules) and step 6 is Leg A (storefronts); the script
-header explains why they cannot be one workflow. **Order matters when a
+header explains why they cannot be one workflow.
+
+> **Always pass `target_sha` explicitly at step 6**, as the table does. If you
+> ever leave it **blank**, it does **not** mean "grove-sites `main` HEAD": since
+> #821 (merged 2026-10-01) a blank input resolves to the newest `main` commit with
+> a **green `docker.yml`** run, and all four
+> `ghcr.io/goldberry-playground/grove-*:<sha>` tags are verified **before** the
+> gate. That replaced the failure mode where blank resolved to a CI-only `main`
+> HEAD that `docker.yml`'s path filter never built, so the gate was approved
+> against images that did not exist. Blank is the safe default now, but an
+> explicit pinned SHA is still what the bundle contract requires. **Order matters when a
 storefront change depends on a backend change** — promote modules first, so the
 frontend never goes live against an API that does not have its field yet.
 
@@ -152,6 +172,30 @@ wrong advice:
 **So run the promote once. A failure now is a real failure** — stop and
 diagnose it. Do not re-run on the assumption that the second attempt sticks;
 that assumption is exactly what hid GOL-2657 for a full train.
+
+### Flag flips are conditional — ship inert, flip only if the gates passed
+
+Any **per-tenant env flag** a train activates on prod — e.g. the Stripe Tax
+cutover `GROVE_STRIPE_TAX_{TENANT}` (GOL-2568) — is step 7, a *separate named
+step*, never a side effect of steps 3–6. prod's `user_data` is in
+`ignore_changes`, so no `terraform apply` injects it into the running droplet;
+the procedure is in
+[`RUNBOOK-module-upgrade.md`](RUNBOOK-module-upgrade.md) → "Flipping the Stripe
+Tax cutover flag on prod".
+
+**The rule (ruled 2026-10-02, GOL-2584):** the flag **ships OFF** regardless of
+what merged, and is flipped at the Wednesday promote **only if its QA gates
+passed** during the Mon–Wed window.
+
+- Gates green → flip, verify, record it in the train issue.
+- Any gate unmet, inconclusive, or not run → **do not flip.** The flip rides the
+  next train. **This is a planned outcome, not an incident, and needs no
+  escalation.**
+- **Rollback = flag off**, which is byte-identical to the pre-flag path.
+
+Note the flip is a *value* change on a key the committed compose already renders,
+so it never needs a compose edit — and a container's env is fixed at create time,
+so it needs `up -d --force-recreate --no-deps odoo`, never a plain restart.
 
 ### Rollback
 
