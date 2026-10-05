@@ -40,20 +40,31 @@ from __future__ import annotations
 
 import argparse
 import os
+import secrets
+import string
 import sys
 import xmlrpc.client
 
+# Read-biased default scope. Verified against prod Odoo 19.0-20260513 on
+# 2026-10-05 (GOL-2963): `purchase` and the product-packaging feature flag are
+# NOT installed on prod, so those two xml_ids WARN-and-skip there; they resolve
+# on qa-l3. `stock.group_stock_manager` (inventory adjustments) is behind
+# --with-stock-manager because it is a write escalation that needs CEO sign-off.
 GROUP_XMLIDS = [
+    "base.group_user",              # Role / User — required for an internal user
     "stock.group_stock_user",
-    "stock.group_stock_manager",
     "purchase.group_purchase_user",
     "sales_team.group_sale_salesman",
     "uom.group_uom",
+    "account.group_account_readonly",  # read-only accounting, for reconciliation
     # Product packaging feature — needed to read/write product.packaging
     # (box-fit / carton strategy per product class). Skipped gracefully if the
     # feature flag isn't installed (WARN, not fatal).
     "product.group_stock_packaging",
 ]
+
+# Write escalation: inventory adjustments. Opt-in only.
+STOCK_MANAGER_XMLID = "stock.group_stock_manager"
 
 
 def _log(*a: object) -> None:
@@ -74,6 +85,23 @@ def main() -> int:
     ap.add_argument("--login", default="logistics-otto")
     ap.add_argument("--name", default="Logistics — Otto (agent)")
     ap.add_argument("--dry-run", action="store_true", help="report intended changes only")
+    ap.add_argument(
+        "--with-stock-manager",
+        action="store_true",
+        help="also grant stock.group_stock_manager (inventory adjustments, write escalation — CEO approval)",
+    )
+    ap.add_argument(
+        "--set-password",
+        action="store_true",
+        help=(
+            "generate a 40-char random password for the user and print it once "
+            "between BEGIN/END markers. Use when mint_logistics_key.py is "
+            "unreachable (no Odoo shell / no prod SSH): common.authenticate() "
+            "accepts a password wherever it accepts an API key, so the value "
+            "can be injected as ODOO_API_KEY. Rotate to a real scoped API key "
+            "when a shell is available again."
+        ),
+    )
     args = ap.parse_args()
 
     url = _env("ODOO_URL").rstrip("/")
@@ -92,8 +120,12 @@ def main() -> int:
         return models.execute_kw(db, uid, admin_key, model, method, args_, kw or {})
 
     # Resolve group ids from xml_ids.
+    wanted = list(GROUP_XMLIDS)
+    if args.with_stock_manager:
+        wanted.append(STOCK_MANAGER_XMLID)
+
     group_ids = []
-    for xmlid in GROUP_XMLIDS:
+    for xmlid in wanted:
         module, name = xmlid.split(".", 1)
         rec = ex(
             "ir.model.data",
@@ -107,21 +139,39 @@ def main() -> int:
         group_ids.append(rec[0]["res_id"])
     _log(f"resolved {len(group_ids)} groups: {group_ids}")
 
+    # Odoo 19 renamed res.users.groups_id -> group_ids. Detect it instead of
+    # guessing: on 19 a write to `groups_id` fails, which is how the original
+    # version of this script silently broke against prod (GOL-2963).
+    user_fields = ex("res.users", "fields_get", [], {"attributes": ["type"]})
+    group_field = "group_ids" if "group_ids" in user_fields else "groups_id"
+    _log(f"res.users group field on this server: {group_field}")
+
     existing = ex(
         "res.users",
         "search_read",
         [[["login", "=", args.login]]],
-        {"fields": ["id", "name", "groups_id"], "limit": 1},
-    )
+        {"fields": ["id", "name", group_field], "limit": 1},
+        )
 
     if args.dry_run:
         action = "update groups on" if existing else "create"
-        _log(f"DRY-RUN: would {action} user '{args.login}' with groups {group_ids}")
+        _log(
+            f"DRY-RUN: would {action} user '{args.login}' with groups {group_ids}"
+            + (" and reset its password" if args.set_password else "")
+        )
         return 0
+
+    new_password = None
+    if args.set_password:
+        alphabet = string.ascii_letters + string.digits
+        new_password = "".join(secrets.choice(alphabet) for _ in range(40))
 
     if existing:
         user_id = existing[0]["id"]
-        ex("res.users", "write", [[user_id], {"groups_id": [(4, gid) for gid in group_ids]}])
+        values = {group_field: [(4, gid) for gid in group_ids], "active": True}
+        if new_password:
+            values["password"] = new_password
+        ex("res.users", "write", [[user_id], values])
         _log(f"updated existing user id={user_id}, ensured logistics groups")
     else:
         user_id = ex(
@@ -131,18 +181,29 @@ def main() -> int:
                 {
                     "name": args.name,
                     "login": args.login,
-                    "groups_id": [(6, 0, group_ids)],
+                    group_field: [(6, 0, group_ids)],
+                    **({"password": new_password} if new_password else {}),
                 }
             ],
         )
         _log(f"created user id={user_id}")
 
     print(user_id)
+    if new_password:
+        print("----BEGIN LOGISTICS_OTTO_PASSWORD----")
+        print(new_password)
+        print("----END LOGISTICS_OTTO_PASSWORD----")
+        _log("password printed once — capture it now, then clear scrollback")
     _log(
         "NEXT: mint this user's API key headlessly — "
         "`odoo shell -d $ODOO_DB --no-http < mint_logistics_key.py` — then "
         "store it in the secrets manager and inject ODOO_LOGIN + ODOO_API_KEY "
-        "into Otto's runtime env."
+        "into Otto's runtime env. "
+        "NO-SSH FALLBACK (GOL-2963, while GOL-2956 keeps prod SSH dead): pass "
+        "--set-password to write a 40-char random password instead; "
+        "common.authenticate() accepts a password wherever it accepts an API "
+        "key, so ODOO_API_KEY can carry it. Rotate to a real scoped API key "
+        "once an Odoo shell is reachable again."
     )
     return 0
 
