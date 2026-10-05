@@ -6,14 +6,19 @@ authenticates as. Run once by an operator who holds Odoo *admin* credentials
 
 What it does (idempotent):
   1. Finds or creates a res.users login `logistics-otto` (Internal User).
-  2. Grants ONLY the groups a logistics/inventory specialist needs:
+  2. Grants the least-privilege default scope a logistics/inventory specialist
+     needs (see GROUP_XMLIDS; an xml_id not installed on the target DB is a
+     WARN-and-skip, not fatal):
+        - Role / User             (base.group_user)   -> required internal user
         - Inventory / User        (stock.group_stock_user)
-        - Inventory / Manager     (stock.group_stock_manager)   -> adjustments
         - Purchase / User         (purchase.group_purchase_user)
         - Sales / User: own docs  (sales_team.group_sale_salesman)
         - Multi-UoM               (uom.group_uom)
+        - Accounting / Read-only  (account.group_account_readonly) -> reconcile
         - Product packaging       (product.group_stock_packaging)
-     Explicitly does NOT grant Settings/admin, Accounting, or user-management.
+     Inventory / Manager (stock.group_stock_manager — inventory adjustments) is
+     a WRITE escalation and is granted ONLY with --with-stock-manager.
+     Does NOT grant Settings/admin, write Accounting, or user-management.
   3. Prints the user id.
 
 What it deliberately does NOT do:
