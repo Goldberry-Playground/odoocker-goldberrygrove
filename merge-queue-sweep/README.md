@@ -36,26 +36,37 @@ constraint that fixes where this runs.
 
 `compose.agent-plane.yml` is the service definition. It is **not wired into any
 stack in this repo** — every other compose file here targets the app or
-observability droplets, where the broker does not resolve. On the agent-plane
-host:
+observability droplets, where the broker does not resolve.
+
+**On the agent-plane host, one command:**
 
 ```bash
-# 1. which network is the broker on?
-docker inspect gh-token-broker \
-  --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}'
-
-# 2. AGENT_PLANE_NETWORK=<that value>, then bring it up as an overlay
-docker compose -f <agenticos-compose.yml> -f merge-queue-sweep/compose.agent-plane.yml \
-  up -d --build merge-queue-sweep
-
-# 3. verify without waiting for a tick — dry run, arms nothing
-docker compose exec merge-queue-sweep /app/scripts/ci/merge-queue-arm-sweep.sh
+merge-queue-sweep/deploy.sh /path/to/agenticos-compose.yml
 ```
 
-Step 3 should print a `repo=…` banner per repo and then either `nothing to arm`
-or `DRY-RUN would arm #N`. A `FATAL: broker key not readable` means the key
-bind-mount is wrong; a `FATAL: GraphQL returned no repository data` means the
-broker minted a token without access to that repo.
+It autodetects the network `gh-token-broker` is on (a wrong value there gives you
+a sidecar that starts fine and then fails every tick — the slowest possible way
+to find out), checks the broker key, builds and starts the sidecar, then runs the
+sweep once in **dry run** inside the container and fails loudly if it cannot
+work. Nothing is armed by the deploy itself; the first real arming is the next
+`*/5` tick.
+
+A healthy verification prints a `repo=…` banner per repo and then either
+`nothing to arm` or `DRY-RUN would arm #N`. If it fails:
+
+| output | meaning |
+| --- | --- |
+| `FATAL: broker key not readable` | key bind-mount path is wrong |
+| `FATAL: GraphQL returned no repository data` | broker minted a token without access to that repo |
+| `WARN could not fetch …protected-paths-carveout.mjs` | base-branch read failed; the sweep fails closed and skips every unapproved PR, i.e. does nothing quietly |
+
+Optional but recommended, passed through by `deploy.sh`:
+
+```bash
+SWEEP_HEARTBEAT_URL=https://hc-ping.com/<uuid> \
+DISCORD_OPS_WEBHOOK_URL=... \
+  merge-queue-sweep/deploy.sh /path/to/agenticos-compose.yml
+```
 
 **Merged to `main` is not applied.** Until that compose edit happens on the host,
 this directory changes nothing.
