@@ -278,3 +278,57 @@ Run this with an App installation token or a PAT — **not** `GITHUB_TOKEN`, and
 not from inside a workflow using the default token, or you simply build another
 dead group. Confirm `enqueuer.login` is not `github-actions`, then check that the
 new group commit has a non-zero run count within ~60 s.
+
+## The unattended sweep (GOL-3159)
+
+Everything above is per-incident. The standing prevention is
+`scripts/ci/merge-queue-arm-sweep.sh`, run every 5 minutes on the agent plane by
+`merge-queue-sweep/` (supercronic sidecar; deploy steps in
+`merge-queue-sweep/README.md`). It wraps the per-repo arming script over all
+three repos with `ARM_UNAPPROVED=1`, which is the only mode that acts *before*
+approval — approval and the wedging enqueue are 6 seconds apart, so a sweep that
+waits for approval has already lost.
+
+Run it by hand any time (dry run; arms nothing):
+
+```bash
+scripts/ci/merge-queue-arm-sweep.sh
+scripts/ci/merge-queue-arm-sweep.sh --apply     # arm for real
+```
+
+### What the cadence can and cannot do
+
+Measured over the last 39 agent PRs that were enqueued by `github-actions[bot]`
+across the three repos (2026-10-06): open→enqueue window min **1.6 min**, median
+23 min, p90 183 min. Expected catch rate at interval `T`: 96% at 5 min, 88% at
+10 min, 83% at 15 min, 49% hourly.
+
+So **polling is a backstop, not a guarantee** — odoocker #813 was enqueued 1.6
+minutes after opening, and no practical interval beats that reliably. If you are
+chasing a wedge that the sweep "should have caught", check the PR's open→enqueue
+gap before suspecting the sweep.
+
+The steady state is still for whatever opens an agent PR to arm it in the same
+breath. The sweep catches the forgetful case and drains the backlog.
+
+### Is the sweep alive, and is it working?
+
+Two different questions, two different signals — neither detects the other's
+failure:
+
+- **alive** — `SWEEP_HEARTBEAT_URL` is pinged on every completed run. A dead
+  sweep sends nothing, so only a dead-man's switch can see it. If the
+  Healthchecks.io check is late, the sidecar is down: `docker compose logs
+  merge-queue-sweep` on the agent-plane host.
+- **working** — `DISCORD_OPS_WEBHOOK_URL` fires after 3 consecutive **hard**
+  failures on a repo (could not evaluate it at all: broker unreachable, token
+  mint failed, GraphQL returned no repository), and once more on recovery. A
+  single refused arm is a **soft** failure and is deliberately not paged: the
+  script is idempotent and the next tick retries it.
+
+On a hard-failure alert, the first two things to check are the broker and the key:
+
+```bash
+curl -fsS -H "Authorization: Bearer $(cat /paperclip/gh-broker.key)" \
+  "http://gh-token-broker:9099/token?owner=Goldberry-Playground&repo=odoocker-goldberrygrove"
+```

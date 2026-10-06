@@ -1,0 +1,61 @@
+# Agent-plane compose fragment for the merge-queue arming sweep (GOL-3159).
+#
+# ⚠️  This is NOT part of any stack in this repo. The sweep must run on the AGENT
+# PLANE (the AgenticOS host), on the same docker network as `gh-token-broker`,
+# because the broker is the only holder of the GitHub App private key and is
+# reachable only by service name on that network. Every other compose file here
+# targets the app or observability droplets, where the broker does not resolve.
+#
+# Deploy (agent-plane host):
+#   1. Find the network gh-token-broker is attached to:
+#        docker inspect gh-token-broker \
+#          --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}'
+#   2. Put that value in `networks.agent_plane.name` below.
+#   3. Merge this service into the AgenticOS compose (or keep it as an overlay:
+#        docker compose -f <agenticos-compose> -f compose.agent-plane.yml up -d merge-queue-sweep
+#      ).
+#   4. Verify, without waiting for a tick:
+#        docker compose exec merge-queue-sweep /app/scripts/ci/merge-queue-arm-sweep.sh
+#      (no --apply: dry run. Expect a `repo=` banner per repo and either
+#      "nothing to arm" or "DRY-RUN would arm #N".)
+#
+# "Merged to main" is not "applied" here -- this file changes nothing until that
+# compose edit happens on the host.
+
+services:
+  merge-queue-sweep:
+    build:
+      context: ..
+      dockerfile: merge-queue-sweep/Dockerfile
+    image: grove/merge-queue-sweep:latest
+    restart: unless-stopped
+    environment:
+      # Broker: default is the service name on the agent-plane network.
+      GH_TOKEN_BROKER_URL: ${GH_TOKEN_BROKER_URL:-http://gh-token-broker:9099}
+      GH_BROKER_API_KEY_FILE: ${GH_BROKER_API_KEY_FILE:-/paperclip/gh-broker.key}
+      SWEEP_REPOS: ${SWEEP_REPOS:-Goldberry-Playground/odoocker-goldberrygrove Goldberry-Playground/grove-odoo-modules Goldberry-Playground/grove-sites}
+      SWEEP_FAIL_THRESHOLD: ${SWEEP_FAIL_THRESHOLD:-3}
+      SWEEP_FAIL_REPEAT: ${SWEEP_FAIL_REPEAT:-12}
+      # Dead-man's switch: detects the sweep STOPPING. Nothing else can.
+      SWEEP_HEARTBEAT_URL: ${SWEEP_HEARTBEAT_URL:-}
+      # Failure alerts: detects the sweep RUNNING AND FAILING.
+      DISCORD_OPS_WEBHOOK_URL: ${DISCORD_OPS_WEBHOOK_URL:-}
+      # ARM_PROTECTED is deliberately absent. Setting it would pre-arm
+      # unapproved protected-path PRs, turning a human reviewer's approval into
+      # the merge itself. Board decision, not a deploy knob.
+    volumes:
+      # Read-only, and only the one key. The broker mints short-lived
+      # installation tokens from it; the sweep never sees the App private key.
+      - ${GH_BROKER_API_KEY_FILE:-/paperclip/gh-broker.key}:/paperclip/gh-broker.key:ro
+      - merge_queue_sweep_state:/var/lib/merge-queue-sweep
+    networks:
+      - agent_plane
+
+volumes:
+  merge_queue_sweep_state:
+
+networks:
+  agent_plane:
+    external: true
+    # Replace with the network gh-token-broker is on (step 1 above).
+    name: ${AGENT_PLANE_NETWORK:-agenticos_default}
