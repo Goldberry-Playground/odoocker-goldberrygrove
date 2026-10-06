@@ -75,6 +75,15 @@ partitions:
     owner: devops-terra
     review: [engineering-alice]
     wave: 1
+  # Agent-plane merge-queue arming sweep (GOL-3159). Not part of any droplet
+  # stack in this repo -- it runs beside gh-token-broker on the agent plane,
+  # the only host where the App installation token can be minted.
+  - name: merge-queue-sweep
+    paths:
+      - merge-queue-sweep/**
+    owner: devops-terra
+    review: [engineering-alice]
+    wave: 1
   - name: scripts
     paths:
       - scripts/**
