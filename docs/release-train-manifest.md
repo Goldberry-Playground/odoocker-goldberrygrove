@@ -188,10 +188,17 @@ Two items this surfaces for Train #3, neither blocking the inert ship:
   caught, logged at WARNING, and silently falls back to Odoo's `amount_total`.
   Safe (the customer is still taxed) but invisible: there is no Discord alert on
   a money-path fallback. Worth a watcher before the flag ever goes on in prod.
-- The settlement leg of the deposit path has no automated gate at all; Gate 4c
+- The settlement leg of the deposit path had no automated gate; Gate 4c
   proves tax stands down at checkout, not that Stripe Tax computes the balance
-  correctly at ship. That needs a settlement-level gate, and the flip should not
-  outlive Oct 15 without one.
+  correctly at ship. **Now Gate 4d (GOL-2910):** a deposit order is driven to
+  the ship event on QA and the gate asserts `grove_stripe_tax_amount` equals the
+  recorded breakdown's `tax_amount_exclusive` at ~6% of the shipped base, the
+  breakdown names WV, and the captured balance is `base + tax − $10`. A
+  settlement that fell back to Odoo tax is `STRIPE_TAX_NOT_USED` (red). 4d is in
+  the Gate 4 set, so `flip_allowed` is false without it. Needs
+  `QA_ODOO_RPC_LOGIN/PASSWORD` (`scripts/stripe-tax-gate.env.op`).
+- The fallback itself now alerts: grove-odoo-modules#331 posts a
+  `Stripe Tax FALLBACK` Discord alert + order chatter on a failed ship-time calc.
 
 ### Gate (on QA, Mon–Wed)
 
