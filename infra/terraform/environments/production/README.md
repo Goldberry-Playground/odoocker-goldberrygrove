@@ -63,6 +63,37 @@ resources being changed, and any plan that proposes replacing
 3. `terraform init -backend-config=backend.hcl`
 4. `op run --env-file=.env.op -- terraform plan`
 5. `op run --env-file=.env.op -- terraform apply -target=...`
+6. **If the plan REPLACES a droplet, the same apply must also `-target` that
+   droplet's firewall.** A `digitalocean_firewall`'s `droplet_ids` is computed
+   from `digitalocean_droplet.<x>.id`, but it is a *separate* resource — a
+   `-target`'d apply that only names the droplet leaves the firewall holding the
+   **dead** id, which DO drops, leaving `droplet_ids = []`. The firewall then
+   exists with perfectly correct rules and protects nothing. This is what
+   happened on 2026-09-16: `grove-prod-odoo` was replaced, the firewall was not
+   re-planned, and prod `:22` answered the whole internet for 13 days
+   (GOL-2565). So:
+
+   ```bash
+   # replacing the odoo droplet -> carry its firewall in the SAME -target set
+   op run --env-file=.env.op -- terraform apply \
+     -target=digitalocean_droplet.odoo -target=digitalocean_firewall.odoo
+   # replacing blogs -> likewise
+   op run --env-file=.env.op -- terraform apply \
+     -target=digitalocean_droplet.blogs -target=digitalocean_firewall.blogs
+   ```
+
+   Then prove it, because a clean apply is not proof of membership:
+
+   ```bash
+   DO_TOKEN=<read-only> infra/terraform/scripts/check-firewall-membership.py production
+   # must exit 0 and print the NEW droplet id for every codified firewall
+   ```
+
+   The nightly `.github/workflows/firewall-membership.yml` catches a missed
+   convergence within 24h, but the apply-time step is what keeps the exposure
+   window at zero. Anything else attached to the droplet by id (reserved IPs,
+   volume attachments, monitor alerts) deserves the same treatment — read the
+   full plan, not just the resource you set out to change.
 
 ## Reproducibility (GOL-385, open)
 
