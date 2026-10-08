@@ -36,6 +36,15 @@ permissions:
   pull-requests: read # list open PRs
   checks: read # check-runs on the head SHA
   statuses: read # commit statuses on the head SHA
+  actions: read # workflow runs + jobs + pending deployments on/around the head SHA
+  # ^ GOL-2732 tells an approval gate (`action_required`) apart from a dropped
+  #   trigger; GOL-2838 tells a job QUEUED behind a held `concurrency` group
+  #   apart from both, and reads the holder's pending deployments to name the
+  #   Environment and approver that must clear it. This repo is public, so the
+  #   runs and jobs endpoints read without the scope, but
+  #   `GET /actions/runs/{id}/pending_deployments` does not — without this line
+  #   the sweep still refuses the wrong close/reopen remedy but cannot say WHO
+  #   has to approve or cancel the holding run, which is the whole payload.
   issues: write # mint/close the deduped ci-failure issue
 
 concurrency:
