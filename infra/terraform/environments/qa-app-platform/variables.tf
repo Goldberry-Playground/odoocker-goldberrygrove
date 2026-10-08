@@ -55,9 +55,9 @@ variable "region" {
 # === Odoo droplet ===
 
 variable "odoo_droplet_size" {
-  description = "Tiny droplet for Odoo only (no frontends, no Postgres). s-1vcpu-2gb is the smallest size that comfortably runs Odoo 19 + workers; cost ~$12/mo while running. The full QA monolith uses s-2vcpu-4gb because it also runs PG + 4 frontends — Level 3 offloads those, so this can drop to half the size."
+  description = "Tiny droplet for Odoo only (no frontends, no Postgres). 1 vCPU / 2 GB is the smallest shape that comfortably runs Odoo 19 + workers. Pinned to the -intel slug (~$14/mo while running) because nyc3 refused the generic s-1vcpu-2gb at Train #2 QA-up even though /v2/sizes still lists it (GOL-2735); override with TF_VAR_odoo_droplet_size if that changes. The full QA monolith uses s-2vcpu-4gb because it also runs PG + 4 frontends — Level 3 offloads those, so this can drop to half the size."
   type        = string
-  default     = "s-1vcpu-2gb"
+  default     = "s-1vcpu-2gb-intel"
 }
 
 variable "droplet_image" {
