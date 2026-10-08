@@ -39,7 +39,8 @@ green gate whose specs silently skipped is worse than a red one.
 
 USAGE
     bash scripts/stripe-tax-gate.sh --dry-run          # plan + preconditions
-    bash scripts/stripe-tax-gate.sh --gate 4           # flag must be ON
+    bash scripts/stripe-tax-gate.sh --gate 4           # flag must be ON (incl. settlement)
+    bash scripts/stripe-tax-gate.sh --case settlement  # ship-time leg only (GOL-2910)
     bash scripts/stripe-tax-gate.sh --gate 3           # flag must be OFF
     bash scripts/stripe-tax-gate.sh --verdict          # merge both runs -> flip?
 """
@@ -51,7 +52,9 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field, asdict
 
@@ -70,6 +73,16 @@ TAX_TOLERANCE_CENTS = 2
 
 # GOL-2233: ONE flat $10 deposit for the whole order, no matter the cart size.
 DEPOSIT_DOLLARS = 10.00
+
+# Settlement leg (GOL-2910): the ACTUAL label cost the gate records on its hand
+# label. Any positive number works — the assertion is relative to the shipped
+# base Odoo ends up with, not to this figure.
+DEFAULT_SETTLE_SHIPPING = 12.50
+# Stripe's reusable test card token; attached to a throwaway test-mode Customer
+# so the off-session balance capture has a saved card to charge.
+STRIPE_TEST_CARD_PM = "pm_card_visa"
+# A plain UA: Cloudflare in front of QA bot-blocks the default Python-urllib one.
+USER_AGENT = "grove-stripe-tax-gate/1.0"
 
 # RFC 2606 reserved TLD, so scripts/qa-test-data-cleanup.py reaps every order and
 # partner this gate creates with zero false positives (RESERVED_TEST_SUFFIXES).
@@ -294,6 +307,138 @@ def evaluate_rollback_wv(res: CaseResult, session: dict, line_items: list) -> Ca
     return res
 
 
+def _breakdown_entries(jurisdictions) -> list:
+    """grove_stripe_tax_jurisdictions is the calc's raw ``tax_breakdown`` JSON."""
+    if not jurisdictions:
+        return []
+    if isinstance(jurisdictions, str):
+        try:
+            jurisdictions = json.loads(jurisdictions)
+        except json.JSONDecodeError:
+            return []
+    return [e for e in jurisdictions if isinstance(e, dict)] if isinstance(jurisdictions, list) else []
+
+
+def breakdown_names_wv(entries: list) -> bool:
+    """True when any taxed breakdown entry is West Virginia.
+
+    A /v1/tax/calculations ``tax_breakdown`` entry carries the state under
+    ``tax_rate_details.state``; Checkout-shaped breakdowns (and the module's
+    test fixtures) carry a ``jurisdiction`` object instead — accept either, but
+    only on an entry that actually taxed something.
+    """
+    for e in entries:
+        if int(e.get("amount") or 0) <= 0:
+            continue
+        details = e.get("tax_rate_details") or {}
+        juris = e.get("jurisdiction") or ((e.get("rate") or {}).get("jurisdiction")) or {}
+        if isinstance(juris, str):
+            juris = {"display_name": juris}
+        if (str(details.get("state") or "").upper() == "WV"
+                or str(juris.get("state") or "").upper() == "WV"
+                or "west virginia" in str(juris.get("display_name") or "").lower()):
+            return True
+    return False
+
+
+def breakdown_exclusive_cents(entries: list) -> int:
+    """Stripe's ``tax_amount_exclusive`` == the sum of the non-inclusive entries."""
+    return sum(int(e.get("amount") or 0) for e in entries if not e.get("inclusive"))
+
+
+def evaluate_settlement(res: CaseResult, settle_status, order: dict, intent, rate_pct: float) -> CaseResult:
+    """Gate 4d — flag ON, deposit order SHIPPED: Stripe Tax computes the balance.
+
+    Gate 4c proves Stripe Tax stands DOWN on a deposit checkout. This proves the
+    other half (GOL-2910): at ship, ``settle_order_at_ship`` asks
+    ``/v1/tax/calculations`` for tax on the actual goods + actual shipping, and
+    captures ``base + tax - $10`` off-session. After the Oct-15 cutover that is
+    the dominant nursery order shape, so a flip licensed without it would be a
+    flip whose main money path was never exercised.
+
+    ``order`` is the sale.order read back after settlement; ``intent`` is the
+    settlement PaymentIntent from Stripe (None when the order recorded none).
+    """
+    res.observed.update(settlement=settle_status,
+                        checkout_status=order.get("grove_checkout_status"))
+    if settle_status != "settled":
+        return res.fail(
+            "SETTLEMENT_STATUS",
+            f"mark-shipped returned settlement={settle_status!r}, expected 'settled'. "
+            "settlement_failed = no saved card / decline; not_applicable = the order "
+            "was not deposit_paid; compliance_hold = consult mix (wrong variant).",
+        )
+    charged = round(float(order.get("grove_amount_charged_today") or 0.0), 2)
+    res.observed["amount_charged_today"] = charged
+    if charged != DEPOSIT_DOLLARS:
+        return res.fail(
+            "DEPOSIT_AMOUNT",
+            f"checkout recorded ${charged:.2f} charged today, expected the flat "
+            f"${DEPOSIT_DOLLARS:.2f} deposit (GOL-2233); the balance arithmetic is meaningless.",
+        )
+    entries = _breakdown_entries(order.get("grove_stripe_tax_jurisdictions"))
+    tax_cents = int(round(float(order.get("grove_stripe_tax_amount") or 0.0) * 100))
+    base_cents = int(round(float(order.get("amount_untaxed") or 0.0) * 100))
+    res.observed.update(stripe_tax_cents=tax_cents, shipped_base_cents=base_cents,
+                        observed_rate_pct=observed_rate_pct(base_cents, tax_cents))
+    if not entries:
+        # The module writes grove_stripe_tax_* ONLY when the calc returned. Empty
+        # here means the balance was settled on Odoo's tax — either the flag is
+        # off on the running process, or the calc failed and fell back (which
+        # grove-odoo-modules#331 now alerts on in Discord).
+        res.observed_flag = "off"
+        return res.fail(
+            "STRIPE_TAX_NOT_USED",
+            "no grove_stripe_tax_jurisdictions on the settled order: the balance "
+            "was computed on Odoo's tax, not Stripe's. Flag OFF on the running "
+            "process, or the ship-time /v1/tax/calculations failed and fell back "
+            "(look for a 'Stripe Tax FALLBACK' Discord alert / order chatter).",
+        )
+    res.observed_flag = "on"
+    exclusive = breakdown_exclusive_cents(entries)
+    if abs(exclusive - tax_cents) > 1:
+        return res.fail(
+            "TAX_RECORD_MISMATCH",
+            f"grove_stripe_tax_amount={tax_cents}c but the recorded breakdown sums "
+            f"to {exclusive}c (Stripe's tax_amount_exclusive).",
+        )
+    if tax_cents == 0:
+        return res.fail(
+            "NO_TAX",
+            "Stripe Tax returned $0 at settlement for a WV ship-to. The test-mode "
+            "WV registration is missing (GOL-2574).",
+        )
+    want = expected_tax_cents(base_cents, rate_pct)
+    if abs(tax_cents - want) > TAX_TOLERANCE_CENTS:
+        return res.fail(
+            "RATE_MISMATCH",
+            f"settlement tax {tax_cents}c on a {base_cents}c shipped base = "
+            f"{observed_rate_pct(base_cents, tax_cents)}%, expected ~{rate_pct}% ({want}c).",
+        )
+    if not breakdown_names_wv(entries):
+        return res.fail(
+            "NO_WV_JURISDICTION",
+            "the settlement tax breakdown names no West Virginia jurisdiction.",
+        )
+    expected_balance = base_cents + tax_cents - int(round(DEPOSIT_DOLLARS * 100))
+    res.observed["expected_balance_cents"] = expected_balance
+    if not intent:
+        return res.fail("NO_SETTLEMENT_INTENT",
+                        "the order is settled but carries no settlement PaymentIntent.")
+    res.observed.update(captured_cents=int(intent.get("amount") or 0),
+                        intent_status=intent.get("status"))
+    if intent.get("status") != "succeeded":
+        return res.fail("INTENT_STATUS",
+                        f"settlement PaymentIntent is {intent.get('status')!r}, not 'succeeded'.")
+    if abs(int(intent.get("amount") or 0) - expected_balance) > 1:
+        return res.fail(
+            "BALANCE_MISMATCH",
+            f"captured {intent.get('amount')}c at ship, expected base {base_cents}c + "
+            f"Stripe tax {tax_cents}c - ${DEPOSIT_DOLLARS:.0f} deposit = {expected_balance}c.",
+        )
+    return res
+
+
 def aggregate(results: list) -> dict:
     """Fold case results into the flip decision.
 
@@ -305,7 +450,7 @@ def aggregate(results: list) -> dict:
     never read as permission.
     """
     expected = {
-        "4": {"wv_full", "nonwv_full", "deposit"},
+        "4": {"wv_full", "nonwv_full", "deposit", "settlement"},
         "3": {"rollback_wv"},
     }
     by_gate: dict = {}
@@ -339,7 +484,8 @@ def aggregate(results: list) -> dict:
 def _post_json(url: str, body: dict, headers: dict, timeout: int = 45) -> tuple:
     data = json.dumps(body).encode()
     req = urllib.request.Request(url, data=data, method="POST",
-                                 headers={"Content-Type": "application/json", **headers})
+                                 headers={"Content-Type": "application/json",
+                                          "User-Agent": USER_AGENT, **headers})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status, json.loads(resp.read().decode() or "{}")
@@ -353,7 +499,8 @@ def _post_json(url: str, body: dict, headers: dict, timeout: int = 45) -> tuple:
 
 def _stripe_get(secret_key: str, path: str, params: str = "", timeout: int = 30) -> tuple:
     url = f"https://api.stripe.com/v1/{path}" + (f"?{params}" if params else "")
-    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {secret_key}"})
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {secret_key}",
+                                              "User-Agent": USER_AGENT})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status, json.loads(resp.read().decode() or "{}")
@@ -365,6 +512,62 @@ def _stripe_get(secret_key: str, path: str, params: str = "", timeout: int = 30)
             return exc.code, {"error": raw[:400]}
 
 
+def _stripe_post(secret_key: str, path: str, form: dict, timeout: int = 30) -> tuple:
+    req = urllib.request.Request(
+        f"https://api.stripe.com/v1/{path}", data=urllib.parse.urlencode(form).encode(),
+        method="POST", headers={"Authorization": f"Bearer {secret_key}", "User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status, json.loads(resp.read().decode() or "{}")
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode(errors="replace")
+        try:
+            return exc.code, json.loads(raw or "{}")
+        except json.JSONDecodeError:
+            return exc.code, {"error": raw[:400]}
+
+
+class RpcError(Exception):
+    pass
+
+
+class OdooRpc:
+    """Minimal Odoo /jsonrpc client (stdlib). Used ONLY by the settlement case to
+    walk a QA deposit order to the ship event — steps the public checkout API
+    cannot reach without a completed hosted payment."""
+
+    def __init__(self, base: str, db: str, login: str, password: str):
+        self.base, self.db, self.login, self.password = base, db, login, password
+        self.uid = None
+
+    def _call(self, service: str, method: str, *args):
+        status, body = _post_json(f"{self.base}/jsonrpc", {
+            "jsonrpc": "2.0", "method": "call", "id": 1,
+            "params": {"service": service, "method": method, "args": list(args)},
+        }, {})
+        if status != 200:
+            raise RpcError(f"HTTP {status}: {json.dumps(body)[:300]}")
+        if body.get("error"):
+            err = body["error"]
+            raise RpcError(((err.get("data") or {}).get("message")) or err.get("message") or str(err)[:300])
+        return body.get("result")
+
+    def execute(self, model: str, method: str, args: list, kwargs: dict = None):
+        if self.uid is None:
+            self.uid = self._call("common", "login", self.db, self.login, self.password)
+            if not self.uid:
+                raise RpcError(f"login refused for {self.login!r} on db {self.db!r}")
+        return self._call("object", "execute_kw", self.db, self.uid, self.password,
+                          model, method, args, kwargs or {})
+
+
+SETTLEMENT_READ_FIELDS = [
+    "name", "grove_checkout_status", "grove_amount_charged_today", "amount_untaxed",
+    "amount_tax", "grove_stripe_tax_amount", "grove_stripe_tax_jurisdictions",
+    "grove_settlement_payment_intent",
+]
+
+
 CASES = {
     "wv_full": dict(gate="4", expect_flag="on", address=WV_ADDRESS, cart="instock",
                     label="Gate 4a — flag ON, WV ship-to: Stripe charges the 6% state tax"),
@@ -372,6 +575,8 @@ CASES = {
                        label="Gate 4b — flag ON, OH ship-to: Stripe charges $0 (no nexus)"),
     "deposit": dict(gate="4", expect_flag="on", address=WV_ADDRESS, cart="bareroot",
                     label="Gate 4c — flag ON, deposit order: Tax stands down, flat $10"),
+    "settlement": dict(gate="4", expect_flag="on", address=WV_ADDRESS, cart="bareroot",
+                       label="Gate 4d — flag ON, deposit SHIPPED: Stripe Tax computes the balance"),
     "rollback_wv": dict(gate="3", expect_flag="off", address=WV_ADDRESS, cart="instock",
                         label="Gate 3 — flag OFF: Odoo's own WV tax line is back"),
 }
@@ -386,8 +591,15 @@ class Runner:
         self.variants = {"instock": args.variant_instock, "bareroot": args.variant_bareroot}
         self.rate = args.wv_rate
         self.qty = args.quantity
+        # Settlement leg only (GOL-2910): an Odoo login that may write sale.order
+        # on QA, to simulate the completed deposit checkout and walk the order to
+        # the ship event. getattr: older callers build a Namespace without them.
+        self.rpc_db = getattr(args, "odoo_db", None) or os.environ.get("QA_ODOO_DB") or "odoo"
+        self.rpc_login = getattr(args, "odoo_rpc_login", None) or os.environ.get("QA_ODOO_RPC_LOGIN") or ""
+        self.rpc_password = getattr(args, "odoo_rpc_password", None) or os.environ.get("QA_ODOO_RPC_PASSWORD") or ""
+        self.settle_shipping = getattr(args, "settle_shipping", None) or DEFAULT_SETTLE_SHIPPING
 
-    def preconditions(self) -> list:
+    def preconditions(self, names=()) -> list:
         """Everything that would otherwise surface as a confusing mid-run error."""
         problems = []
         if not self.odoo_base:
@@ -409,12 +621,20 @@ class Runner:
             problems.append("--variant-instock is required (an in-stock, ships-now nursery variant id)")
         if not self.variants["bareroot"]:
             problems.append("--variant-bareroot is required (a sold-out bareroot variant id, for Gate 4c)")
+        if "settlement" in names and not (self.rpc_login and self.rpc_password):
+            problems.append("QA_ODOO_RPC_LOGIN / QA_ODOO_RPC_PASSWORD are unset (Gate 4d drives the "
+                            "deposit order to the ship event over Odoo JSON-RPC)")
         return problems
 
     def run_case(self, name: str) -> CaseResult:
+        if name == "settlement":
+            return self.run_settlement()
         spec = CASES[name]
         res = CaseResult(name=name, gate=spec["gate"], status=STATUS_PASS,
                          expect_flag=spec["expect_flag"])
+        return self._checkout_and_evaluate(name, spec, res)
+
+    def _create_checkout(self, spec: dict) -> tuple:
         variant = self.variants[spec["cart"]]
         payload = {
             "contact": {"name": GATE_BUYER_NAME, "email": GATE_BUYER_EMAIL, "phone": GATE_BUYER_PHONE},
@@ -425,8 +645,13 @@ class Runner:
             "success_url": "https://example.invalid/gate/ok",
             "cancel_url": "https://example.invalid/gate/cancel",
         }
-        headers = {"Authorization": f"Bearer {self.api_key}", "X-Grove-Tenant": self.tenant}
-        status, body = _post_json(f"{self.odoo_base}/grove/api/v1/checkout/session", payload, headers)
+        return _post_json(f"{self.odoo_base}/grove/api/v1/checkout/session", payload, self._api_headers())
+
+    def _api_headers(self) -> dict:
+        return {"Authorization": f"Bearer {self.api_key}", "X-Grove-Tenant": self.tenant}
+
+    def _checkout_and_evaluate(self, name: str, spec: dict, res: CaseResult) -> CaseResult:
+        status, body = self._create_checkout(spec)
         if status != 200:
             # 503 "Checkout is not configured yet" means the tenant Stripe key is
             # not on the box — a precondition failure, reported as FAIL not skip.
@@ -449,6 +674,78 @@ class Runner:
         if name == "deposit":
             return evaluate_deposit(res, session, body)
         return evaluate_rollback_wv(res, session, line_items)
+
+    def run_settlement(self) -> CaseResult:
+        """Gate 4d driver: deposit checkout -> saved test card -> wave -> hand
+        label -> mark-shipped (which settles) -> read back order + intent.
+
+        The hosted deposit payment itself is SIMULATED (the webhook's writes are
+        made over RPC) because completing a Checkout Session needs a browser; the
+        webhook half stays with the @stripe Playwright suite. Everything from the
+        ship event on is the real production code path.
+        """
+        spec = CASES["settlement"]
+        res = CaseResult(name="settlement", gate=spec["gate"], status=STATUS_PASS,
+                         expect_flag=spec["expect_flag"])
+        status, body = self._create_checkout(spec)
+        if status != 200:
+            return res.fail("CHECKOUT_HTTP_%d" % status, json.dumps(body)[:300])
+        order_id, order_ref = body.get("order_id"), body.get("order_ref")
+        res.observed.update(order_id=order_id, order_ref=order_ref)
+        if not body.get("has_preorder"):
+            return res.fail("NOT_A_DEPOSIT", "the bareroot cart did not trigger a deposit; "
+                            "--variant-bareroot must be a SOLD-OUT bareroot variant.")
+        if not order_id:
+            return res.fail("NO_ORDER_ID", "checkout response carried no order_id")
+
+        # A saved test card for the off-session balance capture.
+        st, cus = _stripe_post(self.stripe_key, "customers", {
+            "email": GATE_BUYER_EMAIL, "name": GATE_BUYER_NAME,
+            "metadata[purpose]": "stripe-tax-gate", "metadata[order_ref]": order_ref or ""})
+        if st != 200:
+            return res.fail("STRIPE_HTTP_%d" % st, "create customer: " + json.dumps(cus)[:300])
+        st, pm = _stripe_post(self.stripe_key, f"payment_methods/{STRIPE_TEST_CARD_PM}/attach",
+                              {"customer": cus["id"]})
+        if st != 200:
+            return res.fail("STRIPE_HTTP_%d" % st, "attach test card: " + json.dumps(pm)[:300])
+
+        rpc = OdooRpc(self.odoo_base, self.rpc_db, self.rpc_login, self.rpc_password)
+        # Unique, alphanumeric (shippo_client.is_valid_tracking: 6-40 chars).
+        tracking = f"9400GATE{int(time.time())}{order_id}"
+        step = "simulate deposit webhook"
+        try:
+            rpc.execute("sale.order", "write", [[order_id], {
+                "grove_checkout_status": "deposit_paid",
+                "grove_stripe_customer": cus["id"],
+                "grove_stripe_payment_method": pm["id"],
+            }])
+            step = "action_confirm"
+            rpc.execute("sale.order", "action_confirm", [[order_id]])
+            step = "assign wave"
+            rpc.execute("sale.order", "action_grove_assign_wave", [[order_id]],
+                        {"wave_ref": "stripe-tax-gate"})
+            step = "record hand label"
+            rpc.execute("sale.order", "action_grove_record_hand_label", [[order_id], tracking],
+                        {"carrier": "USPS", "actual_cost": self.settle_shipping})
+        except RpcError as exc:
+            return res.fail("ODOO_RPC", f"{step}: {exc}")
+
+        st, shipped = _post_json(f"{self.odoo_base}/grove/api/v1/orders/{order_id}/mark-shipped",
+                                 {"actor": "stripe-tax-gate"}, self._api_headers())
+        if st != 200:
+            return res.fail("MARK_SHIPPED_HTTP_%d" % st, json.dumps(shipped)[:300])
+        try:
+            rows = rpc.execute("sale.order", "read", [[order_id]], {"fields": SETTLEMENT_READ_FIELDS})
+        except RpcError as exc:
+            return res.fail("ODOO_RPC", f"read back order: {exc}")
+        order = rows[0] if rows else {}
+        intent = None
+        pi_id = order.get("grove_settlement_payment_intent")
+        if pi_id:
+            st, intent = _stripe_get(self.stripe_key, f"payment_intents/{pi_id}")
+            if st != 200:
+                return res.fail("STRIPE_HTTP_%d" % st, "read settlement intent: " + json.dumps(intent)[:300])
+        return evaluate_settlement(res, shipped.get("settlement"), order, intent, self.rate)
 
 
 def render(verdict: dict) -> str:
@@ -485,6 +782,11 @@ def main(argv=None) -> int:
     p.add_argument("--variant-bareroot", default=os.environ.get("GATE_VARIANT_BAREROOT"))
     p.add_argument("--wv-rate", type=float, default=DEFAULT_WV_RATE_PCT)
     p.add_argument("--quantity", type=int, default=1)
+    p.add_argument("--odoo-db", default=None, help="QA Odoo DB for the settlement case (QA_ODOO_DB, default odoo)")
+    p.add_argument("--odoo-rpc-login", default=None)
+    p.add_argument("--odoo-rpc-password", default=None)
+    p.add_argument("--settle-shipping", type=float, default=None,
+                   help=f"actual label cost the settlement case records (default {DEFAULT_SETTLE_SHIPPING})")
     p.add_argument("--merge", action="append", default=[],
                    help="verdict JSON from an earlier run, to fold in (lets gate 4 and "
                         "gate 3 run either side of the operator's flag flip)")
@@ -498,7 +800,7 @@ def main(argv=None) -> int:
     if not names and not args.merge:
         names = sorted(CASES)
 
-    problems = runner.preconditions()
+    problems = runner.preconditions(names)
     if args.dry_run:
         print("DRY RUN — nothing will be created.")
         print(f"  QA Odoo : {runner.odoo_base or '(unset)'}  tenant={runner.tenant}")

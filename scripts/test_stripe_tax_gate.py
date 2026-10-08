@@ -17,6 +17,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 # The worker is hyphenated (it is an operator entrypoint, not an importable
 # module), so load it by path. It must be registered in sys.modules BEFORE
@@ -166,6 +167,162 @@ class TestGate4cDeposit(unittest.TestCase):
                                    {"has_preorder": True, "amount_due_today": 50.0})
         self.assertEqual(out.reasons[0]["code"], "DEPOSIT_AMOUNT")
 
+# A real /v1/tax/calculations tax_breakdown entry shape (state on tax_rate_details).
+def _wv_breakdown(tax_cents, base_cents):
+    return json.dumps([{
+        "amount": tax_cents, "inclusive": False, "taxable_amount": base_cents,
+        "taxability_reason": "standard_rated",
+        "tax_rate_details": {"country": "US", "state": "WV", "percentage_decimal": "6.0",
+                             "tax_type": "sales_tax"},
+    }])
+
+
+def _settled_order(base_cents=6250, tax_cents=375, charged=10.0, breakdown=None):
+    return {
+        "name": "S00042", "grove_checkout_status": "settled",
+        "grove_amount_charged_today": charged,
+        "amount_untaxed": base_cents / 100.0,
+        "grove_stripe_tax_amount": tax_cents / 100.0,
+        "grove_stripe_tax_jurisdictions": (_wv_breakdown(tax_cents, base_cents)
+                                           if breakdown is None else breakdown),
+        "grove_settlement_payment_intent": "pi_settle",
+    }
+
+
+class TestGate4dSettlement(unittest.TestCase):
+    """GOL-2910: the ship-time leg of the deposit path — the dominant post-Oct-15 shape."""
+
+    def _eval(self, order, intent, status="settled"):
+        return stg.evaluate_settlement(_case("settlement"), status, order, intent, 6.0)
+
+    def test_stripe_tax_on_shipped_base_and_balance_less_deposit_passes(self):
+        # $62.50 shipped base, 6% = $3.75, captured = 6250 + 375 - 1000 = 5625.
+        out = self._eval(_settled_order(), {"amount": 5625, "status": "succeeded"})
+        self.assertEqual(out.status, stg.STATUS_PASS, out.reasons)
+        self.assertEqual(out.observed_flag, "on")
+
+    def test_module_fixture_jurisdiction_shape_also_names_wv(self):
+        bd = json.dumps([{"jurisdiction": {"display_name": "West Virginia"}, "amount": 375}])
+        out = self._eval(_settled_order(breakdown=bd), {"amount": 5625, "status": "succeeded"})
+        self.assertEqual(out.status, stg.STATUS_PASS, out.reasons)
+
+    def test_silent_fallback_to_odoo_tax_is_a_fail_not_a_pass(self):
+        # The calc failed (or the flag is off): the module never writes the
+        # Stripe fields, so the customer was taxed on Odoo's number. Red.
+        order = _settled_order()
+        order.update(grove_stripe_tax_amount=0.0, grove_stripe_tax_jurisdictions=False)
+        out = self._eval(order, {"amount": 5625, "status": "succeeded"})
+        self.assertEqual(out.reasons[0]["code"], "STRIPE_TAX_NOT_USED")
+        self.assertEqual(out.observed_flag, "off")
+
+    def test_settlement_that_did_not_settle_fails_first(self):
+        out = self._eval(_settled_order(), None, status="settlement_failed")
+        self.assertEqual(out.reasons[0]["code"], "SETTLEMENT_STATUS")
+
+    def test_deposit_other_than_flat_ten_fails(self):
+        out = self._eval(_settled_order(charged=20.0), {"amount": 5625, "status": "succeeded"})
+        self.assertEqual(out.reasons[0]["code"], "DEPOSIT_AMOUNT")
+
+    def test_recorded_amount_must_equal_breakdown_exclusive_sum(self):
+        order = _settled_order()
+        order["grove_stripe_tax_amount"] = 4.00
+        out = self._eval(order, {"amount": 5650, "status": "succeeded"})
+        self.assertEqual(out.reasons[0]["code"], "TAX_RECORD_MISMATCH")
+
+    def test_zero_settlement_tax_is_the_missing_registration(self):
+        out = self._eval(_settled_order(tax_cents=0), {"amount": 5250, "status": "succeeded"})
+        self.assertEqual(out.reasons[0]["code"], "NO_TAX")
+
+    def test_seven_percent_at_settlement_is_rate_mismatch(self):
+        out = self._eval(_settled_order(tax_cents=438), {"amount": 5688, "status": "succeeded"})
+        self.assertEqual(out.reasons[0]["code"], "RATE_MISMATCH")
+
+    def test_breakdown_must_name_west_virginia(self):
+        bd = json.dumps([{"amount": 375, "inclusive": False,
+                          "tax_rate_details": {"country": "US", "state": "OH"}}])
+        out = self._eval(_settled_order(breakdown=bd), {"amount": 5625, "status": "succeeded"})
+        self.assertEqual(out.reasons[0]["code"], "NO_WV_JURISDICTION")
+
+    def test_capture_must_be_base_plus_tax_minus_deposit(self):
+        # Charging the full base+tax (forgetting the deposit) over-bills by $10.
+        out = self._eval(_settled_order(), {"amount": 6625, "status": "succeeded"})
+        self.assertEqual(out.reasons[0]["code"], "BALANCE_MISMATCH")
+
+    def test_one_cent_of_rounding_in_the_capture_is_tolerated(self):
+        out = self._eval(_settled_order(), {"amount": 5626, "status": "succeeded"})
+        self.assertEqual(out.status, stg.STATUS_PASS, out.reasons)
+
+    def test_unsucceeded_intent_fails(self):
+        out = self._eval(_settled_order(), {"amount": 5625, "status": "requires_action"})
+        self.assertEqual(out.reasons[0]["code"], "INTENT_STATUS")
+
+    def test_settled_without_an_intent_fails(self):
+        out = self._eval(_settled_order(), None)
+        self.assertEqual(out.reasons[0]["code"], "NO_SETTLEMENT_INTENT")
+
+
+class TestGate4dDriver(unittest.TestCase):
+    """run_settlement wiring with every network edge stubbed: the right Odoo
+    steps run in order, and the read-back feeds evaluate_settlement."""
+
+    def _runner(self):
+        args = argparse.Namespace(
+            odoo_url="https://odoo.qa.example.invalid", api_key="k", stripe_key="sk_test_x",
+            tenant="nursery", variant_instock="1", variant_bareroot="2", wv_rate=6.0,
+            quantity=1, odoo_db="odoo", odoo_rpc_login="gate", odoo_rpc_password="pw",
+            settle_shipping=12.5)
+        return stg.Runner(args)
+
+    def test_drives_checkout_to_ship_and_evaluates(self):
+        calls = []
+
+        def fake_post_json(url, body, headers, timeout=45):
+            if url.endswith("/checkout/session"):
+                return 200, {"order_id": 42, "order_ref": "S00042", "has_preorder": True,
+                             "amount_due_today": 10.0}
+            if url.endswith("/orders/42/mark-shipped"):
+                calls.append("mark-shipped")
+                return 200, {"settlement": "settled"}
+            raise AssertionError(url)
+
+        def fake_execute(self, model, method, args, kwargs=None):
+            calls.append(method)
+            if method == "read":
+                return [_settled_order()]
+            return True
+
+        with mock.patch.object(stg, "_post_json", side_effect=fake_post_json), \
+                mock.patch.object(stg, "_stripe_post", side_effect=[
+                    (200, {"id": "cus_gate"}), (200, {"id": "pm_gate"})]), \
+                mock.patch.object(stg, "_stripe_get",
+                                  return_value=(200, {"amount": 5625, "status": "succeeded"})), \
+                mock.patch.object(stg.OdooRpc, "execute", fake_execute):
+            out = self._runner().run_case("settlement")
+        self.assertEqual(out.status, stg.STATUS_PASS, out.reasons)
+        self.assertEqual(calls, ["write", "action_confirm", "action_grove_assign_wave",
+                                 "action_grove_record_hand_label", "mark-shipped", "read"])
+
+    def test_rpc_failure_is_a_named_fail(self):
+        def fake_execute(self, model, method, args, kwargs=None):
+            raise stg.RpcError("Access Denied")
+
+        with mock.patch.object(stg, "_post_json", return_value=(
+                200, {"order_id": 42, "order_ref": "S00042", "has_preorder": True})), \
+                mock.patch.object(stg, "_stripe_post", side_effect=[
+                    (200, {"id": "cus_gate"}), (200, {"id": "pm_gate"})]), \
+                mock.patch.object(stg.OdooRpc, "execute", fake_execute):
+            out = self._runner().run_case("settlement")
+        self.assertEqual(out.reasons[0]["code"], "ODOO_RPC")
+        self.assertIn("Access Denied", out.reasons[0]["detail"])
+
+    def test_non_deposit_cart_is_refused_before_any_write(self):
+        with mock.patch.object(stg, "_post_json", return_value=(
+                200, {"order_id": 42, "has_preorder": False})), \
+                mock.patch.object(stg, "_stripe_post") as sp:
+            out = self._runner().run_case("settlement")
+        self.assertEqual(out.reasons[0]["code"], "NOT_A_DEPOSIT")
+        sp.assert_not_called()
+
 
 class TestGate3Rollback(unittest.TestCase):
     def test_odoo_line_back_and_no_stripe_tax_passes(self):
@@ -191,25 +348,33 @@ class TestGate3Rollback(unittest.TestCase):
 
 class TestVerdictAggregation(unittest.TestCase):
     def _all_pass(self):
-        return [_case(n) for n in ("wv_full", "nonwv_full", "deposit", "rollback_wv")]
+        return [_case(n) for n in ("wv_full", "nonwv_full", "deposit", "settlement", "rollback_wv")]
 
-    def test_all_four_cases_passing_clears_the_flip(self):
+    def test_all_five_cases_passing_clears_the_flip(self):
         v = stg.aggregate(self._all_pass())
         self.assertTrue(v["flip_allowed"])
         self.assertEqual(v["gate_3_rollback"]["status"], stg.STATUS_PASS)
         self.assertEqual(v["gate_4_amounts"]["status"], stg.STATUS_PASS)
 
     def test_gate4_alone_does_not_clear_the_flip(self):
-        v = stg.aggregate([_case(n) for n in ("wv_full", "nonwv_full", "deposit")])
+        v = stg.aggregate([_case(n) for n in ("wv_full", "nonwv_full", "deposit", "settlement")])
         self.assertFalse(v["flip_allowed"])
         self.assertEqual(v["gate_3_rollback"]["missing_cases"], ["rollback_wv"])
 
     def test_a_missing_deposit_case_leaves_gate4_red(self):
         # The headline regression risk: running only the two prose cases and
         # reading the green as a licence to flip.
-        v = stg.aggregate([_case("wv_full"), _case("nonwv_full"), _case("rollback_wv")])
+        v = stg.aggregate([_case("wv_full"), _case("nonwv_full"), _case("settlement"),
+                           _case("rollback_wv")])
         self.assertFalse(v["flip_allowed"])
         self.assertEqual(v["gate_4_amounts"]["missing_cases"], ["deposit"])
+
+    def test_a_missing_settlement_case_leaves_gate4_red(self):
+        # GOL-2910: Gates 3 + 4a-c green must NOT license a flip whose dominant
+        # post-Oct-15 path (ship-time settlement) never ran.
+        v = stg.aggregate([_case(n) for n in ("wv_full", "nonwv_full", "deposit", "rollback_wv")])
+        self.assertFalse(v["flip_allowed"])
+        self.assertEqual(v["gate_4_amounts"]["missing_cases"], ["settlement"])
 
     def test_no_results_at_all_is_not_permission(self):
         v = stg.aggregate([])
@@ -269,7 +434,18 @@ class TestNoSelfSkip(unittest.TestCase):
                 v = json.load(fh)
             self.assertFalse(v["flip_allowed"])
             self.assertEqual(sorted(v["gate_4_amounts"]["failed_cases"]),
-                             ["deposit", "nonwv_full", "wv_full"])
+                             ["deposit", "nonwv_full", "settlement", "wv_full"])
+
+    def test_settlement_without_rpc_creds_fails_rather_than_skips(self):
+        args = argparse.Namespace(
+            odoo_url="https://odoo.qa.example.invalid", api_key="k",
+            stripe_key="sk_test_abc", tenant="nursery",
+            variant_instock="1", variant_bareroot="2", wv_rate=6.0, quantity=1)
+        with mock.patch.dict(os.environ, {"QA_ODOO_RPC_LOGIN": "", "QA_ODOO_RPC_PASSWORD": ""}):
+            runner = stg.Runner(args)
+            self.assertFalse(runner.preconditions(["wv_full", "rollback_wv"]))
+            problems = runner.preconditions(["settlement"])
+        self.assertTrue(any("QA_ODOO_RPC_LOGIN" in p for p in problems))
 
 
 class TestMergingTwoRuns(unittest.TestCase):
@@ -279,7 +455,8 @@ class TestMergingTwoRuns(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             first = os.path.join(tmp, "g4.json")
             with open(first, "w") as fh:
-                json.dump(stg.aggregate([_case(n) for n in ("wv_full", "nonwv_full", "deposit")]), fh)
+                json.dump(stg.aggregate([_case(n) for n in ("wv_full", "nonwv_full", "deposit",
+                                                            "settlement")]), fh)
             with open(first) as fh:
                 earlier = json.load(fh)["cases"]
             merged = stg.aggregate(

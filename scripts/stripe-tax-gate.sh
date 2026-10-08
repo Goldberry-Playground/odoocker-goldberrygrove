@@ -25,6 +25,12 @@
 #   Exit 0 = flip cleared.  Exit 1 = NOT cleared (ship inert).  Exit 2 = dry-run
 #   preconditions unmet. Preview with --dry-run first; it creates nothing.
 #
+# Gate 4 includes 4d, the ship-time SETTLEMENT leg of a deposit order
+# (GOL-2910): it confirms the order, assigns a wave, records a hand label and
+# marks it shipped, so the real settle_order_at_ship captures the balance on a
+# throwaway Stripe TEST customer. It needs QA_ODOO_RPC_LOGIN/PASSWORD (see the
+# env.op template); without them 4d FAILs and the flip is not cleared.
+#
 # AFTERWARDS: this gate creates real draft orders. They are booked to
 # stripe-tax-gate@grove.invalid, an RFC 2606 reserved TLD, so
 # `bash scripts/qa-test-data-cleanup.sh --apply` reaps every one of them with no
