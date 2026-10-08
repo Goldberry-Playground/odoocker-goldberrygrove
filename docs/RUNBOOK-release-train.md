@@ -279,6 +279,7 @@ CI, on the agent plane, or from a laptop mid-window.
 # 1. BEFORE `scripts/qa-module-upgrade.sh grove_headless`
 python3 scripts/verify-shop-departments-compat.py snapshot \
   --base-url https://odoo.qa.gatheringatthegrove.com \
+  --storefront-url https://atthegrovenursery.com \
   --out /tmp/qa-cats-before.json
 
 # 2. run the upgrade as usual (RUNBOOK-qa-module-upgrade.md)
@@ -286,6 +287,7 @@ python3 scripts/verify-shop-departments-compat.py snapshot \
 # 3. AFTER. The Guilds rename is the ONE intentional slug change; declare it.
 python3 scripts/verify-shop-departments-compat.py verify \
   --base-url https://odoo.qa.gatheringatthegrove.com \
+  --storefront-url https://atthegrovenursery.com \
   --baseline /tmp/qa-cats-before.json \
   --allow-slug-change food-forest-packages=guilds
 ```
@@ -293,9 +295,27 @@ python3 scripts/verify-shop-departments-compat.py verify \
 Exit `0` = compatible, `2` = regression (each problem printed), `1` =
 transport/usage. It asserts: no pre-upgrade category disappears; every slug
 still resolves to the same category unless declared; each category holds the
-same product ids; each of the five hardcoded pills returns the same count
-through the server-side `?cat=` filter; and one PDP per category still answers
-200 with its own id.
+same product ids; each pill returns the same count through the server-side
+`?cat=` filter; and one PDP per category still answers 200 with its own id.
+
+**Pass `--storefront-url`.** Without it the pill list is a *copy* of
+`grove-sites/apps/nursery/data/categories.ts` baked into the script, and a copy
+drifts. With it the gate GETs `<storefront>/shop` and uses the `?cat=` slugs
+that page actually links — which also buys two checks the copy cannot give:
+
+- a `--allow-slug-change` is forgiveness for **bookmarks only**. If the live
+  shop still *links* the old slug, the declaration does not cover it and the
+  run fails: a clickable pill that lands on nothing is never acceptable.
+- if the deployed storefront's pill set moves between the two snapshots, the
+  run fails — the pinned build changed underneath the window, so the
+  before/after pair is comparing two different shops.
+
+Point it at the storefront whose build is **pinned for this train** (prod,
+`https://atthegrovenursery.com`, while the storefront half rides Train #3).
+
+If a *declared* slug change has not happened by verify time the gate says
+`slug is STILL 'x' ... the migration did not run` — that is the tell that the
+module upgrade silently no-op'd, not a compat break.
 
 **Hold rule.** A non-zero exit means #299 comes OUT of the bundle — pin
 `custom_modules_ref` to the commit before it (`dd8bf32`, the #298 merge) rather
@@ -324,8 +344,11 @@ ids survive.
 **The one real break is category 6.** `_backfill_public_slugs` preserves its
 URL as `food-forest-packages`, then step 2 immediately overwrites it with
 `guilds`. `/shop?cat=food-forest-packages` serves 5 products on prod today and
-will serve 0 after promote. Nothing in grove-sites links it (the pills are the
-other five), so the blast radius is bookmarks and anything indexed — accepted
+will serve 0 after promote. Nothing links it: prod `/shop` emits exactly the
+other five `?cat=` slugs (harvested live 2026-09-30, and re-harvested on every
+`--storefront-url` run), and the site publishes **no `sitemap.xml` and no
+`robots.txt`** — both 404 — so the URL was never advertised to a crawler. The
+blast radius is bookmarks: one query-string URL, five products — accepted
 as an intentional, declared change, not a defect. If Josh wants it preserved,
 the cheap fixes are (a) leave `grove_slug = food-forest-packages` and resolve
 the Guilds collection by `grove_node_kind` instead of slug, or (b) a Cloudflare
