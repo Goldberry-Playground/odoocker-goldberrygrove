@@ -19,9 +19,9 @@
 #   scripts/discord-status.sh \
 #     --status=success|failure|cancelled \
 #     --workflow=qa-deploy.yml \
-#     --branch=qa \
 #     --run-url="$RUN_URL" \
 #     --title="QA Deploy" \
+#     [--branch=qa] \
 #     [--description="..."] \
 #     [--field 'name=value']... \
 #     [--username="🧪 Grove QA"] \
@@ -44,6 +44,10 @@ set -euo pipefail
 # ── Arg parsing ─────────────────────────────────────────────────────────────
 STATUS=""
 WORKFLOW=""
+# Optional. Empty => the streak lookup below is NOT branch-filtered, i.e. the
+# streak is "the last 5 runs of this workflow, wherever they ran". That is the
+# right default for anything that only ever runs on the default branch
+# (schedule:, workflow_run + branches:[main]) -- see the required-args note.
 BRANCH=""
 RUN_URL=""
 TITLE=""
@@ -70,7 +74,14 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-for required in STATUS WORKFLOW BRANCH RUN_URL TITLE; do
+# --branch is deliberately NOT required. It used to be, and that silently
+# disabled two alert paths for their whole lifetime: qa-health.yml and
+# ci-failure-notify.yml both call this script WITHOUT --branch and swallow the
+# result with `|| true`, so every invocation died here on "Missing --branch"
+# and Discord never heard a thing (GOL-2564). Making it optional fixes both
+# callers at the source instead of editing two merge-gated .github/ files, and
+# stops the next caller from re-arming the same trap.
+for required in STATUS WORKFLOW RUN_URL TITLE; do
   if [ -z "${!required}" ]; then
     echo "Missing --${required,,}" >&2
     exit 1
@@ -88,16 +99,17 @@ fi
 # its conclusion yet (it's in-progress executing this very script), so we count
 # from index 0 = most recent COMPLETED run.
 #
-# `gh run list` is per-branch, per-workflow, per-status. With no --status it
+# `gh run list` is per-workflow, optionally per-branch, per-status. With no --status it
 # returns all conclusions including 'cancelled' (which we treat as failure for
 # streak purposes — a cancelled run usually means concurrency cancelled the
 # previous in-flight deploy, and from an alerting standpoint, "nothing
 # succeeded recently" is what matters).
 PREV_CONCLUSIONS=""
-if ! PREV_CONCLUSIONS=$(gh run list \
-    --workflow="$WORKFLOW" \
-    --branch="$BRANCH" \
-    --limit=5 \
+declare -a GH_RUN_LIST_ARGS=(run list --workflow="$WORKFLOW" --limit=5)
+if [ -n "$BRANCH" ]; then
+  GH_RUN_LIST_ARGS+=(--branch="$BRANCH")
+fi
+if ! PREV_CONCLUSIONS=$(gh "${GH_RUN_LIST_ARGS[@]}" \
     --json conclusion \
     --jq '.[] | .conclusion // "in_progress"' 2>/dev/null); then
   echo "::warning::gh run list failed — falling back to NORMAL alert variant (no streak/recovery context)"

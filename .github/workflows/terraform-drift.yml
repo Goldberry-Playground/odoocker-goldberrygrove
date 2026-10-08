@@ -19,6 +19,29 @@ name: Terraform Drift Detection
 #   3. Add `TF_VAR_ssh_key_ids` to the job env (sourced from 1Password or
 #      provided as a literal list — see infra/terraform/environments/
 #      production/variables.tf for the required shape)
+#
+# ── GOL-2564 decisions ───────────────────────────────────────────────────────
+#
+# 1. The qa-app-platform leg STAYS, gated rather than deleted. The release-train
+#    teardown retires that env PER TRAIN, not permanently — it gets reprovisioned
+#    for the next one. Deleting the leg means re-deriving it later from scratch;
+#    leaving it ungated means every post-teardown run reports "would create N
+#    resources" and cries wolf, which is the exact noise this workflow was
+#    switched off for. So: the "Is the env applied?" step below reads the state
+#    and SKIPS the plan when it's empty. The leg wakes up on its own when the
+#    env is reprovisioned.
+#
+# 2. The cron stays OFF here and is NOT the place obs drift gets caught. See
+#    .github/workflows/obs-firewall-drift.yml — that one is cron-enabled because
+#    an empty result there IS the honest expectation: it needs one read-only DO
+#    token and no TF_VARs at all, so it has no false-alarm surface. A
+#    plan-based watcher on environments/observability needs ~20 vars (most of
+#    them secrets) mirrored into 1Password and kept byte-identical to what was
+#    applied, or it false-alarms on run one. That work is still open.
+#
+# 3. Precondition for turning THIS cron on: one manual workflow_dispatch that
+#    comes back exit 0 (no changes) against a live env. Until a human has seen
+#    a clean plan here, a nightly cron is just scheduled noise.
 on:
   # schedule:
   #   - cron: "0 14 * * *"  # re-enable when M4 ships — see header comment
@@ -29,11 +52,18 @@ on:
 permissions: {}
 
 concurrency:
-  # Keyed to the production Terraform state (`production/terraform.tfstate`)
-  # so drift plans serialize with each other and with any future production
-  # apply that adopts this same group (GOL-34 item 3a). Drift is plan-only
-  # today, but a plan still refreshes/locks state, so overlapping runs are
-  # not safe. cancel-in-progress:false — let an in-flight plan finish.
+  # Keyed to the Terraform state this workflow actually plans
+  # (`qa-app-platform/terraform.tfstate`) so drift plans serialize with each
+  # other and with any future qa-app-platform apply that adopts this same
+  # group (GOL-34 item 3a). Drift is plan-only today, but a plan still
+  # refreshes/locks state, so overlapping runs are not safe.
+  # cancel-in-progress:false — let an in-flight plan finish.
+  #
+  # The group name must track TF_DIR/the backend key below. It said
+  # "production" in prose for three months after the 2026-07-04 repoint while
+  # the group string was already qa-app-platform (GOL-2564) — prose fixed, the
+  # string was right. If this workflow is ever repointed again, change the
+  # group too or two different states end up sharing one lock.
   group: terraform-qa-app-platform
   cancel-in-progress: false
 
@@ -50,7 +80,9 @@ jobs:
       # Repointed 2026-07-04: was the production STUB (gated, never applied
       # -- drift-watching it was theater). Now watches the LIVE Level 3 QA
       # env. assets/ + cloudflare-policy/ drift coverage: follow-up (needs
-      # their extra TF_VARs mirrored to Infisical first).
+      # their extra TF_VARs mirrored to 1Password first) -- same blocker as
+      # observability/, see the GOL-2564 note in the header. observability/'s
+      # firewall IS covered today, by obs-firewall-drift.yml.
       TF_DIR: infra/terraform/environments/qa-app-platform
       # Secrets are loaded from 1Password (ADR-0001 Phase 3). The op:// refs and
       # the SA token live on the "Load secrets from 1Password" step below.
@@ -141,8 +173,45 @@ jobs:
             -backend-config=backend.hcl \
             -input=false
 
+      # Is the env still applied? (GOL-2564)
+      #
+      # The release-train teardown destroys qa-app-platform, and a plan against
+      # a destroyed env honestly reports "N to add" -- exit code 2, which the
+      # step below reads as drift and alerts on. Every run. Forever. An EMPTY
+      # state is not drift, it is "this env is intentionally not up right now",
+      # and the difference has to be made here because `plan` cannot tell them
+      # apart by exit code.
+      #
+      # `terraform state list` is the right probe rather than a plan: it reads
+      # state only, makes no provider calls, and so cannot itself fail on a
+      # missing TF_VAR or a rate-limited API. Zero resources == torn down.
+      - name: Is the env applied?
+        id: applied
+        timeout-minutes: 3
+        run: |
+          set +e
+          OUT="$(terraform -chdir="$TF_DIR" state list 2>&1)"
+          RC=$?
+          set -e
+          if [ "$RC" -ne 0 ]; then
+            printf '%s\n' "$OUT"
+            echo "::error::terraform state list failed (rc=$RC) -- cannot tell whether $TF_DIR is applied, so refusing to guess"
+            exit 1
+          fi
+          # grep -c . counts non-blank lines; `|| true` because grep exits 1 on
+          # no match, which is exactly the torn-down case we are testing for.
+          COUNT="$(printf '%s\n' "$OUT" | grep -c . || true)"
+          echo "resources in $TF_DIR state: $COUNT"
+          if [ "$COUNT" -eq 0 ]; then
+            echo "applied=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::$TF_DIR has an empty state -- env is torn down, skipping the drift plan. This is not drift."
+          else
+            echo "applied=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Terraform plan (drift check)
         id: plan
+        if: steps.applied.outputs.applied == 'true'
         timeout-minutes: 10
         # Exit codes: 0 = no changes, 1 = error, 2 = changes detected (drift)
         #
@@ -170,6 +239,9 @@ jobs:
       # Discord webhook (consolidates with the GATH-44 monitoring stack's
       # Discord alerting). One webhook URL, distinct sender label per workflow
       # via the embed's `username` field.
+      # When the plan step is skipped (torn-down env), steps.plan.outputs.exitcode
+      # is the empty string, so this never fires -- which is the whole point of
+      # the guard above.
       - name: Alert Discord on drift
         if: steps.plan.outputs.exitcode == '2'
         timeout-minutes: 1
