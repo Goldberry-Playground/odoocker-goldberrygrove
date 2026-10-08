@@ -271,6 +271,19 @@ qa-test-data-cleanup:
 qa-test-data-cleanup-apply:
 	bash scripts/qa-test-data-cleanup.sh --apply $(ARGS)
 
+# ── Stripe Tax cutover gate (GOL-2568 / GOL-2584) ────────────────────────────
+# Gates 3 and 4 decide whether the GROVE_STRIPE_TAX_{TENANT} flag may flip at a
+# promote. They need OPPOSITE flag states, so the sequence is: gate 3 (flag off,
+# how QA comes up) -> operator flips the flag on the QA droplet (Path A in
+# docs/RUNBOOK-module-upgrade.md) -> gate 4, merging the gate-3 verdict. Local +
+# human-run for the same reason the train legs are: the creds live in the Grove
+# QA vault, not CI. Exit 1 = flip NOT cleared = the code ships inert.
+#   make stripe-tax-gate ARGS="--dry-run --gate 4"
+## stripe-tax-gate: run the Stripe Tax Gate 3/4 assertions against a live QA (ARGS passed through; --dry-run first)
+.PHONY: stripe-tax-gate
+stripe-tax-gate:
+	bash scripts/stripe-tax-gate.sh $(ARGS)
+
 # ── Monitoring / synthetics (GOL-2325) ───────────────────────────────────────
 # Config-as-code bring-up for the observability stack + Tier-1 synthetic runner.
 # `monitoring-up` depends on `monitoring-setup` so the runner is NEVER started
