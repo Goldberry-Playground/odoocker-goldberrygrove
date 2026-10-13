@@ -74,9 +74,14 @@ class _StubDO:
 
 
 def _run(stub, home, extra=None, cwd=_ROOT):
+    # GOL-3061 added TF_VAR_do_token, DOCTL_CONFIG_PATHS and an `op read` vault
+    # fallback to the token sources; strip/disable them so a dev host's real
+    # credentials can never reach the stub (or make no-token-exits-2 pass/fail
+    # depending on the host).
     env = {k: v for k, v in os.environ.items()
-           if not k.startswith(("DIGITALOCEAN_", "TRAIN_PREFLIGHT_", "XDG_"))}
-    env.update(HOME=home, TRAIN_PREFLIGHT_DO_API=stub.url)
+           if not k.startswith(("DIGITALOCEAN_", "TRAIN_PREFLIGHT_", "XDG_",
+                                "DOCTL_", "TF_VAR_do_token"))}
+    env.update(HOME=home, TRAIN_PREFLIGHT_DO_API=stub.url, OP_DO_TOKEN_REF="")
     env.update(extra or {})
     return subprocess.run(["bash", "scripts/train-preflight.sh"], cwd=cwd, env=env,
                           capture_output=True, text=True, timeout=60)
