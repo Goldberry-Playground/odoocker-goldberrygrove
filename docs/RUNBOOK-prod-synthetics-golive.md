@@ -15,21 +15,70 @@ approval to write prod data).
 
 ---
 
-## 0. Blocking gates (do NOT proceed until both clear)
+## 0. Blocking gates
 
-| Gate | Owner | What it unblocks |
-|---|---|---|
-| **(a)** CEO OK to seed a `$0 SYNTHETIC-CANARY` product + test partner into **prod** Odoo | CEO | `SYNTHETIC_CANARY_ENABLED=true` + `make monitoring-setup` seeding prod |
-| **(b)** Least-privilege canary Odoo user + API key minted and stored in 1Password | Josh | `SYNTHETIC_ODOO_API_KEY` / `ODOO_LOGIN` refs in `prod-monitoring.env.op` resolve |
+**Gate (c) is the one that actually decides whether 2026-10-10 is met. It is not
+about the money path — nothing observability ships from prod reaches the sink
+until it clears.**
 
-Until both clear, the runner can still be brought up **read-only** (health /
-catalog / cart / ghost journeys) by leaving `SYNTHETIC_CANARY_ENABLED=false` —
-`canary.py` fail-closes (no key ⇒ no-op) and the checkout-canary journey is
-skipped. The money-path journey is the only piece gated on (a)+(b).
+| Gate | Owner | Blocks | What it unblocks |
+|---|---|---|---|
+| **(c)** `grove-obs-fw` must admit grove-prod-odoo on **:5080** | Josh (apply) | **ALL prod ingest** — synthetics *and* Beyla (GOL-2332) | Any metric from prod reaching OpenObserve at all |
+| **(a)** CEO OK to seed a `$0 SYNTHETIC-CANARY` product + test partner into **prod** Odoo | CEO | checkout-canary journey only | `SYNTHETIC_CANARY_ENABLED=true` + `monitoring-setup` seeding prod |
+| **(b)** Least-privilege canary Odoo user + API key minted in 1Password | Josh | checkout-canary journey only | the two commented `ODOO_LOGIN` / `SYNTHETIC_ODOO_API_KEY` refs |
 
-Cross-ref: the EPIC (GOL-2323) itself is pending CEO ratification that obs stays
-QA-l3 tier + a `$0` prod canary seed is approved. Confirm that ratification
-landed before running §3.
+### Gate (c) — verified live 2026-09-29, currently FAILING
+
+`grove-obs-fw`'s inbound :5080 rule admits exactly three `/32`s and **no
+`source_tags`**:
+
+| Source on :5080 | What it is |
+|---|---|
+| `159.223.171.231/32` | agenticos droplet |
+| `167.71.109.184/32` | **stale** — grove-qa-l3-odoo's pre-2026-09-08-rebuild IP, not our droplet (ADR-010) |
+| `74.47.41.38/32` | **stale** admin IP (Josh's rotated `173.84.140.152/32` is absent) |
+
+grove-prod-odoo is `174.138.119.171` (public) / `10.132.23.194` (private) and is
+in **none** of them, so every OTLP ship from prod is refused. DO cloud firewalls
+filter the VPC interface too, so using the private address does not route around
+this. ADR-010 decision #2 already fixes it by admitting app-plane collectors via
+the `role-odoo` **droplet tag** (prod-odoo carries that tag) — but that decision
+lives only in `variables.tf` defaults and **has not been applied**. Tag matching
+also survives droplet replaces, which matters: ADR-010 records prod-odoo as
+`138.197.44.60`, an IP it no longer has.
+
+Apply it per ADR-010 (firewall-only, cannot replace the droplet), from the
+operator checkout holding the observability tfvars — **first delete the
+`admin_ip_cidrs` / `ingest_source_cidrs` / `automation_ssh_cidrs` lines from that
+tfvars** or they override the new defaults:
+
+```sh
+terraform -chdir=infra/terraform/environments/observability plan  -target=digitalocean_firewall.obs
+terraform -chdir=infra/terraform/environments/observability apply -target=digitalocean_firewall.obs
+```
+
+Expect `1 to change, 0 to destroy` on `grove-obs-fw`. Confirm afterwards that the
+:5080 rule carries `source_tags` and that the stale `167.71.109.184/32` is gone.
+Drift on this firewall is tracked by GOL-2564.
+
+### Gates (a)/(b) — read-only tier ships without them
+
+With `SYNTHETIC_CANARY_ENABLED=false` (the committed default) the runner brings
+up **health / catalog / cart-flow / ghost-content** plus all the HTTP/TCP/SSL
+probes. `canary.py` fail-closes (no key ⇒ no-op) and only checkout-canary is
+skipped. That read-only set is already enough to satisfy the EPIC's "four
+storefronts + prod Odoo observably up" deliverable, so **the 10-10 deadline does
+not depend on the CEO seed decision** — only the money-path journey does.
+
+Note gate (b) is **half done already**: the three per-tenant Ghost read-only
+Content API keys it asks for are ALREADY in the vault, as one JSON object at
+`Grove Infra/ghost_content_keys_tf_json` (verified 2026-09-29). `run.py` reads
+that bundle directly, so no human step remains for Ghost. Only the canary Odoo
+key is still human-only.
+
+Cross-ref: the obs-home question the EPIC raised is settled — ADR-010 is
+accepted and grove-obs is the canonical sink, so there is no "stays QA-l3"
+ratification left to wait on here.
 
 ---
 
@@ -50,8 +99,10 @@ password. Scope it as tight as the money path allows:
    `REPLACE_ITEM_ID` refs in `scripts/prod-monitoring.env.op`:
    - `synthetic_canary_odoo_login`
    - `synthetic_canary_odoo_api_key`
-5. Also store the three per-tenant Ghost **read-only Content API keys**
-   (`ghost_content_key_{goldberry,ggg,nursery}`) and fill their refs.
+5. ~~Also store the three per-tenant Ghost read-only Content API keys.~~
+   **Not needed** — they are already in the vault as the
+   `Grove Infra/ghost_content_keys_tf_json` bundle, which `run.py` reads
+   directly (verified 2026-09-29, GOL-2325).
 
 The op service account is READ-ONLY — it can read these once stored but cannot
 create them, so this step is human-only.

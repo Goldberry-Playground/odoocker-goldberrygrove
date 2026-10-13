@@ -236,18 +236,30 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Run promotion tooling tests
         run: python3 scripts/test_promotion_scripts.py
+      - name: Run Stripe Tax gate tests (GOL-2568 Gates 3/4 flip decision)
+        run: python3 scripts/test_stripe_tax_gate.py
       - name: Run provisioning script tests (CEO login + per-agent Projects roster)
         run: |
           python3 scripts/test_provision_ceo_user_shell.py
           python3 scripts/test_provision_project_agents_shell.py
       - name: Run Odoo Caddyfile routing tests (bus on the evented worker)
         run: python3 scripts/test_caddy_odoo_routes.py
+      # GOL-2582. Static, so it fails on the PR that reintroduces the droplet
+      # reference rather than on the release train that acts on it.
+      - name: Run QA PG firewall independence guard (GOL-2582)
+        run: python3 scripts/test_qa_pg_firewall_independence.py
       - name: Run modules-pin reconcile tests (GOL-2281)
         run: python3 scripts/test_reconcile_modules_pin.py
       - name: Run prod modules-promote tests (GOL-2346 Leg B money guard)
         run: python3 scripts/test_prod_modules_promote.py
+      - name: Run Terraform state-lock guard tests (GOL-2584, gates train-up + teardown)
+        run: python3 scripts/test_tf_state_lock_check.py
+      - name: Run release-train preflight tests (GOL-2584, gates make train-up)
+        run: python3 scripts/test_train_preflight.py
       - name: Run prod publish-webhook wiring tests (guides publish, 2026-09-30 hotfix)
         run: python3 scripts/test_publish_webhook_prod_wired.py
+      - name: Run obs firewall-check tests (GOL-2631 broken-check-is-not-drift)
+        run: python3 scripts/test_obs_firewall_check.py
       - name: Run pgadmin dist-info purge tests (GOL-2846 Trivy orphan-metadata guard)
         run: python3 scripts/test_pgadmin_distinfo_glob.py
 
