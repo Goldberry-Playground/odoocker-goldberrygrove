@@ -236,6 +236,8 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Run promotion tooling tests
         run: python3 scripts/test_promotion_scripts.py
+      - name: Run Stripe Tax gate tests (GOL-2568 Gates 3/4 flip decision)
+        run: python3 scripts/test_stripe_tax_gate.py
       - name: Run provisioning script tests (CEO login + per-agent Projects roster)
         run: |
           python3 scripts/test_provision_ceo_user_shell.py
@@ -250,8 +252,14 @@ jobs:
         run: python3 scripts/test_reconcile_modules_pin.py
       - name: Run prod modules-promote tests (GOL-2346 Leg B money guard)
         run: python3 scripts/test_prod_modules_promote.py
+      - name: Run Terraform state-lock guard tests (GOL-2584, gates train-up + teardown)
+        run: python3 scripts/test_tf_state_lock_check.py
+      - name: Run release-train preflight tests (GOL-2584, gates make train-up)
+        run: python3 scripts/test_train_preflight.py
       - name: Run prod publish-webhook wiring tests (guides publish, 2026-09-30 hotfix)
         run: python3 scripts/test_publish_webhook_prod_wired.py
+      - name: Run obs firewall-check tests (GOL-2631 broken-check-is-not-drift)
+        run: python3 scripts/test_obs_firewall_check.py
       # GOL-3061. `train-up` depends on `train-preflight`, so a credential the
       # preflight cannot resolve stalls the whole Release Train window.
       - name: Run train-preflight credential-resolution tests (GOL-3061)

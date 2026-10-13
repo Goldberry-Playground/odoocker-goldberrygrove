@@ -1,16 +1,20 @@
 name: ownership-lint
 
+# Deliberately NOT paths-filtered. Half of what lint-ownership.py checks is a
+# property of the repo *tree*, not of ownership.yml: every top-level source dir
+# must be claimed by some partition. A PR that adds a new top-level dir and
+# never touches ownership.yml is exactly the PR that breaks coverage -- and a
+# paths filter is blind to it. That is how 'qa-tools/' stayed unclaimed from
+# #579 (2026-08-31) until GOL-3167 (2026-10-06): the only runs were on PRs that
+# happened to edit ownership.yml, so nothing flagged it at introduction.
+#
+# This check is advisory on purpose: promoting it to the required set is parked
+# under GOL-1953, so a red here never blocks a merge -- it just tells the author
+# of the dir-adding PR to add a partition (see docs/ownership-schema.md).
 on:
   pull_request:
-    paths:
-      - "ownership.yml"
-      - "scripts/lint-ownership.py"
-      - ".github/workflows/ownership-lint.yml"
   push:
     branches: [main]
-    paths:
-      - "ownership.yml"
-      - "scripts/lint-ownership.py"
 
 # Least privilege: this workflow only reads the checked-out tree.
 permissions:

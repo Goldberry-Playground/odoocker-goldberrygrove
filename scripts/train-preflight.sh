@@ -39,6 +39,9 @@
 #          TRAIN_PREFLIGHT_WARN_ONLY=1 report but never fail (read-only callers)
 #          OP_DO_TOKEN_REF=op://...     override the vault ref for the DO token
 #          DOCTL_CONFIG_PATHS=a:b       override the doctl config search path
+#                                      ("" = no doctl config on this host)
+#          OP_DO_TOKEN_REF=""           skip the vault fallback entirely
+#          TRAIN_PREFLIGHT_DO_API=url   DO API base (tests point it at a stub)
 # Exit:    0 = clear to run train-up   1 = a blocking invariant failed
 #          2 = usage / missing credential
 set -euo pipefail
@@ -72,7 +75,7 @@ echo "[1] Durable volumes (GOL-2436 / GOL-93 / #237)"
 #   1. $DIGITALOCEAN_TOKEN / $DIGITALOCEAN_ACCESS_TOKEN -- explicit override
 #   2. $TF_VAR_do_token -- already in the environment whenever this runs inside
 #      the same `op run --env-file=<qa env>/.env.op` wrapper `make qa-l3-up` uses
-#   3. a local doctl config ($DOCTL_CONFIG_PATHS)
+#   3. doctl's DEFAULT-context token from a local doctl config ($DOCTL_CONFIG_PATHS)
 #   4. `op read` of the canonical Grove Infra `do_token` -- the SAME vault field
 #      .env.op resolves, so a host with `op` needs no local DO credential at all
 #
@@ -83,10 +86,20 @@ echo "[1] Durable volumes (GOL-2436 / GOL-93 / #237)"
 # (reproduced on the agent host 2026-10-05: ~/.config/doctl/config.yaml 401s
 # while the vault `do_token` the apply itself uses is healthy). A dead token has
 # to fall through to the next source, never gate the train.
-OP_DO_TOKEN_REF="${OP_DO_TOKEN_REF:-op://Goldberry Grove - Admin/qvkpvg24x2wbsn6owjyvn4vhx4/rlnkse5k3p34nwamap5qhquxom}"
+#
+# doctl config locations (GOL-2584, #851): doctl writes to $XDG_CONFIG_HOME/doctl
+# (Linux, the agent plane) or ~/Library/Application Support/doctl (macOS, where
+# Josh runs train-up); the macOS path was missing, so a configured doctl read as
+# "no token" (10-05). Only the column-0 `access-token:` line is the default
+# context -- indented ones belong to other, possibly stale, contexts.
+# `[^...]*` not `\S`: BSD sed (macOS) has no `\S` and silently matched nothing.
+#
 # `:-` would make an explicitly EMPTY value mean "use the defaults"; `-` keeps
-# DOCTL_CONFIG_PATHS="" expressible as "this host has no doctl config".
-DOCTL_CONFIG_PATHS="${DOCTL_CONFIG_PATHS-${HOME}/.config/doctl/config.yaml:/paperclip/.config/doctl/config.yaml}"
+# DOCTL_CONFIG_PATHS="" expressible as "this host has no doctl config" and
+# OP_DO_TOKEN_REF="" as "do not consult the vault" (hermetic tests use both).
+OP_DO_TOKEN_REF="${OP_DO_TOKEN_REF-op://Goldberry Grove - Admin/qvkpvg24x2wbsn6owjyvn4vhx4/rlnkse5k3p34nwamap5qhquxom}"
+DOCTL_CONFIG_PATHS="${DOCTL_CONFIG_PATHS-${XDG_CONFIG_HOME:-${HOME}/.config}/doctl/config.yaml:${HOME}/Library/Application Support/doctl/config.yaml:/paperclip/.config/doctl/config.yaml}"
+DO_API="${TRAIN_PREFLIGHT_DO_API:-https://api.digitalocean.com}"
 
 vols_json="$(mktemp)"
 trap 'rm -f "$vols_json"' EXIT
@@ -114,16 +127,18 @@ add_candidate 'TF_VAR_do_token'           "${TF_VAR_do_token:-}"
 while IFS= read -r cfg; do
   [[ -n "$cfg" && -r "$cfg" ]] || continue
   add_candidate "doctl:${cfg}" \
-    "$(sed -n 's/^[[:space:]]*access-token:[[:space:]]*\(\S*\).*/\1/p' "$cfg" | head -1)"
+    "$(sed -n "s/^access-token:[[:space:]]*[\"']\{0,1\}\([^\"'[:space:]]*\).*/\1/p" "$cfg" | head -1)"
 done < <(tr ':' '\n' <<<"$DOCTL_CONFIG_PATHS")
 # `op` is not always on PATH -- on the agent host it lives in ~/bin.
 op_bin=""
-for maybe_op in op "${HOME}/bin/op"; do
-  if command -v "$maybe_op" >/dev/null 2>&1; then
-    op_bin="$maybe_op"
-    break
-  fi
-done
+if [[ -n "$OP_DO_TOKEN_REF" ]]; then
+  for maybe_op in op "${HOME}/bin/op"; do
+    if command -v "$maybe_op" >/dev/null 2>&1; then
+      op_bin="$maybe_op"
+      break
+    fi
+  done
+fi
 if [[ -n "$op_bin" ]]; then
   add_candidate 'op://Grove Infra do_token' \
     "$("$op_bin" read "$OP_DO_TOKEN_REF" 2>/dev/null || true)"
@@ -139,9 +154,12 @@ DO_TOKEN=""
 DO_TOKEN_SOURCE=""
 http=""
 for idx in "${!cand_tokens[@]}"; do
+  # curl's -w already prints 000 on a transport failure; `|| true` only keeps
+  # set -e from aborting the loop (`|| echo 000` would yield "000000").
   http="$(curl -sS -m 30 -o "$vols_json" -w '%{http_code}' \
     -H "Authorization: Bearer ${cand_tokens[$idx]}" \
-    'https://api.digitalocean.com/v2/volumes?per_page=200' || echo 000)"
+    "${DO_API}/v2/volumes?per_page=200" || true)"
+  http="${http:-000}"
   if [[ "$http" == "200" ]]; then
     DO_TOKEN="${cand_tokens[$idx]}"
     DO_TOKEN_SOURCE="${cand_names[$idx]}"
@@ -179,20 +197,29 @@ done <<<"$EXPECTED"
 
 echo
 echo "[2] Terraform state locking (GOL-2755)"
-if [[ -x "$LOCK_CHECK" || -f "$LOCK_CHECK" ]]; then
-  if bash "$LOCK_CHECK"; then
-    ok "state locking mutually excludes"
-  else
-    bad "state lock check FAILED -- concurrent applies can corrupt state"
-  fi
+# DO Spaces does not honour If-None-Match, so `use_lockfile` is a no-op and
+# `tf-state-lock-check.sh probe` FAILS by design on this backend -- running it
+# here would block every train. The control that exists is the advisory
+# `guard` (#790): it refuses to start while a .tflock is held, and it needs the
+# state-bucket credentials that only `op run` inside qa-l3-up / the teardown
+# has. So this asserts the guard is WIRED into both legs; the guard itself runs
+# seconds before the apply/destroy. (Calling the script bare here, as this
+# section first did, always exited 2 = FAIL once #790 landed.)
+if [[ -f "$LOCK_CHECK" ]] \
+   && grep -q 'tf-state-lock-check.sh guard qa-app-platform/terraform.tfstate' Makefile \
+   && grep -q 'tf-state-lock-check.sh" guard qa-app-platform/terraform.tfstate' scripts/qa-l3-teardown.sh; then
+  ok "held-lock guard wired into qa-l3-up and qa-l3-teardown (advisory: Spaces"
+  warn "cannot enforce locks -- do NOT run a second apply against any Grove env"
+  warn "until this one finishes; re-home state per ADR-011 / GOL-2760)"
 elif [[ "$ACK_LOCK" == "1" ]]; then
-  warn "locking UNVERIFIED ($LOCK_CHECK absent, odoocker #790 unmerged);"
+  warn "held-lock guard NOT wired ($LOCK_CHECK or its train-up/teardown call missing);"
   warn "proceeding on TRAIN_PREFLIGHT_ACK_LOCK=1 -- do NOT run a second"
   warn "apply against any Grove env until this one finishes."
 else
-  bad "locking UNVERIFIED: $LOCK_CHECK is absent (odoocker #790 unmerged) and"
-  bad "DO Spaces does not honour If-None-Match, so use_lockfile is a NO-OP."
-  bad "Re-run with TRAIN_PREFLIGHT_ACK_LOCK=1 to accept serialising by hand."
+  bad "held-lock guard NOT wired: $LOCK_CHECK or its call in Makefile qa-l3-up /"
+  bad "scripts/qa-l3-teardown.sh is missing, and DO Spaces does not honour"
+  bad "If-None-Match, so use_lockfile is a NO-OP. Re-run with"
+  bad "TRAIN_PREFLIGHT_ACK_LOCK=1 to accept serialising by hand."
 fi
 
 echo
