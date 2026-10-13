@@ -411,6 +411,23 @@ class TestNoSelfSkip(unittest.TestCase):
         problems = stg.Runner(args).preconditions()
         self.assertTrue(any("sk_test" in p for p in problems))
 
+    def test_a_restricted_live_stripe_key_is_refused(self):
+        args = argparse.Namespace(
+            odoo_url="https://odoo.qa.example.invalid", api_key="k",
+            stripe_key="rk_live_abc", tenant="nursery",
+            variant_instock="1", variant_bareroot="2", wv_rate=6.0, quantity=1)
+        problems = stg.Runner(args).preconditions()
+        self.assertTrue(any("sk_test" in p for p in problems))
+
+    def test_a_restricted_test_stripe_key_is_accepted(self):
+        # The Grove QA vault's `stripe-nursery-qa/secret_key` is an rk_test key
+        # (GOL-2910, Josh 2026-10-13); restricted test keys must pass the guard.
+        args = argparse.Namespace(
+            odoo_url="https://odoo.qa.example.invalid", api_key="k",
+            stripe_key="rk_test_abc", tenant="nursery",
+            variant_instock="1", variant_bareroot="2", wv_rate=6.0, quantity=1)
+        self.assertEqual(stg.Runner(args).preconditions(), [])
+
     def test_a_non_qa_host_is_refused_because_this_creates_orders(self):
         args = argparse.Namespace(
             odoo_url="https://odoo.gatheringatthegrove.com", api_key="k",
