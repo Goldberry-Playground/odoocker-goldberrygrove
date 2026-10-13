@@ -264,6 +264,8 @@ jobs:
         run: python3 scripts/test_publish_webhook_prod_wired.py
       - name: Run obs firewall-check tests (GOL-2631 broken-check-is-not-drift)
         run: python3 scripts/test_obs_firewall_check.py
+      - name: Run monitoring bootstrap plane tests (GOL-2323 app plane must not wait on Keep)
+        run: python3 scripts/test_setup_monitoring_plane.py
 
   validate-compose:
     name: Validate Docker Compose (Grove)
