@@ -159,12 +159,18 @@ qa-l3-backend:
 	@echo "$$QA_L3_BACKEND_HCL" > $(QA_L3_DIR)/backend.hcl
 
 ## qa-l3-plan: preview changes to the Level 3 QA env (read-only; run before qa-l3-up)
+# -reconfigure: the qa-l3-backend prerequisite REGENERATES backend.hcl on every
+# run, so a .terraform/ cache left by an older generator (e.g. pre-force_path_style)
+# makes a plain `init` abort with "Backend configuration changed". Same bucket and
+# key either way, so no state migration is ever wanted -- just adopt the freshly
+# written config. qa-l3-teardown.sh already does this; qa-l3-plan / qa-l3-up did
+# not, which is a stale-backend-cache trap on the Monday train-up (GOL-2917).
 .PHONY: qa-l3-plan
 qa-l3-plan: qa-l3-backend
 	@op run --env-file=$(QA_L3_ENV_FILE) -- bash -c '\
 		export TF_VAR_grove_brand_pr_token="$${GROVE_BRAND_PR_TOKEN:-}"; \
 		PUBLISH_SECRET_GUARD_WARN_ONLY=1 bash scripts/check-publish-webhook-secrets-wired.sh; \
-		terraform -chdir=$(QA_L3_DIR) init -backend-config=backend.hcl -input=false >/dev/null; \
+		terraform -chdir=$(QA_L3_DIR) init -reconfigure -backend-config=backend.hcl -input=false >/dev/null; \
 		terraform -chdir=$(QA_L3_DIR) plan -input=false'
 
 ## qa-l3-up: apply the full Level 3 QA env (droplets re-bootstrap from cloud-init)
@@ -172,12 +178,19 @@ qa-l3-plan: qa-l3-backend
 # commented out the TF vars default to "", so an apply here silently ZEROES the
 # live per-tenant HMAC secret on BOTH halves (droplet .env + DO app env) and the
 # publish path dies without an error. Override: ALLOW_EMPTY_PUBLISH_SECRETS=1.
+#
+# GOL-2584: also gated on the state-lock preflight. `use_lockfile = true` does
+# NOT work on DO Spaces (Spaces ignores If-None-Match, so every concurrent run
+# "acquires" the same lock -- this is how two QA teardowns both ran on
+# 2026-09-29). The guard refuses to start when a .tflock is already held.
+# Override: TF_LOCK_GUARD_OFF=1.
 .PHONY: qa-l3-up
 qa-l3-up: qa-l3-backend
 	@op run --env-file=$(QA_L3_ENV_FILE) -- bash -c '\
 		export TF_VAR_grove_brand_pr_token="$${GROVE_BRAND_PR_TOKEN:-}"; \
 		bash scripts/check-publish-webhook-secrets-wired.sh && \
-		terraform -chdir=$(QA_L3_DIR) init -backend-config=backend.hcl -input=false >/dev/null && \
+		bash scripts/tf-state-lock-check.sh guard qa-app-platform/terraform.tfstate && \
+		terraform -chdir=$(QA_L3_DIR) init -reconfigure -backend-config=backend.hcl -input=false >/dev/null && \
 		terraform -chdir=$(QA_L3_DIR) apply -input=false'
 
 ## qa-check-publish-secrets: verify an apply would not zero a publish-webhook secret
@@ -257,6 +270,19 @@ qa-test-data-cleanup:
 .PHONY: qa-test-data-cleanup-apply
 qa-test-data-cleanup-apply:
 	bash scripts/qa-test-data-cleanup.sh --apply $(ARGS)
+
+# ── Stripe Tax cutover gate (GOL-2568 / GOL-2584) ────────────────────────────
+# Gates 3 and 4 decide whether the GROVE_STRIPE_TAX_{TENANT} flag may flip at a
+# promote. They need OPPOSITE flag states, so the sequence is: gate 3 (flag off,
+# how QA comes up) -> operator flips the flag on the QA droplet (Path A in
+# docs/RUNBOOK-module-upgrade.md) -> gate 4, merging the gate-3 verdict. Local +
+# human-run for the same reason the train legs are: the creds live in the Grove
+# QA vault, not CI. Exit 1 = flip NOT cleared = the code ships inert.
+#   make stripe-tax-gate ARGS="--dry-run --gate 4"
+## stripe-tax-gate: run the Stripe Tax Gate 3/4 assertions against a live QA (ARGS passed through; --dry-run first)
+.PHONY: stripe-tax-gate
+stripe-tax-gate:
+	bash scripts/stripe-tax-gate.sh $(ARGS)
 
 # ── Monitoring / synthetics (GOL-2325) ───────────────────────────────────────
 # Config-as-code bring-up for the observability stack + Tier-1 synthetic runner.

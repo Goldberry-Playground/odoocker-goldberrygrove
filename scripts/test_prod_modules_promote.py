@@ -1292,6 +1292,50 @@ def test_stripe_tax_does_not_disturb_perenual():
         d.cleanup()
 
 
+def test_stripe_tax_inert_passthrough_on_pre805_box_at_live_pin():
+    """GOL-3209: the live prod droplet predates #805 -- no GROVE_STRIPE_TAX_*
+    in .env OR the deployed compose -- and is already ON the promote target.
+    The pre-flip prep is an all-tenants FALSEY converge at the CURRENT pin: it
+    must add all three passthroughs (one compose backup), land exactly one
+    `=0` line each, prove the process env carries them (inert = Odoo WV tax),
+    and NOT take the NO-OP exit. A re-run is then the idempotent NO-OP, so the
+    Train #3 flip is a pure value change with no compose edit."""
+    tenants = ("GOLDBERRY", "GGG", "NURSERY")
+    off = {f"GROVE_STRIPE_TAX_{t}": "0" for t in tenants}
+    d = Droplet(env_ref=NEW, synced=NEW, marker=NEW)
+    try:
+        r = d.run(target=NEW, confirm="PROMOTE", extra_env=off)
+        check("inert-prep-exit-0", r.returncode == 0,
+              f"rc={r.returncode} {r.stderr[-500:]}")
+        check("inert-prep-not-noop", "NO-OP" not in r.stdout, r.stdout[-400:])
+        for t in tenants:
+            key = f"GROVE_STRIPE_TAX_{t}"
+            check(f"inert-prep-passthrough-{t}",
+                  f"{key}: ${{{key}:-}}" in d.compose_text(),
+                  repr(d.compose_text()))
+            check(f"inert-prep-env-line-{t}",
+                  d.env_text().count(f"{key}=") == 1
+                  and f"{key}=0\n" in d.env_text(), repr(d.env_text()))
+            check(f"inert-prep-runtime-{t}", d.container_env(key) == "0",
+                  repr(d.container_env(key)))
+        check("inert-prep-one-compose-backup", len(d.compose_backups()) == 1,
+              str(d.compose_backups()))
+        check("inert-prep-reports-odoo-tax",
+              r.stdout.count("keeps Odoo's computed WV tax line") == 3,
+              r.stdout[-600:])
+        check("inert-prep-never-stripe", "now hands sales tax to STRIPE TAX"
+              not in r.stdout, r.stdout[-400:])
+
+        again = d.run(target=NEW, confirm="PROMOTE", extra_env=off)
+        check("inert-prep-rerun-noop",
+              again.returncode == 0 and "NO-OP" in again.stdout,
+              f"rc={again.returncode} {again.stdout[-300:]}")
+        check("inert-prep-rerun-no-new-backup", len(d.compose_backups()) == 1,
+              str(d.compose_backups()))
+    finally:
+        d.cleanup()
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

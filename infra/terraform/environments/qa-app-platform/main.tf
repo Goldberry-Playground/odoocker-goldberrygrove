@@ -9,7 +9,7 @@
 #
 # Per ADR-007 D6 budget: ~$47/mo total while running.
 #   - Managed PG dev tier: ~$15/mo
-#   - Odoo droplet s-1vcpu-2gb: ~$12/mo
+#   - Odoo droplet s-1vcpu-2gb-intel: ~$14/mo
 #   - Caddy /data volume: ~$0.10/mo
 #   - 4 App Platform basic apps (Phase 2): ~$20/mo
 #
@@ -19,7 +19,7 @@
 #   2. DO domain + DNS records under the qa-l3 zone
 #   3. DO SSH keys (long-lived; same pattern as monolith QA)
 #   4. DO Managed Postgres cluster (dev tier, private network)
-#   5. DO droplet (Ubuntu 24.04, s-1vcpu-2gb) for Odoo + Caddy only
+#   5. DO droplet (Ubuntu 24.04, s-1vcpu-2gb-intel) for Odoo + Caddy only
 #   6. DO firewall for the Odoo droplet
 #   7. DO persistent volume for Caddy /data (LE cert persistence — same
 #      pattern as ADR-005 PR-A in the monolith env)
