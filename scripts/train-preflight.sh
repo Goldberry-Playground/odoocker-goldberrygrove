@@ -65,12 +65,20 @@ echo "Release Train preflight (GOL-2584)"
 echo
 echo "[1] Durable volumes (GOL-2436 / GOL-93 / #237)"
 
-# Token: prefer an explicit env var, else the doctl config the agent plane uses.
+# Token: prefer an explicit env var, else doctl's DEFAULT-context token.
+# doctl writes its config to $XDG_CONFIG_HOME/doctl (Linux, the agent plane) or
+# ~/Library/Application Support/doctl (macOS, where Josh runs train-up); the
+# macOS path was missing, so a configured doctl read as "no token" (10-05).
+# Only the column-0 `access-token:` line is the default context -- indented
+# ones belong to other, possibly stale, contexts. `[^...]*` not `\S`: BSD sed
+# (macOS) has no `\S` and silently matched nothing.
 DO_TOKEN="${DIGITALOCEAN_TOKEN:-${DIGITALOCEAN_ACCESS_TOKEN:-}}"
 if [[ -z "$DO_TOKEN" ]]; then
-  for cfg in "${HOME}/.config/doctl/config.yaml" "/paperclip/.config/doctl/config.yaml"; do
+  for cfg in "${XDG_CONFIG_HOME:-${HOME}/.config}/doctl/config.yaml" \
+             "${HOME}/Library/Application Support/doctl/config.yaml" \
+             "/paperclip/.config/doctl/config.yaml"; do
     if [[ -r "$cfg" ]]; then
-      DO_TOKEN="$(sed -n 's/^[[:space:]]*access-token:[[:space:]]*\(\S*\).*/\1/p' "$cfg" | head -1)"
+      DO_TOKEN="$(sed -n "s/^access-token:[[:space:]]*[\"']\{0,1\}\([^\"'[:space:]]*\).*/\1/p" "$cfg" | head -1)"
       [[ -n "$DO_TOKEN" ]] && break
     fi
   done
@@ -84,7 +92,7 @@ vols_json="$(mktemp)"
 trap 'rm -f "$vols_json"' EXIT
 http="$(curl -sS -m 30 -o "$vols_json" -w '%{http_code}' \
   -H "Authorization: Bearer ${DO_TOKEN}" \
-  'https://api.digitalocean.com/v2/volumes?per_page=200')"
+  "${TRAIN_PREFLIGHT_DO_API:-https://api.digitalocean.com}/v2/volumes?per_page=200")"
 if [[ "$http" != "200" ]]; then
   echo "  ERROR: DO volumes API returned HTTP ${http}." >&2
   exit 2
@@ -113,20 +121,29 @@ done <<<"$EXPECTED"
 
 echo
 echo "[2] Terraform state locking (GOL-2755)"
-if [[ -x "$LOCK_CHECK" || -f "$LOCK_CHECK" ]]; then
-  if bash "$LOCK_CHECK"; then
-    ok "state locking mutually excludes"
-  else
-    bad "state lock check FAILED -- concurrent applies can corrupt state"
-  fi
+# DO Spaces does not honour If-None-Match, so `use_lockfile` is a no-op and
+# `tf-state-lock-check.sh probe` FAILS by design on this backend -- running it
+# here would block every train. The control that exists is the advisory
+# `guard` (#790): it refuses to start while a .tflock is held, and it needs the
+# state-bucket credentials that only `op run` inside qa-l3-up / the teardown
+# has. So this asserts the guard is WIRED into both legs; the guard itself runs
+# seconds before the apply/destroy. (Calling the script bare here, as this
+# section first did, always exited 2 = FAIL once #790 landed.)
+if [[ -f "$LOCK_CHECK" ]] \
+   && grep -q 'tf-state-lock-check.sh guard qa-app-platform/terraform.tfstate' Makefile \
+   && grep -q 'tf-state-lock-check.sh" guard qa-app-platform/terraform.tfstate' scripts/qa-l3-teardown.sh; then
+  ok "held-lock guard wired into qa-l3-up and qa-l3-teardown (advisory: Spaces"
+  warn "cannot enforce locks -- do NOT run a second apply against any Grove env"
+  warn "until this one finishes; re-home state per ADR-011 / GOL-2760)"
 elif [[ "$ACK_LOCK" == "1" ]]; then
-  warn "locking UNVERIFIED ($LOCK_CHECK absent, odoocker #790 unmerged);"
+  warn "held-lock guard NOT wired ($LOCK_CHECK or its train-up/teardown call missing);"
   warn "proceeding on TRAIN_PREFLIGHT_ACK_LOCK=1 -- do NOT run a second"
   warn "apply against any Grove env until this one finishes."
 else
-  bad "locking UNVERIFIED: $LOCK_CHECK is absent (odoocker #790 unmerged) and"
-  bad "DO Spaces does not honour If-None-Match, so use_lockfile is a NO-OP."
-  bad "Re-run with TRAIN_PREFLIGHT_ACK_LOCK=1 to accept serialising by hand."
+  bad "held-lock guard NOT wired: $LOCK_CHECK or its call in Makefile qa-l3-up /"
+  bad "scripts/qa-l3-teardown.sh is missing, and DO Spaces does not honour"
+  bad "If-None-Match, so use_lockfile is a NO-OP. Re-run with"
+  bad "TRAIN_PREFLIGHT_ACK_LOCK=1 to accept serialising by hand."
 fi
 
 echo
