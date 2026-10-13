@@ -411,6 +411,30 @@ class TestNoSelfSkip(unittest.TestCase):
         problems = stg.Runner(args).preconditions()
         self.assertTrue(any("sk_test" in p for p in problems))
 
+    def test_a_restricted_live_stripe_key_is_refused_too(self):
+        args = argparse.Namespace(
+            odoo_url="https://odoo.qa.example.invalid", api_key="k",
+            stripe_key="rk_live_abc", tenant="nursery",
+            variant_instock="1", variant_bareroot="2", wv_rate=6.0, quantity=1)
+        problems = stg.Runner(args).preconditions()
+        self.assertTrue(any("not a test-mode key" in p for p in problems))
+
+    def test_a_restricted_test_stripe_key_is_accepted(self):
+        # The Grove QA vault item stripe-nursery-qa holds an rk_test_ key
+        # (GOL-899), not an sk_test_ one; refusing it would make the gate
+        # un-runnable from the committed env.op (GOL-2910).
+        args = argparse.Namespace(
+            odoo_url="https://odoo.qa.example.invalid", api_key="k",
+            stripe_key="rk_test_abc", tenant="nursery",
+            variant_instock="1", variant_bareroot="2", wv_rate=6.0, quantity=1)
+        self.assertEqual(stg.Runner(args).preconditions(), [])
+
+    def test_is_stripe_test_key_only_accepts_test_mode_prefixes(self):
+        for ok in ("sk_test_abc", "rk_test_abc"):
+            self.assertTrue(stg._is_stripe_test_key(ok), ok)
+        for bad in ("", "sk_live_abc", "rk_live_abc", "pk_test_abc", "whsec_abc", "test"):
+            self.assertFalse(stg._is_stripe_test_key(bad), bad)
+
     def test_a_non_qa_host_is_refused_because_this_creates_orders(self):
         args = argparse.Namespace(
             odoo_url="https://odoo.gatheringatthegrove.com", api_key="k",

@@ -497,6 +497,20 @@ def _post_json(url: str, body: dict, headers: dict, timeout: int = 45) -> tuple:
             return exc.code, {"error": raw[:400]}
 
 
+STRIPE_TEST_KEY_PREFIXES = ("sk_test", "rk_test")
+
+
+def _is_stripe_test_key(key: str) -> bool:
+    """True only for a Stripe TEST-mode secret: a full ``sk_test_…`` key or a
+    restricted ``rk_test_…`` key. The Grove QA vault item ``stripe-nursery-qa``
+    holds a restricted key (GOL-899); it is test-mode and its scope was checked
+    against every call this gate makes (list checkout sessions, create
+    customer, attach pm_card_visa, create + read payment intents) on
+    2026-10-13 (GOL-2910). ``sk_live`` / ``rk_live`` and anything else are
+    refused: a live key here would create real charges."""
+    return bool(key) and key.startswith(STRIPE_TEST_KEY_PREFIXES)
+
+
 def _stripe_get(secret_key: str, path: str, params: str = "", timeout: int = 30) -> tuple:
     url = f"https://api.stripe.com/v1/{path}" + (f"?{params}" if params else "")
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {secret_key}",
@@ -614,8 +628,8 @@ class Runner:
             problems.append("QA_ODOO_API_KEY is unset (bearer key for /grove/api/v1/checkout/session)")
         if not self.stripe_key:
             problems.append("STRIPE_TEST_SECRET_KEY is unset")
-        elif not self.stripe_key.startswith("sk_test"):
-            problems.append("STRIPE_TEST_SECRET_KEY is not a test-mode key (must start with sk_test). "
+        elif not _is_stripe_test_key(self.stripe_key):
+            problems.append("STRIPE_TEST_SECRET_KEY is not a test-mode key (must start with sk_test or rk_test). "
                             "Refusing: a live key here would create real charges.")
         if not self.variants["instock"]:
             problems.append("--variant-instock is required (an in-stock, ships-now nursery variant id)")
@@ -804,7 +818,8 @@ def main(argv=None) -> int:
     if args.dry_run:
         print("DRY RUN — nothing will be created.")
         print(f"  QA Odoo : {runner.odoo_base or '(unset)'}  tenant={runner.tenant}")
-        print(f"  Stripe  : {'sk_test…' if runner.stripe_key.startswith('sk_test') else '(unset/not test)'}")
+        key_mode = runner.stripe_key[:7] + "…" if _is_stripe_test_key(runner.stripe_key) else "(unset/not test)"
+        print(f"  Stripe  : {key_mode}")
         print("  cases   :")
         for n in names:
             print(f"    - {CASES[n]['label']}")

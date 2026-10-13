@@ -44,7 +44,7 @@
 #   (b) 1Password `op run`: point STRIPE_TAX_GATE_ENV_OP at an env-file of
 #       op:// refs. Template: scripts/stripe-tax-gate.env.op.
 #
-# The Stripe key MUST be a test-mode key (sk_test…) and the Odoo host MUST say
+# The Stripe key MUST be a test-mode key (sk_test… or restricted rk_test…) and the Odoo host MUST say
 # "qa" — the script refuses otherwise, because it creates orders and QA shares
 # the database name `odoo` with production.
 set -euo pipefail
