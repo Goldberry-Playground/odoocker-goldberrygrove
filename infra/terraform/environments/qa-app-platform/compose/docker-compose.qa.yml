@@ -193,6 +193,11 @@ services:
       # _notify_discord() prefers this over DISCORD_OPS_WEBHOOK_URL; empty =>
       # order alerts are a no-op in QA (QA plumbs no ops webhook either).
       DISCORD_ORDERS_WEBHOOK_URL: ${DISCORD_ORDERS_WEBHOOK_URL:-}
+      # #grove-ops webhook (GOL-3302 Train #3 live-chat gate). grove_support's
+      # chat-start ping (grove_support/models/discord.py) reads ONLY this name
+      # from os.environ -- it has no ORDERS fallback -- and os.environ comes
+      # ONLY from this block, so without this line the QA ping is a no-op.
+      DISCORD_OPS_WEBHOOK_URL: ${DISCORD_OPS_WEBHOOK_URL:-}
       # Perenual plant-facts enrichment (GOL-2507, parent GOL-2383).
       # grove_headless services/plant_data/perenual.py reads PERENUAL_API_KEY
       # from os.environ, and the odoo process env comes ONLY from this block

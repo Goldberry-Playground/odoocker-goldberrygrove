@@ -550,3 +550,39 @@ variable "perenual_api_key" {
     error_message = "perenual_api_key must be empty or a plain API token with NO whitespace or shell metacharacters (A-Z a-z 0-9 and . _ ~ + / = : - only, 8-200 chars) — cloud-init writes it UNQUOTED into the bash-sourced /etc/grove/.env, so a space, quote or $ would break set -euo pipefail at boot."
   }
 }
+
+# --- grove_support live chat switch-on (GOL-3302 / GOL-2023, Train #3 gate) --
+#
+# Same shape as production/variables.tf nursery_livechat_channel_id (read that
+# doc for the why-RUN_TIME-not-NEXT_PUBLIC story). QA channel 2 is the nursery
+# livechat channel on the QA Odoo (verified 2026-09-21 while building the embed,
+# grove-sites #794); it lives in the Managed PG that survives train-teardown, so
+# the id is stable across train-ups.
+variable "nursery_livechat_channel_id" {
+  description = "Integer id of the im_livechat.channel record on the QA Odoo that the nursery QA storefront's support widget loads. Empty string = widget OFF (env omitted). Default 2 = the QA nursery channel (survives teardown in the Managed PG). PUBLIC value, not a secret. Nursery only; RUN_TIME scope; see apps.tf."
+  type        = string
+  default     = "2"
+
+  validation {
+    condition     = can(regex("^[0-9]*$", var.nursery_livechat_channel_id))
+    error_message = "nursery_livechat_channel_id must be empty (widget off) or the integer id of the im_livechat.channel record on the QA Odoo."
+  }
+}
+
+# grove_support's chat-start Discord ping (grove_support/models/discord.py)
+# reads ONLY os.environ DISCORD_OPS_WEBHOOK_URL -- it does not fall back to
+# DISCORD_ORDERS_WEBHOOK_URL the way grove_headless _notify_discord() does.
+# QA plumbed neither ops webhook until now, so the Train #3 live-chat gate
+# ("Discord ops ping on chat start") was untestable on QA. Mirrors prod's
+# odoo.tf discord_ops_webhook_url = var.discord_webhook_url chain.
+variable "discord_ops_webhook_url" {
+  description = "Discord webhook grove_support posts the chat-start ping to on QA (os.environ DISCORD_OPS_WEBHOOK_URL; grove_headless _notify_discord() also falls back to it when DISCORD_ORDERS_WEBHOOK_URL is empty). Empty default = ping is a silent no-op in QA. QA chats pinging the REAL #grove-ops channel is intentional for the Train #3 gate, same precedent as discord_orders_webhook_url; point it at a QA-only webhook later if the noise bothers staff. 1P: op://Goldberry Grove - Admin/Grove Infra/discord_webhook_url (via .env.op). BARE url, no /slack suffix. Feeds user_data -- changing it REPLACES the QA odoo droplet (which is what train-up does anyway)."
+  type        = string
+  sensitive   = true
+  default     = ""
+
+  validation {
+    condition     = var.discord_ops_webhook_url == "" || can(regex("^https://discord(app)?\\.com/api/webhooks/[0-9]+/[A-Za-z0-9_-]+$", var.discord_ops_webhook_url))
+    error_message = "discord_ops_webhook_url must be empty or a bare Discord webhook URL (https://discord.com/api/webhooks/<id>/<token>) with NO /slack suffix and no whitespace -- cloud-init writes it UNQUOTED into the bash-sourced /etc/grove/.env."
+  }
+}
