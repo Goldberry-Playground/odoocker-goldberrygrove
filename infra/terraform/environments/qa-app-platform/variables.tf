@@ -469,6 +469,67 @@ variable "grove_shippo_webhook_token" {
   default     = ""
 }
 
+# --- Printify print-on-demand merch (GOL-3316, Train #3; spec grove-odoo-modules#340)
+# grove_headless reads all four UPPERCASE names from os.environ
+# (models/printify_client.py / product_template.py / sale_order.py / the
+# /grove/api/v1/printify/webhook route). The odoo process env comes ONLY from the
+# compose `environment:` block, so each key is declared here, rendered into
+# /etc/grove/.env by cloud-init AND listed in docker-compose.qa.yml -- the same
+# three-point chain as SHIPPO_API_KEY (and the GOL-3209 / PERENUAL_API_KEY trap
+# when any point is missing). Empty token/shop => the sync action and push cron
+# raise a clear error and no Printify call is made; empty webhook secret =>
+# verify_signature fails closed (401). Printify has no test mode: QA uses the
+# REAL token with PRINTIFY_DRY_RUN=1 so orders are created but never sent to
+# production. All four feed cloud-init user_data => changing any REPLACES the QA
+# odoo droplet (which is what train-up does anyway). Values are written UNQUOTED
+# into the bash-sourced /etc/grove/.env, hence the charset validation.
+variable "printify_api_token" {
+  description = "Printify personal access token (JWT) for the farm shop. grove_headless printify_client reads os.environ PRINTIFY_API_TOKEN; empty => sync/push raise a clear error, no API call. QA uses the same token as prod (Printify has no test mode) guarded by PRINTIFY_DRY_RUN=1. 1P: op://Grove QA/Printify Key/api_token (via TF_VAR_printify_api_token in .env.op, commented until the item exists). Feeds user_data => REPLACES the QA odoo droplet."
+  type        = string
+  sensitive   = true
+  default     = ""
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9._~+/=:-]*$", var.printify_api_token))
+    error_message = "printify_api_token must contain no whitespace or shell metacharacters (A-Za-z0-9 . _ ~ + / = : - only): cloud-init writes it unquoted into the bash-sourced /etc/grove/.env, so a bad value breaks the droplet's boot, not the apply."
+  }
+}
+
+variable "printify_shop_id" {
+  description = "Numeric id of the farm's Printify shop (the API / custom-integration sales channel). grove_headless reads os.environ PRINTIFY_SHOP_ID; empty => sync/push raise a clear error. 1P: op://Grove QA/Printify Key/shop_id (commented in .env.op until the item exists). Feeds user_data => REPLACES the QA odoo droplet."
+  type        = string
+  sensitive   = true
+  default     = ""
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9._~+/=:-]*$", var.printify_shop_id))
+    error_message = "printify_shop_id must contain no whitespace or shell metacharacters (A-Za-z0-9 . _ ~ + / = : - only): it is written unquoted into the bash-sourced /etc/grove/.env."
+  }
+}
+
+variable "printify_webhook_secret" {
+  description = "Shared secret Printify signs webhook bodies with (HMAC-SHA256); grove_headless /grove/api/v1/printify/webhook reads os.environ PRINTIFY_WEBHOOK_SECRET and verify_signature fails CLOSED when it is empty (every webhook => 401). The same value is registered with Printify by scripts/printify_register_webhooks.py (grove-odoo-modules). DISTINCT from prod so revoking one stage never breaks the other. 1P: op://Grove QA/Printify Key/webhook_secret (commented in .env.op until the item exists). Feeds user_data => REPLACES the QA odoo droplet."
+  type        = string
+  sensitive   = true
+  default     = ""
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9._~+/=:-]*$", var.printify_webhook_secret))
+    error_message = "printify_webhook_secret must contain no whitespace or shell metacharacters (A-Za-z0-9 . _ ~ + / = : - only): it is written unquoted into the bash-sourced /etc/grove/.env."
+  }
+}
+
+variable "printify_dry_run" {
+  description = "Printify dry-run flag. grove_headless sale_order push does `(os.environ.get(\"PRINTIFY_DRY_RUN\") or \"\").strip().lower() in (\"1\",\"true\",\"yes\",\"on\")`: truthy => Printify orders are CREATED but never sent to production; anything else (including empty) => live. QA defaults to \"1\" because QA runs the REAL Printify token (no test mode exists). Restricted to the tokens the module recognises so a typo cannot silently go live. Not secret. Feeds user_data => REPLACES the QA odoo droplet."
+  type        = string
+  default     = "1"
+
+  validation {
+    condition     = contains(["", "1", "true", "yes", "on", "0", "false", "no", "off"], lower(var.printify_dry_run))
+    error_message = "printify_dry_run must be one of 1/true/yes/on (dry run: create orders, never send to production), 0/false/no/off or empty (LIVE). grove_headless treats any other string as live WITHOUT COMPLAINING, so a typo here would send real print orders from QA."
+  }
+}
+
 # --- Carrier tracking poll — UPS Track + USPS Tracking v3 (GOL-2296) ---------
 # Pirate Ship C (grove-odoo-modules#232). carrier_tracking.build_clients() reads
 # these four UPPERCASE names from os.environ and builds a carrier client only

@@ -460,6 +460,68 @@ variable "grove_shippo_webhook_token" {
   default     = ""
 }
 
+# === Printify print-on-demand merch (GOL-3316, Train #3; spec gom#340) =======
+# grove_headless reads all four UPPERCASE names from os.environ
+# (models/printify_client.py / product_template.py / sale_order.py / the
+# /grove/api/v1/printify/webhook route). The odoo process env comes ONLY from
+# the compose `environment:` block, so each key is declared here, rendered into
+# /etc/grove/.env by cloud-init AND listed in docker-compose.odoo.yml -- the
+# same three-point chain as SHIPPO_API_KEY. Empty token/shop => sync and push
+# raise a clear error and no Printify call is made; empty webhook secret =>
+# verify_signature fails closed (401). All four are user_data inputs and
+# user_data is in ignore_changes, so landing this scaffold does NOT touch the
+# running droplet: the RUNNING box gets the passthrough from Leg B
+# (scripts/prod-modules-promote.sh, PRINTIFY_PASSTHROUGH=1) and the values from
+# Josh's /etc/grove/.env edit; the next rebuild reproduces both from code.
+# Values are written UNQUOTED into the bash-sourced .env, hence the charset
+# validation.
+variable "printify_api_token" {
+  description = "Printify personal access token (JWT) for the farm shop. grove_headless printify_client reads os.environ PRINTIFY_API_TOKEN; empty => sync/push raise a clear error, no API call. 1P: op://Grove Prod/Printify Prod Key/api_token (commented in .env.op until the item exists). user_data input (ignore_changes) => activates on a rebuild; the running box is converged by Leg B + Josh's .env edit."
+  type        = string
+  sensitive   = true
+  default     = ""
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9._~+/=:-]*$", var.printify_api_token))
+    error_message = "printify_api_token must contain no whitespace or shell metacharacters (A-Za-z0-9 . _ ~ + / = : - only): cloud-init writes it unquoted into the bash-sourced /etc/grove/.env, so a bad value breaks the droplet's boot, not the apply."
+  }
+}
+
+variable "printify_shop_id" {
+  description = "Numeric id of the farm's Printify shop (the API / custom-integration sales channel). grove_headless reads os.environ PRINTIFY_SHOP_ID; empty => sync/push raise a clear error. 1P: op://Grove Prod/Printify Prod Key/shop_id (commented in .env.op until the item exists). user_data input, same semantics as printify_api_token."
+  type        = string
+  sensitive   = true
+  default     = ""
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9._~+/=:-]*$", var.printify_shop_id))
+    error_message = "printify_shop_id must contain no whitespace or shell metacharacters (A-Za-z0-9 . _ ~ + / = : - only): it is written unquoted into the bash-sourced /etc/grove/.env."
+  }
+}
+
+variable "printify_webhook_secret" {
+  description = "Shared secret Printify signs webhook bodies with (HMAC-SHA256); grove_headless /grove/api/v1/printify/webhook reads os.environ PRINTIFY_WEBHOOK_SECRET and verify_signature fails CLOSED when it is empty (every webhook => 401). Registered with Printify by scripts/printify_register_webhooks.py against the prod URL. DISTINCT from the QA secret so revoking one stage never breaks the other. 1P: op://Grove Prod/Printify Prod Key/webhook_secret (commented in .env.op until the item exists). user_data input, same semantics as printify_api_token."
+  type        = string
+  sensitive   = true
+  default     = ""
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9._~+/=:-]*$", var.printify_webhook_secret))
+    error_message = "printify_webhook_secret must contain no whitespace or shell metacharacters (A-Za-z0-9 . _ ~ + / = : - only): it is written unquoted into the bash-sourced /etc/grove/.env."
+  }
+}
+
+variable "printify_dry_run" {
+  description = "Printify dry-run flag. grove_headless sale_order push does `(os.environ.get(\"PRINTIFY_DRY_RUN\") or \"\").strip().lower() in (\"1\",\"true\",\"yes\",\"on\")`: truthy => Printify orders are CREATED but never sent to production; anything else (including empty) => LIVE. Prod defaults to EMPTY (live) per the spec; a truthy value here is the one-line way to hold prod in dry run (e.g. during the first sync). Restricted to the tokens the module recognises so a typo cannot silently go live. Not secret. user_data input (ignore_changes)."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = contains(["", "1", "true", "yes", "on", "0", "false", "no", "off"], lower(var.printify_dry_run))
+    error_message = "printify_dry_run must be one of 1/true/yes/on (dry run: create orders, never send to production), 0/false/no/off or empty (LIVE). grove_headless treats any other string as live WITHOUT COMPLAINING."
+  }
+}
+
 # === Carrier tracking poll — UPS Track + USPS Tracking v3 (GOL-2296) =========
 # Pirate Ship C (grove-odoo-modules#232). carrier_tracking.build_clients() reads
 # these four UPPERCASE names from os.environ and builds a carrier client only
