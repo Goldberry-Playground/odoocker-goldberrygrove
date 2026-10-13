@@ -428,6 +428,12 @@ class TestNoSelfSkip(unittest.TestCase):
             variant_instock="1", variant_bareroot="2", wv_rate=6.0, quantity=1)
         self.assertEqual(stg.Runner(args).preconditions(), [])
 
+    def test_banner_key_kind_is_a_constant_never_a_slice_of_the_secret(self):
+        self.assertEqual(stg._test_mode_key_kind("rk_test_abc"), "rk_test")
+        self.assertEqual(stg._test_mode_key_kind("sk_test_abc"), "sk_test")
+        self.assertEqual(stg._test_mode_key_kind("sk_live_abc"), "")
+        self.assertEqual(stg._test_mode_key_kind(""), "")
+
     def test_a_non_qa_host_is_refused_because_this_creates_orders(self):
         args = argparse.Namespace(
             odoo_url="https://odoo.gatheringatthegrove.com", api_key="k",

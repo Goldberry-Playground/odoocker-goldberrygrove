@@ -500,6 +500,16 @@ def _post_json(url: str, body: dict, headers: dict, timeout: int = 45) -> tuple:
 STRIPE_TEST_KEY_PREFIXES = ("sk_test", "rk_test")
 
 
+def _test_mode_key_kind(key: str) -> str:
+    """The matched TEST-mode prefix as a CONSTANT ("sk_test"/"rk_test"), or "" —
+    for banners. Deliberately never a slice of the key itself, so no byte of the
+    secret is ever logged (CodeQL py/clear-text-logging-sensitive-data)."""
+    for prefix in STRIPE_TEST_KEY_PREFIXES:
+        if key.startswith(prefix):
+            return prefix
+    return ""
+
+
 def _is_test_mode_key(key: str) -> bool:
     """True only for a Stripe TEST-mode key: a standard secret key (sk_test…) or a
     restricted key (rk_test…). The Grove QA vault item `stripe-nursery-qa` is a
@@ -817,7 +827,8 @@ def main(argv=None) -> int:
     if args.dry_run:
         print("DRY RUN — nothing will be created.")
         print(f"  QA Odoo : {runner.odoo_base or '(unset)'}  tenant={runner.tenant}")
-        print(f"  Stripe  : {runner.stripe_key[:7] + '…' if _is_test_mode_key(runner.stripe_key) else '(unset/not test)'}")
+        key_kind = _test_mode_key_kind(runner.stripe_key)
+        print(f"  Stripe  : {key_kind + '…' if key_kind else '(unset/not test)'}")
         print("  cases   :")
         for n in names:
             print(f"    - {CASES[n]['label']}")
