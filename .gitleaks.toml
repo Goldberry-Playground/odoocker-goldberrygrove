@@ -91,6 +91,18 @@ id = "private-key"
   paths = ['''scripts/check-secret-shapes\.sh$''']
   description = "Shape-check script intentionally names the expected PEM header for its prefix probe."
 
+# DigitalOcean-token-shaped test fixtures (GOL-3275). The train-preflight
+# tests feed doctl configs with dummy tokens like `dop_v1_default` /
+# `dop_v1_stale_indented`; the scheduled sweep scans `--all` refs, so a fixture
+# on any open PR branch (here #851 @ a8608c8e) reds Security Scans on main.
+# A real DO PAT is `dop_v1_` + exactly 64 lowercase hex chars, so this
+# regex (letters/underscores only, max 40) can never match a live token.
+[[rules]]
+id = "generic-api-key"
+[rules.allowlist]
+  regexes = ['''^dop_v1_[a-z_]{1,40}$''']
+  description = "Dummy DO-token fixtures in tests; real dop_v1_ tokens are 64 hex chars."
+
 # Example (uncomment and adapt if needed):
 # [[rules]]
 # id = "generic-api-key"

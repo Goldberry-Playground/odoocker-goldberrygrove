@@ -187,6 +187,57 @@ grove_headless.perenual_calls.<UTC-today>` increments. Prod's daily budget stays
 **80** (`grove_headless.perenual_daily_budget`); QA holds the other 20 of the
 shared vendor quota (one free-tier key, 100 calls/UTC day, counted per database).
 
+### Flipping the Stripe Tax cutover flag on prod (GOL-2568 / GOL-2584)
+
+`grove_headless` decides per order whether Stripe or Odoo computes sales tax by
+reading `GROVE_STRIPE_TAX_{TENANT}` out of `os.environ`
+(`controllers/main.py::_stripe_tax_enabled`). Unset, empty, or an unresolvable
+tenant is **OFF**, and OFF is byte-identical to the pre-GOL-2568 checkout — so
+OFF is also the rollback. Truthy values are `1` / `true` / `yes` / `on`.
+
+**This is a money path: the flag changes what customers are charged.** Flip it
+only as a separate, named, board-approved step, and only after the QA e2e gate
+asserted amounts for a WV *and* a non-WV address (grove-odoo-modules
+`docs/stripe-tax-cutover.md`, Gate 4).
+
+All three keys are now rendered **unconditionally** by the committed Terraform
+chain — `var.grove_stripe_tax_tenants` (a set of tenant slugs, empty by default)
+→ `cloud-init-odoo.yaml.tpl` `/etc/grove/.env` → the odoo service's
+`environment:` block in `compose/docker-compose.odoo.yml`. That matters because
+of the GOL-1772/GOL-1786 footgun: a key that is **not listed in the deployed
+compose** can never be injected into a running container no matter what
+`/etc/grove/.env` says. With the keys always present, activation is a *value*
+change, never a compose edit.
+
+Because prod's droplet carries `user_data` in `ignore_changes`, merging the
+Terraform change is a provable no-op on the running box, and a plain (or
+`-target`ed) `terraform apply` will **not** activate the flag. Two real paths:
+
+| Path | Cost | When |
+|------|------|------|
+| **A — env-file upsert** (GOL-1772 Option B, recommended) | seconds, no outage | promote day. On `grove-prod-odoo`: `sed -i '/^GROVE_STRIPE_TAX_NURSERY=/d' /etc/grove/.env && echo 'GROVE_STRIPE_TAX_NURSERY=1' >> /etc/grove/.env`, confirm `grep 'GROVE_STRIPE_TAX_NURSERY:' /etc/grove/docker-compose.yml` is present (add it to the odoo `environment:` block if the box predates this change), then `cd /etc/grove && docker compose --env-file /etc/grove/.env up -d --force-recreate --no-deps odoo`. **A container's env is fixed at create time — a plain `restart` does nothing.** |
+| **B — droplet REPLACE** | ~10-20 min Odoo outage | only if a rebuild is already planned; re-triggers the GOL-93 filestore gate |
+
+Verify against the **process**, not the files:
+
+```bash
+docker compose --env-file /etc/grove/.env exec -T odoo printenv GROVE_STRIPE_TAX_NURSERY
+# -> 1        (files converged + process not = the state that looks live and charges Odoo tax)
+```
+
+Then place one real test order per address class and check
+`sale.order.grove_stripe_tax_amount` / `grove_stripe_tax_jurisdictions` are
+written back by the `checkout.session.completed` webhook.
+
+**Rollback:** drop the line (or set it to `0`) and recreate the container the
+same way. No code change, no data migration; in-flight Stripe sessions settle
+normally and new sessions go back to the Odoo WV tax line.
+
+**Follow-up (GOL-2584 child):** teach `scripts/prod-modules-promote.sh` to carry
+`GROVE_STRIPE_TAX_NURSERY` the way it already carries `PERENUAL_API_KEY` above,
+so the pin bump and the flag flip are one converge with process-level
+verification instead of a hand-edited second touch.
+
 ### The money guard -- the real success condition
 
 `grove_headless`'s `setup_wv_sales_tax` (`hooks.py`) wraps every company in

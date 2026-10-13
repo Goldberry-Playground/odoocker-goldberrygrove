@@ -62,17 +62,49 @@ def _env(name: str, default: str = "") -> str:
     return os.environ.get(name, default)
 
 
+def _ghost_key_from_bundle(tenant: str) -> str:
+    """Look one tenant's Content API key out of the GHOST_CONTENT_KEYS_JSON bundle.
+
+    The vault already holds all four tenants' read-only Content API keys as a
+    single JSON object (`Grove Infra/ghost_content_keys_tf_json`, keyed
+    hub/goldberry/ggg/nursery) because Terraform consumes it that way. An
+    `op run` env-file cannot index into a JSON value, so we inject the whole
+    blob and pick the tenant out here rather than asking a human to duplicate
+    four keys into four new single-value fields (GOL-2325).
+
+    Returns "" on any problem — a missing key just skips that tenant's ghost
+    journey (same contract as an unset GHOST_KEY_<TENANT>), it never crashes
+    the run.
+    """
+    raw = _env("GHOST_CONTENT_KEYS_JSON").strip()
+    if not raw:
+        return ""
+    try:
+        bundle = json.loads(raw)
+    except (ValueError, TypeError):
+        _log("ghost: GHOST_CONTENT_KEYS_JSON is not valid JSON — skipping ghost journeys")
+        return ""
+    if not isinstance(bundle, dict):
+        _log("ghost: GHOST_CONTENT_KEYS_JSON is not a JSON object — skipping ghost journeys")
+        return ""
+    value = bundle.get(tenant.lower())
+    return value.strip() if isinstance(value, str) else ""
+
+
 def ghost_vars_for(tenant: str) -> dict | None:
     """Per-tenant Ghost Content API url+key from env, or None if not configured.
 
-    Opt-in: SYNTHETIC_GHOST_ENABLED=true + GHOST_URL_<TENANT> / GHOST_KEY_<TENANT>
-    (e.g. GHOST_URL_GOLDBERRY). The content key is passed to Hurl via a
-    variables-file (out of argv).
+    Opt-in: SYNTHETIC_GHOST_ENABLED=true + GHOST_URL_<TENANT> and a content key.
+    The key comes from GHOST_KEY_<TENANT> (e.g. GHOST_KEY_GOLDBERRY) if set,
+    otherwise from the GHOST_CONTENT_KEYS_JSON bundle. The explicit per-tenant
+    var wins so a single tenant can be overridden without rebuilding the bundle.
+    The content key is passed to Hurl via a variables-file (out of argv).
     """
     if _env("SYNTHETIC_GHOST_ENABLED", "false").strip().lower() != "true":
         return None
     t = tenant.upper()
-    url, key = _env(f"GHOST_URL_{t}"), _env(f"GHOST_KEY_{t}")
+    url = _env(f"GHOST_URL_{t}")
+    key = _env(f"GHOST_KEY_{t}") or _ghost_key_from_bundle(tenant)
     return {"ghost_url": url, "ghost_key": key} if url and key else None
 
 
