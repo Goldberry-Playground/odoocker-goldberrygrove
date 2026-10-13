@@ -75,9 +75,29 @@ partitions:
     owner: devops-terra
     review: [engineering-alice]
     wave: 1
+  # Agent-plane merge-queue arming sweep (GOL-3159). Not part of any droplet
+  # stack in this repo -- it runs beside gh-token-broker on the agent plane,
+  # the only host where the App installation token can be minted.
+  - name: merge-queue-sweep
+    paths:
+      - merge-queue-sweep/**
+    owner: devops-terra
+    review: [engineering-alice]
+    wave: 1
   - name: scripts
     paths:
       - scripts/**
+    owner: devops-terra
+    review: [engineering-alice]
+    wave: 1
+  # Operator QA tooling (currently check_stripe_key_scopes.py). Uncovered since
+  # #579 added the directory, which has had `lint-ownership.py` failing on every
+  # PR since -- a non-required check, so nothing forced the fix. Same owner as
+  # scripts/; listed separately because it is a top-level dir and the linter
+  # requires each one to be claimed. Stripe-adjacent, so Alice reviews.
+  - name: qa-tools
+    paths:
+      - qa-tools/**
     owner: devops-terra
     review: [engineering-alice]
     wave: 1
