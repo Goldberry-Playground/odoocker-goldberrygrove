@@ -55,9 +55,9 @@ variable "region" {
 # === Odoo droplet ===
 
 variable "odoo_droplet_size" {
-  description = "Tiny droplet for Odoo only (no frontends, no Postgres). s-1vcpu-2gb is the smallest size that comfortably runs Odoo 19 + workers; cost ~$12/mo while running. The full QA monolith uses s-2vcpu-4gb because it also runs PG + 4 frontends — Level 3 offloads those, so this can drop to half the size."
+  description = "Tiny droplet for Odoo only (no frontends, no Postgres). 1 vCPU / 2 GB is the smallest shape that comfortably runs Odoo 19 + workers. Pinned to the -intel slug (~$14/mo while running) because nyc3 refused the generic s-1vcpu-2gb at Train #2 QA-up even though /v2/sizes still lists it (GOL-2735); override with TF_VAR_odoo_droplet_size if that changes. The full QA monolith uses s-2vcpu-4gb because it also runs PG + 4 frontends — Level 3 offloads those, so this can drop to half the size."
   type        = string
-  default     = "s-1vcpu-2gb"
+  default     = "s-1vcpu-2gb-intel"
 }
 
 variable "droplet_image" {
@@ -441,6 +441,18 @@ variable "discord_orders_webhook_url" {
   type        = string
   sensitive   = true
   default     = ""
+}
+
+# --- Stripe Tax per-tenant cutover flag (GOL-2568 / Train #2 GOL-2584) -------
+variable "grove_stripe_tax_tenants" {
+  description = "Storefront tenant slugs whose headless checkout hands sales tax to Stripe Tax instead of Odoo's computed WV line (GOL-2568). grove_headless controllers/main.py `_stripe_tax_enabled(order)` reads the per-tenant env flag GROVE_STRIPE_TAX_{TENANT} from os.environ and treats unset/empty/anything-but-a-truthy-value as OFF; OFF is byte-identical to the pre-GOL-2568 checkout and IS the documented rollback (docs/stripe-tax-cutover.md). Declared as ONE set of slugs rather than three booleans so the cutover state is a single reviewable line and no tenant can be half-flipped: cloud-init renders all three GROVE_STRIPE_TAX_* keys unconditionally, ON for the listed slugs and OFF for the rest. Empty default = every tenant on Odoo tax, i.e. today's behaviour; turning a tenant ON is the separate named step at promote, after the QA e2e gate asserts amounts for a WV and a non-WV address. Feeds cloud-init user_data - changing it REPLACES the QA odoo droplet (which is what train-up does anyway)."
+  type        = set(string)
+  default     = []
+
+  validation {
+    condition     = length(setsubtract(var.grove_stripe_tax_tenants, ["goldberry", "ggg", "nursery"])) == 0
+    error_message = "grove_stripe_tax_tenants may only contain the storefront tenant slugs goldberry, ggg, nursery (the values website_id.grove_tenant_slug() returns). A typo here would silently leave the intended tenant on Odoo tax."
+  }
 }
 
 variable "shippo_api_key" {
