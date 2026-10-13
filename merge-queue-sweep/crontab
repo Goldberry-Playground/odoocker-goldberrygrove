@@ -1,0 +1,16 @@
+# supercronic crontab for the merge-queue arming sweep (GOL-3159).
+#
+# Every 5 minutes. That number is measured, not guessed (see the cadence table in
+# scripts/ci/merge-queue-arm-sweep.sh): across the last 39 agent PRs that were
+# enqueued by `github-actions[bot]`, the open->enqueue window had a median of 23
+# min but a MINIMUM of 1.6 min, and 5 min is the knee of the catch-rate curve --
+# ~96% of wedges caught, versus 88% at 10 min and 49% hourly. Going finer than
+# 5 min buys the last 4% for 5x the API calls; going coarser loses real wedges.
+#
+# A fire costs 2 GitHub API calls per repo (one token mint, one GraphQL read)
+# plus one carve-out fetch per repo that has unapproved PRs -- roughly 100
+# requests/hour against a 5000/hour installation-token budget.
+#
+# Over-running is cheap and safe: the sweep is idempotent. A second pass reads
+# "already armed by agenticos-developer" and no-ops.
+*/5 * * * * /app/scripts/ci/merge-queue-arm-sweep.sh --apply
