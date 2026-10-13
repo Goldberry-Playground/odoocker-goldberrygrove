@@ -126,6 +126,20 @@ write_files:
       stripe_webhook_secret_nursery=${stripe_webhook_secret_nursery}
       stripe_webhook_secret_ggg=${stripe_webhook_secret_ggg}
       stripe_webhook_secret_goldberry=${stripe_webhook_secret_goldberry}
+      # Stripe Tax per-tenant cutover flag (GOL-2568, Train #2 GOL-2584).
+      # controllers/main.py _stripe_tax_enabled(order) reads
+      # GROVE_STRIPE_TAX_{TENANT} from os.environ -- so these MUST also be
+      # listed in the odoo service's `environment:` block in
+      # compose/docker-compose.odoo.yml (the /.env mount only feeds odoo.conf,
+      # NOT os.environ). Truthy = 1/true/yes/on; unset, empty, or an
+      # unresolvable tenant is OFF, and OFF keeps today's Odoo-computed WV tax
+      # line byte for byte. All three keys are written unconditionally so
+      # flipping a tenant is an env-file value change, never a compose edit
+      # (GOL-1772 caveat: an unlisted key can never be injected on a running
+      # box). Values come from var.grove_stripe_tax_tenants, empty by default.
+      GROVE_STRIPE_TAX_GOLDBERRY=${grove_stripe_tax_goldberry}
+      GROVE_STRIPE_TAX_GGG=${grove_stripe_tax_ggg}
+      GROVE_STRIPE_TAX_NURSERY=${grove_stripe_tax_nursery}
       # Shippo fulfillment (GOL-988). SHIPPO_API_KEY: outbound label purchase
       # (sale_order.py, UserError when empty). GROVE_SHIPPO_WEBHOOK_TOKEN:
       # inbound tracking-webhook auth (controllers/main.py, fail-closed when
@@ -179,6 +193,13 @@ write_files:
       # the TF-var validation forbids whitespace and shell metacharacters so
       # bash-sourcing this file under set -euo pipefail stays safe.
       PERENUAL_API_KEY=${perenual_api_key}
+      # Guides publish webhook sender (grove_headless models/grove_publish_event.py,
+      # GOL-985/986): "Publish Guide to Storefront" POSTs an HMAC-signed event to
+      # the tenant's /api/webhooks/publish. Nursery only for now (the tenant whose
+      # guides are live). SECRET must byte-match the nursery app's
+      # GROVE_PUBLISH_WEBHOOK_SECRET (apps.tf) -- both are grove_revalidate_secret.
+      GROVE_PUBLISH_WEBHOOK_URL_NURSERY=https://atthegrovenursery.com/api/webhooks/publish
+      GROVE_PUBLISH_WEBHOOK_SECRET_NURSERY=${grove_revalidate_secret}
       # Mailgun SMTP for Odoo transactional email (GOL-988) -- order-confirmation
       # + shipping-notification send. odoorc.sh substitutes these into the SMTP
       # group of /etc/odoo/odoo.conf (same image + path QA proved live under
