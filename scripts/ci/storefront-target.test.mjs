@@ -8,6 +8,7 @@
 import assert from "node:assert/strict";
 import {
   appCodeHits, pickNewestBuilt, mdCell, resolveTarget, renderSummary, makeGithub, makeGhcr, isFullSha,
+  parsePinnedShas, PIN_VARIABLES,
 } from "./storefront-target.mjs";
 
 const HEAD = "99d4d59f".padEnd(40, "0");  // grove-sites #933, docs/runbooks + scripts/ci
@@ -150,6 +151,134 @@ assert.equal(mdCell("one\ntwo"), "one two");
   const missing = async () => (++m, { ok: false, status: 404 });
   await assert.rejects(makeGithub({ fetchImpl: missing, retryDelayMs: 0 }).mainHead(), /HTTP 404/);
   assert.equal(m, 1, "4xx is permanent, not retried");
+}
+
+// ── the 2026-10-02 freeze-day flake: a torn view of main ────────────────────
+// Two identical dry runs 60s apart resolved differently; the first picked a
+// 2026-09-08 commit 50 behind main and 48 behind the live prod pin, reported
+// all four images present and exited 0. Reproduced here as what it was: a
+// commit listing that disagrees with commits/main about HEAD.
+{
+  const STALE = [OLDER];                       // stale page: ends well before HEAD
+  const gh = { ...fakeGithub(), mainShas: async () => STALE };
+  const r = await resolveTarget({ inputSha: "", github: gh, ghcr: fakeGhcr(new Set([OLDER])) });
+  assert.equal(r.ok, false, "a torn view must not resolve");
+  assert.equal(r.sha, null);
+  assert.match(r.errors[0], /inconsistent view of grove-sites main twice/);
+  assert.match(r.errors[0], /re-run/);
+  assert.match(renderSummary(r), /\[!CAUTION\]/);
+}
+
+// ...and the same torn read is retried once, because a commit landing between
+// the two reads is indistinguishable from a stale replica.
+{
+  let n = 0;
+  const gh = {
+    ...fakeGithub(),
+    mainShas: async () => (++n === 1 ? [OLDER] : [HEAD, BUILT, OLDER]),
+  };
+  const r = await resolveTarget({ inputSha: "", github: gh, ghcr: fakeGhcr(new Set([BUILT])) });
+  assert.equal(n, 2, "re-read once before giving up");
+  assert.equal(r.ok, true, r.errors.join("; "));
+  assert.equal(r.sha, BUILT);
+}
+
+// ── rollback guard: auto-resolved target behind the live prod pin -> FATAL ──
+{
+  const PIN = "d4d248ef04d94f2a64d16010eff6146283e0968a";
+  const gh = {
+    ...fakeGithub({ head: BUILT, mainShas: [BUILT, OLDER], built: [BUILT, OLDER] }),
+    compare: async (base, head) =>
+      base === PIN
+        ? { status: "behind", aheadBy: 0, behindBy: 48, commits: [], files: [], filesTruncated: false }
+        : { status: "ahead", aheadBy: 1, behindBy: 0, commits: [], files: [], filesTruncated: false },
+  };
+  const r = await resolveTarget({ inputSha: "", github: gh, ghcr: fakeGhcr(new Set([BUILT])), pinnedShas: [PIN] });
+  assert.equal(r.ok, false, "blank target_sha must never resolve to a rollback");
+  assert.match(r.errors[0], /48 commit\(s\) BEHIND the live production pin d4d248ef/);
+  assert.match(r.errors[0], /stale GitHub read/);
+  assert.equal(r.warnings.length, 0);
+  assert.match(renderSummary(r), /live production pin: `d4d248ef04d94f2a64d16010eff6146283e0968a`/);
+}
+
+// ── ...but an EXPLICIT older SHA is the documented rollback -> warn, proceed ─
+{
+  const PIN = "d4d248ef04d94f2a64d16010eff6146283e0968a";
+  const gh = {
+    ...fakeGithub({ head: HEAD }),
+    compare: async () => ({ status: "behind", aheadBy: 0, behindBy: 2, commits: [], files: [], filesTruncated: false }),
+  };
+  const r = await resolveTarget({ inputSha: BUILT, github: gh, ghcr: fakeGhcr(new Set([BUILT])), pinnedShas: [PIN] });
+  assert.equal(r.ok, true, "a human rolling back on purpose is not blocked");
+  assert.match(r.warnings.join(" "), /deliberate rollback/);
+  assert.equal(r.errors.length, 0);
+}
+
+// ── diverged from the pin is also a refusal on the auto path ────────────────
+{
+  const PIN = "d4d248ef04d94f2a64d16010eff6146283e0968a";
+  const gh = {
+    ...fakeGithub({ head: BUILT, mainShas: [BUILT, OLDER] }),
+    compare: async () => ({ status: "diverged", aheadBy: 3, behindBy: 4, commits: [], files: [], filesTruncated: false }),
+  };
+  const r = await resolveTarget({ inputSha: "", github: gh, ghcr: fakeGhcr(new Set([BUILT])), pinnedShas: [PIN] });
+  assert.equal(r.ok, false);
+  assert.match(r.errors[0], /NOT on the lineage of \(diverged from\) the live production pin/);
+}
+
+// ── target ahead of the pin (the normal promote) -> no rollback finding ─────
+{
+  const PIN = "d4d248ef04d94f2a64d16010eff6146283e0968a";
+  const gh = {
+    ...fakeGithub({ head: BUILT, mainShas: [BUILT, OLDER] }),
+    compare: async () => ({ status: "ahead", aheadBy: 2, behindBy: 0, commits: [], files: [], filesTruncated: false }),
+  };
+  const r = await resolveTarget({ inputSha: "", github: gh, ghcr: fakeGhcr(new Set([BUILT])), pinnedShas: [PIN] });
+  assert.equal(r.ok, true, r.errors.join("; "));
+  assert.equal(r.warnings.length, 0);
+}
+
+// ── pin equal to the target short-circuits (no compare, no finding) ────────
+{
+  const gh = fakeGithub({ head: BUILT, mainShas: [BUILT, OLDER] });
+  const r = await resolveTarget({ inputSha: BUILT, github: gh, ghcr: fakeGhcr(new Set([BUILT])), pinnedShas: [BUILT] });
+  assert.equal(r.ok, true);
+  assert.equal(gh.calls.length, 0, "re-promoting the live pin asks GitHub nothing extra");
+}
+
+// ── reading the live pins out of the prod variables.tf ──────────────────────
+{
+  const tf = [
+    'variable "hub_image_tag" {',
+    "  description = \"grove-sites commit SHA\"",
+    "  type        = string",
+    '  default     = "d4d248ef04d94f2a64d16010eff6146283e0968a"',
+    "}",
+    "",
+    'variable "tenant_image_tag" {',
+    '  default     = "d4d248ef04d94f2a64d16010eff6146283e0968a"',
+    "}",
+  ].join("\n");
+  assert.deepEqual(parsePinnedShas(tf), ["d4d248ef04d94f2a64d16010eff6146283e0968a"], "duplicates collapse");
+
+  const split = tf.replace(/tenant_image_tag" \{\n  default     = "[0-9a-f]+"/,
+    'tenant_image_tag" {\n  default     = "' + "a".repeat(40) + '"');
+  assert.equal(parsePinnedShas(split).length, 2, "a half-rolled prod yields BOTH pins");
+
+  // The `default` must come from inside the named block, like the workflow's awk.
+  const noDefault = [
+    'variable "hub_image_tag" {',
+    "  type        = string",
+    "}",
+    "",
+    'variable "something_else" {',
+    '  default     = "d4d248ef04d94f2a64d16010eff6146283e0968a"',
+    "}",
+  ].join("\n");
+  assert.throws(() => parsePinnedShas(noDefault, ["hub_image_tag"]), /no 40-hex `default` SHA/,
+    "a neighbour's default must not be mistaken for the pin");
+  assert.throws(() => parsePinnedShas("", ["hub_image_tag"]), /no `variable "hub_image_tag"` block/);
+  assert.deepEqual(PIN_VARIABLES, ["hub_image_tag", "tenant_image_tag"]);
 }
 
 console.log("storefront-target: all assertions passed");

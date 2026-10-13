@@ -37,7 +37,7 @@ Phase 1 lands the **bones** of the env. Nothing in this PR is applied yet — ap
 | Postgres | Container on droplet | DO Managed Postgres (separate, private network) |
 | Frontends | 4 containers on droplet | DO App Platform apps (Phase 2) |
 | Caddy hostnames | apex + 4 tenants (5 LE identifiers) | 1 hostname (`odoo.qa-l3.<apex>`) |
-| Droplet size | s-2vcpu-4gb (~$24/mo) | s-1vcpu-2gb (~$12/mo) |
+| Droplet size | s-2vcpu-4gb (~$24/mo) | s-1vcpu-2gb-intel (~$14/mo) |
 | Cert resilience layers | PR-A/B/C/D + cron + multi-issuer fallback | Mostly inert — single hostname, 2 LE renewals/year |
 | Failure-domain coupling | One droplet = everything dies together | Per-app + DB independent |
 
@@ -46,7 +46,7 @@ Phase 1 lands the **bones** of the env. Nothing in this PR is applied yet — ap
 | Resource | Cost |
 |---|---|
 | Managed Postgres (db-s-1vcpu-1gb dev tier) | ~$15/mo |
-| Odoo droplet (s-1vcpu-2gb) | ~$12/mo |
+| Odoo droplet (s-1vcpu-2gb-intel) | ~$14/mo |
 | Obs droplet (s-1vcpu-2gb) | ~$12/mo |
 | Caddy /data volume (1GB) | ~$0.10/mo |
 | **Phases 1 + 1.5 total while running** | **~$39/mo** |
