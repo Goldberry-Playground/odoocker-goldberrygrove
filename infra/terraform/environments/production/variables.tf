@@ -5,7 +5,7 @@ variable "do_token" {
 }
 
 variable "cloudflare_api_token" {
-  description = "Cloudflare API token covering all four brand zones. Required permission groups (Zone scope, all 4 zones): Zone.DNS edit (cloudflare_record) + Zone.Zone read (data.cloudflare_zone) + Zone.Zone Settings edit (cloudflare_zone_settings_override, tls.tf) + Zone.SSL and Certificates edit (cloudflare_origin_ca_certificate; the legacy Origin CA Key is deprecated) + Zone.Dynamic Redirect edit (cloudflare_ruleset http_request_dynamic_redirect, redirects.tf). NOTE: Zone Settings and Dynamic Redirect are DISTINCT groups from WAF/Transform — a token with everything else still fails plan on tls.tf (9109) and redirects.tf ('request is not authorized') without them. 1P ref: op://Grove Prod/Cloudflare API Token/credential (repointed GOL-1770 after the old account_cloudflare_api_token field expired 2026-08-19)."
+  description = "Cloudflare API token covering all four brand zones. Required permission groups (Zone scope, all 4 zones): Zone.DNS edit (cloudflare_record) + Zone.Zone read (data.cloudflare_zone) + Zone.Zone Settings edit (cloudflare_zone_settings_override, tls.tf) + Zone.SSL and Certificates edit (cloudflare_origin_ca_certificate mints via THIS token, not the legacy Origin CA Key that Cloudflare deprecated 2026-09-30; Origin CA auth verified live on this token 2026-09-29, GOL-2317) + Zone.Dynamic Redirect edit (cloudflare_ruleset http_request_dynamic_redirect, redirects.tf). NOTE: Zone Settings and Dynamic Redirect are DISTINCT groups from WAF/Transform — a token with everything else still fails plan on tls.tf (9109) and redirects.tf ('request is not authorized') without them. 1P ref: op://Grove Prod/Cloudflare API Token/credential (repointed GOL-1770 after the old account_cloudflare_api_token field expired 2026-08-19)."
   type        = string
   sensitive   = true
 }
@@ -139,9 +139,9 @@ variable "odoo_image_tag" {
 }
 
 variable "custom_modules_ref" {
-  description = "grove-odoo-modules git ref the prod custom-modules-sync (git-sync) sidecar checks out into /workspace/current. MUST be a pinned 40-char commit SHA -- prod NEVER tracks a moving branch (a merge to grove-odoo-modules main would otherwise auto-deploy to prod within GITSYNC_PERIOD with no review gate). Same reproducible-release rationale as var.odoo_image_tag. Bumping this is a reviewed infra PR (see the 'Custom modules' section of the repo README). GOL-484 checkout go-live (board-approved 2026-08-07, interaction 5b2c6abb): bumped to 8accb94 -- the first checkout-capable grove_headless HEAD (checkout d565b58 + 3-tenant Stripe webhook verify ff8eefb/GOL-1020 + per-unit deposit split 6f62dd5/GOL-1036 + destination WV tax c44e72c/GOL-1021 + itemized line_items 56dcdf4/GOL-1057). Confirmed exposes /grove/api/v1/products|cart|shipping|stripe/webhook, which the prior pin f8ef75d1 (and the live root-compose pin 515dcb3f) predate -- live prod 404s on those routes today (GOL-484 recon). Prod grove_headless is UNINSTALLED (GOL-1258 prod-DB check), so on the go-live rebuild the entrypoint's revision-advance path runs --init=base,grove_headless (a FRESH install, not an upgrade -- GOL-1214 sign-off); no migration, no data-loss risk (bare managed PG, only default company id 1). BUMPED 2026-08-27 to 31e641e6 (+23 commits) for the 08-28 launch: ships the checkout money-path fixes merged 2026-08-24 that reach prod via no other artifact -- #93 gate checkout charging on the shipping calendar (GOL-1309), #110 in-window bareroot preorder charges the $10 deposit not 100% (GOL-1666 s1), #113 farm-pickup bareroot window derives from the FARM zone (GOL-1669); also #83 WV tax on pickup (GOL-1303), #92 fail-open shipping calendar on wrong-shape JSON (GOL-1311), #98 per-zone fulfillment in the rate feed (GOL-1386), #109 preorder-deposit email lines (GOL-1666). CORRECTION: the GOL-1258 'grove_headless is UNINSTALLED' statement above is STALE -- verified 2026-08-27 by public probe (/grove/api/v1/health, /products, /cart, /shipping/options, /zone all 200 on odoo.gatheringatthegrove.com), so the entrypoint's revision-advance path runs --update=grove_headless, NOT a fresh --init install. RETARGET 2026-08-30 (GOL-461, Josh directive): default moved 31e641e6 -> 528dc73 (grove-odoo-modules main HEAD) so the pin also carries the Shippo fixes #123 (query-token webhook auth + real ship-from street, replacing SET_AT_DEPLOY) which are NOT ancestors of 31e641e6. Reviewed HEAD at prep time; re-pin to main HEAD at apply. PRICING IMPACT: this pin also carries rate-checker refreshes #107 (08-15) and #111 (08-24) -- all 30 zone/box rates rise ~80-120% (e.g. zone_2/b32 31.00 -> 68.00). Prod verified serving the OLD rate table on 2026-08-27 (GET /grove/api/v1/shipping/rates), so merging this CHANGES LIVE CUSTOMER SHIPPING PRICES. BUMPED 2026-09-03 to 0f978e0d (+17 commits over 528dc73): ships the GOL-1933 post-purchase ops chain (#140 -- new-order Discord + merchant-email alerts, persisted grove_fulfillment) that prod needs for order alerting and pickup-vs-ship visibility; also carries #139 least-cost ground selection (GOL-1906) and the 2026-08-31 zone-rate refresh #129 -- live shipping rates CHANGE again, review the rate diff before apply. Re-pin to grove-odoo-modules main HEAD at apply so the fulfilment-badge follow-up (grove-odoo-modules #174) rides the same rebuild. BUMPED 2026-09-07 to 2c4b1b88 (+24 commits over 0f978e0d = grove-odoo-modules main HEAD) for the FLATWOODS promo go-live (CEO directive GOL-2088, Josh session 2026-09-07): ships #179 headless promo-code redemption (grove_headless applies sale_loyalty `with_code` at checkout) -- the backend that makes the FLATWOODS code advertised from Mon 09-07 and offered by grove-sites #700 actually redeem; also the USPS Ground Advantage sender+recipient contact fix 411bd9d3 (GOL-1906, resolves `sender_info_missing`). This delta ALSO carries: deposit-only checkout backend 8365cea1 (GOL-2052) -- INERT in prod until grove-sites #172 lands the frontend that exercises it; bareroot shared-potted-pool 396771c7 (GOL-2031); terminal fulfilment state machine 150042603f (GOL-1981); branded shipment notice abaabb27 (GOL-1975); and the 09-01/09-05 zone-rate refreshes 1f851b39/2249dfd8 -- the prior rate-change concern is RETIRED (GOL-1906 finding: the published table is already cheapest-of-both). Review the full 24-commit delta and rate diff before the board-gated droplet rebuild; re-pin to main HEAD at apply if newer QA-soaked commits have landed. BUMPED 2026-09-08 to 34cc4548 (GOL-2230, spun out of the GOL-2134 P0 incident): this is a DEFAULT-CATCH-UP, not a roll-forward. The GOL-2134 xmlid-severance incident was resolved by hand-editing /etc/grove/.env CUSTOM_MODULES_REF on the running prod droplet to 34cc4548 (grove_headless 33.0 -- #187 severed-xmlid repair, ancestor of main) while ignore_changes kept `terraform apply` off the box. The tfvars default, however, still lagged at 2c4b1b88 (grove_headless 32.x, the pre-repair pin), so the NEXT droplet REBUILD -- the one that activates GOL-2125 ship-from env, the Discord orders webhook, and the dedicated Stripe key -- would have rolled grove_headless BACK to 2c4b1b88 unless run with an easy-to-forget `-var custom_modules_ref=34cc4548...` override, re-opening the exact incident (out-of-state checkout 500s + un-deployable severed-xmlid state). Bumping the default to match the prod-live pin makes that override UNNECESSARY and the rebuild rollback-safe. Deliberately pinned to EXACTLY 34cc4548 (the running SHA), NOT main HEAD (10 commits ahead as of 2026-09-08) -- the point is to converge the default onto what prod is already serving, not to ship un-staged commits on the next rebuild. Verified 34cc4548 exists and is a direct ancestor of grove-odoo-modules main (compare 34cc4548...main = 10 ahead, 0 behind). BUMPED 2026-09-14 to 22fbb71ead189c4da627528b8b86b5ced6fdaefa (grove-odoo-modules main HEAD; GOL-2278, DRIFT FIX over the #650 reconcile). Terra deployed the shipping/compliance batch #216 (squash of grove-odoo-modules #214/#218/#219 -- the bareroot-overcharge fix: TN -> zone_7, AR/MO/IA -> zone_6) live to prod on 2026-09-14 (GOL-2276/GOL-2268) by hand-editing /etc/grove/.env CUSTOM_MODULES_REF 098422d2 -> 22fbb71 on the running droplet; live registry confirmed the overcharge stopped. The #650 reconcile (merged 2026-09-14) had pinned the tfvars default to 098422d2 -- the pre-fix baseline that was live at #650 authoring time -- so the NEXT prod TF apply / droplet rebuild would have git-sync-reverted grove_headless BACK to 098422d2 and re-opened the TN/AR/MO/IA overcharge. This bump converges the default onto the prod-live SHA so the rebuild is rollback-safe (no easy-to-forget -var override needed), same DEFAULT-CATCH-UP rationale as the 34cc4548 entry above. Verified 22fbb71 exists and IS grove-odoo-modules main HEAD (compare 22fbb71...main = identical, 0 ahead / 0 behind). Only custom_modules_ref changes -- hub/tenant image tags are unaffected. BUMPED 2026-09-14 (later same day) to 0b36ecfa7dfc27ad7f17f5917652a3287221f124 (grove-odoo-modules main HEAD; GOL-2238 / GOL-2125 rebuild prep). Prod was hand-bumped 22fbb71 -> 0b36ecfa live on 2026-09-14 (GOL-2238 P1: #235 retires zone_6/7, TN -> zone_1, AR/MO/IA -> zone_5), so the tfvars default (still 22fbb71) again lagged the running droplet -- the imminent GOL-2125 money-flow rebuild (activates the dedicated Discord ORDERS webhook, the dedicated Stripe backend key env, ship-from contact #644, and web.base.url GOL-1875) would have git-sync-reverted grove_headless BACK to 22fbb71 and re-opened the zone_6/7 overcharge unless run with an easy-to-forget -var custom_modules_ref override. Same DEFAULT-CATCH-UP rationale as the 34cc4548 / 22fbb71 entries above: converge the default onto the prod-live SHA so the rebuild is rollback-safe with NO -var override. Verified 0b36ecfa exists, IS grove-odoo-modules main HEAD, and is a clean descendant of 22fbb71 (compare 22fbb71...0b36ecfa = 3 ahead / 0 behind)."
+  description = "grove-odoo-modules git ref the prod custom-modules-sync (git-sync) sidecar checks out into /workspace/current. MUST be a pinned 40-char commit SHA -- prod NEVER tracks a moving branch (a merge to grove-odoo-modules main would otherwise auto-deploy to prod within GITSYNC_PERIOD with no review gate). Same reproducible-release rationale as var.odoo_image_tag. Bumping this is a reviewed infra PR (see the 'Custom modules' section of the repo README). GOL-484 checkout go-live (board-approved 2026-08-07, interaction 5b2c6abb): bumped to 8accb94 -- the first checkout-capable grove_headless HEAD (checkout d565b58 + 3-tenant Stripe webhook verify ff8eefb/GOL-1020 + per-unit deposit split 6f62dd5/GOL-1036 + destination WV tax c44e72c/GOL-1021 + itemized line_items 56dcdf4/GOL-1057). Confirmed exposes /grove/api/v1/products|cart|shipping|stripe/webhook, which the prior pin f8ef75d1 (and the live root-compose pin 515dcb3f) predate -- live prod 404s on those routes today (GOL-484 recon). Prod grove_headless is UNINSTALLED (GOL-1258 prod-DB check), so on the go-live rebuild the entrypoint's revision-advance path runs --init=base,grove_headless (a FRESH install, not an upgrade -- GOL-1214 sign-off); no migration, no data-loss risk (bare managed PG, only default company id 1). BUMPED 2026-08-27 to 31e641e6 (+23 commits) for the 08-28 launch: ships the checkout money-path fixes merged 2026-08-24 that reach prod via no other artifact -- #93 gate checkout charging on the shipping calendar (GOL-1309), #110 in-window bareroot preorder charges the $10 deposit not 100% (GOL-1666 s1), #113 farm-pickup bareroot window derives from the FARM zone (GOL-1669); also #83 WV tax on pickup (GOL-1303), #92 fail-open shipping calendar on wrong-shape JSON (GOL-1311), #98 per-zone fulfillment in the rate feed (GOL-1386), #109 preorder-deposit email lines (GOL-1666). CORRECTION: the GOL-1258 'grove_headless is UNINSTALLED' statement above is STALE -- verified 2026-08-27 by public probe (/grove/api/v1/health, /products, /cart, /shipping/options, /zone all 200 on odoo.gatheringatthegrove.com), so the entrypoint's revision-advance path runs --update=grove_headless, NOT a fresh --init install. RETARGET 2026-08-30 (GOL-461, Josh directive): default moved 31e641e6 -> 528dc73 (grove-odoo-modules main HEAD) so the pin also carries the Shippo fixes #123 (query-token webhook auth + real ship-from street, replacing SET_AT_DEPLOY) which are NOT ancestors of 31e641e6. Reviewed HEAD at prep time; re-pin to main HEAD at apply. PRICING IMPACT: this pin also carries rate-checker refreshes #107 (08-15) and #111 (08-24) -- all 30 zone/box rates rise ~80-120% (e.g. zone_2/b32 31.00 -> 68.00). Prod verified serving the OLD rate table on 2026-08-27 (GET /grove/api/v1/shipping/rates), so merging this CHANGES LIVE CUSTOMER SHIPPING PRICES. BUMPED 2026-09-03 to 0f978e0d (+17 commits over 528dc73): ships the GOL-1933 post-purchase ops chain (#140 -- new-order Discord + merchant-email alerts, persisted grove_fulfillment) that prod needs for order alerting and pickup-vs-ship visibility; also carries #139 least-cost ground selection (GOL-1906) and the 2026-08-31 zone-rate refresh #129 -- live shipping rates CHANGE again, review the rate diff before apply. Re-pin to grove-odoo-modules main HEAD at apply so the fulfilment-badge follow-up (grove-odoo-modules #174) rides the same rebuild. BUMPED 2026-09-07 to 2c4b1b88 (+24 commits over 0f978e0d = grove-odoo-modules main HEAD) for the FLATWOODS promo go-live (CEO directive GOL-2088, Josh session 2026-09-07): ships #179 headless promo-code redemption (grove_headless applies sale_loyalty `with_code` at checkout) -- the backend that makes the FLATWOODS code advertised from Mon 09-07 and offered by grove-sites #700 actually redeem; also the USPS Ground Advantage sender+recipient contact fix 411bd9d3 (GOL-1906, resolves `sender_info_missing`). This delta ALSO carries: deposit-only checkout backend 8365cea1 (GOL-2052) -- INERT in prod until grove-sites #172 lands the frontend that exercises it; bareroot shared-potted-pool 396771c7 (GOL-2031); terminal fulfilment state machine 150042603f (GOL-1981); branded shipment notice abaabb27 (GOL-1975); and the 09-01/09-05 zone-rate refreshes 1f851b39/2249dfd8 -- the prior rate-change concern is RETIRED (GOL-1906 finding: the published table is already cheapest-of-both). Review the full 24-commit delta and rate diff before the board-gated droplet rebuild; re-pin to main HEAD at apply if newer QA-soaked commits have landed. BUMPED 2026-09-08 to 34cc4548 (GOL-2230, spun out of the GOL-2134 P0 incident): this is a DEFAULT-CATCH-UP, not a roll-forward. The GOL-2134 xmlid-severance incident was resolved by hand-editing /etc/grove/.env CUSTOM_MODULES_REF on the running prod droplet to 34cc4548 (grove_headless 33.0 -- #187 severed-xmlid repair, ancestor of main) while ignore_changes kept `terraform apply` off the box. The tfvars default, however, still lagged at 2c4b1b88 (grove_headless 32.x, the pre-repair pin), so the NEXT droplet REBUILD -- the one that activates GOL-2125 ship-from env, the Discord orders webhook, and the dedicated Stripe key -- would have rolled grove_headless BACK to 2c4b1b88 unless run with an easy-to-forget `-var custom_modules_ref=34cc4548...` override, re-opening the exact incident (out-of-state checkout 500s + un-deployable severed-xmlid state). Bumping the default to match the prod-live pin makes that override UNNECESSARY and the rebuild rollback-safe. Deliberately pinned to EXACTLY 34cc4548 (the running SHA), NOT main HEAD (10 commits ahead as of 2026-09-08) -- the point is to converge the default onto what prod is already serving, not to ship un-staged commits on the next rebuild. Verified 34cc4548 exists and is a direct ancestor of grove-odoo-modules main (compare 34cc4548...main = 10 ahead, 0 behind). BUMPED 2026-09-14 to 22fbb71ead189c4da627528b8b86b5ced6fdaefa (grove-odoo-modules main HEAD; GOL-2278, DRIFT FIX over the #650 reconcile). Terra deployed the shipping/compliance batch #216 (squash of grove-odoo-modules #214/#218/#219 -- the bareroot-overcharge fix: TN -> zone_7, AR/MO/IA -> zone_6) live to prod on 2026-09-14 (GOL-2276/GOL-2268) by hand-editing /etc/grove/.env CUSTOM_MODULES_REF 098422d2 -> 22fbb71 on the running droplet; live registry confirmed the overcharge stopped. The #650 reconcile (merged 2026-09-14) had pinned the tfvars default to 098422d2 -- the pre-fix baseline that was live at #650 authoring time -- so the NEXT prod TF apply / droplet rebuild would have git-sync-reverted grove_headless BACK to 098422d2 and re-opened the TN/AR/MO/IA overcharge. This bump converges the default onto the prod-live SHA so the rebuild is rollback-safe (no easy-to-forget -var override needed), same DEFAULT-CATCH-UP rationale as the 34cc4548 entry above. Verified 22fbb71 exists and IS grove-odoo-modules main HEAD (compare 22fbb71...main = identical, 0 ahead / 0 behind). Only custom_modules_ref changes -- hub/tenant image tags are unaffected. BUMPED 2026-09-14 (later same day) to 0b36ecfa7dfc27ad7f17f5917652a3287221f124 (grove-odoo-modules main HEAD; GOL-2238 / GOL-2125 rebuild prep). Prod was hand-bumped 22fbb71 -> 0b36ecfa live on 2026-09-14 (GOL-2238 P1: #235 retires zone_6/7, TN -> zone_1, AR/MO/IA -> zone_5), so the tfvars default (still 22fbb71) again lagged the running droplet -- the imminent GOL-2125 money-flow rebuild (activates the dedicated Discord ORDERS webhook, the dedicated Stripe backend key env, ship-from contact #644, and web.base.url GOL-1875) would have git-sync-reverted grove_headless BACK to 22fbb71 and re-opened the zone_6/7 overcharge unless run with an easy-to-forget -var custom_modules_ref override. Same DEFAULT-CATCH-UP rationale as the 34cc4548 / 22fbb71 entries above: converge the default onto the prod-live SHA so the rebuild is rollback-safe with NO -var override. Verified 0b36ecfa exists, IS grove-odoo-modules main HEAD, and is a clean descendant of 22fbb71 (compare 22fbb71...0b36ecfa = 3 ahead / 0 behind). RECONCILE 2026-09-29: converge the committed default onto the live git-sync pin 19b1cbfbed3c (drift-only, no roll-forward). Train 1 promote 2026-09-23; live SHA read from /etc/grove/.env on grove-prod-odoo 2026-09-29 RECONCILE 2026-09-30: converge the committed default onto the live git-sync pin bbb580e09218 (drift-only, no roll-forward). GOL-2677 P1 promote (Leg B) RECONCILE 2026-10-02: converge the committed default onto the live git-sync pin 8f0da18890ef (drift-only, no roll-forward). pre-Train-2 reconcile, live grove_headless 19.0.1.55.3 (#297) RECONCILE 2026-10-05: converge the committed default onto the live git-sync pin 4b9042e0d45f (drift-only, no roll-forward). GOL-3014: the committed default lagged the running grove-prod-odoo droplet by FIVE commits (8f0da188 / 19.0.1.55.3 vs live 4b9042e0 / 19.0.1.55.5, hand-bumped 19:19Z), so the next prod TF apply or droplet rebuild would have git-sync-reverted grove_headless and re-opened FOUR money-path fixes that are already live: 219de32e deposit PICKUP settle on collection (GOL-2893 #303), 082ab575 deposit settle on Pirate Ship label import (GOL-2901 #305), 5502c651 wave + hand-bought label + mark-shipped for deposit SHIP (GOL-2895 #304), fa8455ef off-session settlement accepting the saved method TYPE not card-only (S00357 Stripe Link #313). Same DEFAULT-CATCH-UP rationale as the 34cc4548 / 22fbb71 / 0b36ecfa entries above. 4b9042e0 is NOT an ancestor of grove-odoo-modules main -- it is the tip of hotfix/deposit-settlement-prod-pin, so it is additionally tagged prod-pin-2026-10-05-v19.0.1.55.5 to keep the rollback target durable against deletion of that branch. Rolling prod FORWARD to main (19.0.1.63.0, the GOL-3007 consult gate) is a separate CEO-gated money-flow deploy tracked on GOL-3014 and is deliberately NOT folded in here. RECONCILE 2026-10-07: converge the committed default onto the live git-sync pin 0f09f5ec8fe5 (drift-only, no roll-forward). Train #2 promote (Leg B) RECONCILE 2026-10-08: converge the committed default onto the live git-sync pin 4da9ca1c2d0e (drift-only, no roll-forward). Hotfix promote: pre-order waves + fall pickup (gom #326, #330)"
   type        = string
-  default     = "0b36ecfa7dfc27ad7f17f5917652a3287221f124"
+  default     = "4da9ca1c2d0eecfa72061fbfa00074393076496c"
 
   validation {
     condition     = can(regex("^[0-9a-f]{40}$", var.custom_modules_ref))
@@ -160,7 +160,7 @@ variable "app_instance_size_slug" {
 variable "hub_image_tag" {
   description = "Tag of the grove-hub image on GHCR (ghcr.io/goldberry-playground/grove-hub:<tag>) that App Platform pulls. GOL-1304 Option-A ruling (ratified 2026-08-12, launch-gate Aug 20): prod pins a 40-char grove-sites commit SHA -- it NEVER tracks a moving 'latest'. Same reproducible-release rationale + validation as var.custom_modules_ref: a 'latest' retag from grove-sites CI must not silently ship to prod (and with GHCR-sourced apps deploy_on_push never even fires -- GOL-1607 -- so an unpinned 'latest' is BOTH un-gated and unobservable). Bumping this is a reviewed infra PR whose deploy step is an explicit `doctl apps create-deployment` (grove-sites do-app-redeploy primitive, PR #547). Current pin 2436786c: grove-sites main HEAD as of 2026-08-31 (docker.yml built+pushed all four images at this SHA, run success 2026-08-31T11:11Z). GOL-1850 promotion of record -- the grove-nursery-prod app was already rolled live to this SHA out-of-band on 2026-08-31T13:10Z to clear the P0 GOL-1822 shipping under-quote; applying this pin converges hub/goldberry/ggg to the same reviewed commit and makes nursery's live state match SoR (no-op deploy for nursery). Supersedes the never-applied e77fcb0f pin (live prod is still on the earlier b84d7678 for the three non-nursery apps)."
   type        = string
-  default     = "e9691529923bd912b14a10bc6e1859f57b268710"
+  default     = "4d25202ec9b3993633afeec8f48e81b6445ea63f"
 
   validation {
     condition     = can(regex("^[0-9a-f]{40}$", var.hub_image_tag))
@@ -171,7 +171,7 @@ variable "hub_image_tag" {
 variable "tenant_image_tag" {
   description = "Tag of the grove-goldberry / grove-ggg / grove-nursery images on GHCR that the tenant App Platform apps pull. One shared tag because grove-sites CI publishes all four images from the same commit -- pinning tenants to different tags would deploy skewed monorepo states. GOL-1304 Option-A: a pinned 40-char SHA, same rationale + validation as var.hub_image_tag / var.custom_modules_ref. Current pin 2436786c == the same commit as var.hub_image_tag (grove-sites main HEAD 2026-08-31; carries the GOL-1822 Format-card per-box-floor shipping fix, PR #587). GOL-1850: grove-nursery-prod was moved to this SHA live on 2026-08-31T13:10Z to clear the P0 shipping under-quote and is ALREADY serving it -- applying this pin is a no-op for nursery and rolls goldberry/ggg forward from the live b84d7678 to the same reviewed commit."
   type        = string
-  default     = "e9691529923bd912b14a10bc6e1859f57b268710"
+  default     = "4d25202ec9b3993633afeec8f48e81b6445ea63f"
 
   validation {
     condition     = can(regex("^[0-9a-f]{40}$", var.tenant_image_tag))
@@ -434,6 +434,18 @@ variable "discord_orders_webhook_url" {
   }
 }
 
+# === Stripe Tax per-tenant cutover flag (GOL-2568 / Train #2 GOL-2584) =======
+variable "grove_stripe_tax_tenants" {
+  description = "Storefront tenant slugs whose PROD headless checkout hands sales tax to Stripe Tax instead of Odoo's computed WV line (GOL-2568). grove_headless controllers/main.py `_stripe_tax_enabled(order)` reads GROVE_STRIPE_TAX_{TENANT} from os.environ; unset/empty/anything-but-truthy is OFF, and OFF is byte-identical to the pre-GOL-2568 checkout AND the documented rollback (grove-odoo-modules docs/stripe-tax-cutover.md). ONE set of slugs rather than three booleans so the live cutover state is a single reviewable line and no tenant can be half-flipped; cloud-init renders all three GROVE_STRIPE_TAX_* keys unconditionally. Empty default = every tenant on Odoo tax, i.e. today's prod behaviour. THIS IS A MONEY PATH: turning a slug on changes what customers are charged, so it is a separate, named, board-approved promote step taken only after the QA e2e gate asserted amounts for a WV and a non-WV address. user_data input and user_data is in ignore_changes (GOL-385), so landing this scaffold does NOT touch the running droplet and a plain apply will NOT activate it - activation is the GOL-1772 Option B env-file upsert (see docs/RUNBOOK-release-train.md) or a droplet REPLACE."
+  type        = set(string)
+  default     = []
+
+  validation {
+    condition     = length(setsubtract(var.grove_stripe_tax_tenants, ["goldberry", "ggg", "nursery"])) == 0
+    error_message = "grove_stripe_tax_tenants may only contain the storefront tenant slugs goldberry, ggg, nursery (the values website_id.grove_tenant_slug() returns). A typo here would silently leave the intended tenant charging Odoo tax while the operator believed Stripe Tax was live."
+  }
+}
+
 variable "shippo_api_key" {
   description = "Shippo LIVE API key for prod label purchase + rate quotes (grove_headless models/sale_order.py reads os.environ SHIPPO_API_KEY; UserError when empty, so the empty default keeps plan/apply working and fulfillment inert). 1P: op://Grove Prod/Shippo Prod Key/password. Feeds cloud-init user_data => activating requires a droplet REPLACE — rides the board-approved GOL-484 go-live rebuild, not a standalone apply."
   type        = string
@@ -446,6 +458,68 @@ variable "grove_shippo_webhook_token" {
   type        = string
   sensitive   = true
   default     = ""
+}
+
+# === Printify print-on-demand merch (GOL-3316, Train #3; spec gom#340) =======
+# grove_headless reads all four UPPERCASE names from os.environ
+# (models/printify_client.py / product_template.py / sale_order.py / the
+# /grove/api/v1/printify/webhook route). The odoo process env comes ONLY from
+# the compose `environment:` block, so each key is declared here, rendered into
+# /etc/grove/.env by cloud-init AND listed in docker-compose.odoo.yml -- the
+# same three-point chain as SHIPPO_API_KEY. Empty token/shop => sync and push
+# raise a clear error and no Printify call is made; empty webhook secret =>
+# verify_signature fails closed (401). All four are user_data inputs and
+# user_data is in ignore_changes, so landing this scaffold does NOT touch the
+# running droplet: the RUNNING box gets the passthrough from Leg B
+# (scripts/prod-modules-promote.sh, PRINTIFY_PASSTHROUGH=1) and the values from
+# Josh's /etc/grove/.env edit; the next rebuild reproduces both from code.
+# Values are written UNQUOTED into the bash-sourced .env, hence the charset
+# validation.
+variable "printify_api_token" {
+  description = "Printify personal access token (JWT) for the farm shop. grove_headless printify_client reads os.environ PRINTIFY_API_TOKEN; empty => sync/push raise a clear error, no API call. 1P: op://Grove Prod/Printify Prod Key/api_token (commented in .env.op until the item exists). user_data input (ignore_changes) => activates on a rebuild; the running box is converged by Leg B + Josh's .env edit."
+  type        = string
+  sensitive   = true
+  default     = ""
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9._~+/=:-]*$", var.printify_api_token))
+    error_message = "printify_api_token must contain no whitespace or shell metacharacters (A-Za-z0-9 . _ ~ + / = : - only): cloud-init writes it unquoted into the bash-sourced /etc/grove/.env, so a bad value breaks the droplet's boot, not the apply."
+  }
+}
+
+variable "printify_shop_id" {
+  description = "Numeric id of the farm's Printify shop (the API / custom-integration sales channel). grove_headless reads os.environ PRINTIFY_SHOP_ID; empty => sync/push raise a clear error. 1P: op://Grove Prod/Printify Prod Key/shop_id (commented in .env.op until the item exists). user_data input, same semantics as printify_api_token."
+  type        = string
+  sensitive   = true
+  default     = ""
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9._~+/=:-]*$", var.printify_shop_id))
+    error_message = "printify_shop_id must contain no whitespace or shell metacharacters (A-Za-z0-9 . _ ~ + / = : - only): it is written unquoted into the bash-sourced /etc/grove/.env."
+  }
+}
+
+variable "printify_webhook_secret" {
+  description = "Shared secret Printify signs webhook bodies with (HMAC-SHA256); grove_headless /grove/api/v1/printify/webhook reads os.environ PRINTIFY_WEBHOOK_SECRET and verify_signature fails CLOSED when it is empty (every webhook => 401). Registered with Printify by scripts/printify_register_webhooks.py against the prod URL. DISTINCT from the QA secret so revoking one stage never breaks the other. 1P: op://Grove Prod/Printify Prod Key/webhook_secret (commented in .env.op until the item exists). user_data input, same semantics as printify_api_token."
+  type        = string
+  sensitive   = true
+  default     = ""
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9._~+/=:-]*$", var.printify_webhook_secret))
+    error_message = "printify_webhook_secret must contain no whitespace or shell metacharacters (A-Za-z0-9 . _ ~ + / = : - only): it is written unquoted into the bash-sourced /etc/grove/.env."
+  }
+}
+
+variable "printify_dry_run" {
+  description = "Printify dry-run flag. grove_headless sale_order push does `(os.environ.get(\"PRINTIFY_DRY_RUN\") or \"\").strip().lower() in (\"1\",\"true\",\"yes\",\"on\")`: truthy => Printify orders are CREATED but never sent to production; anything else (including empty) => LIVE. Prod defaults to EMPTY (live) per the spec; a truthy value here is the one-line way to hold prod in dry run (e.g. during the first sync). Restricted to the tokens the module recognises so a typo cannot silently go live. Not secret. user_data input (ignore_changes)."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = contains(["", "1", "true", "yes", "on", "0", "false", "no", "off"], lower(var.printify_dry_run))
+    error_message = "printify_dry_run must be one of 1/true/yes/on (dry run: create orders, never send to production), 0/false/no/off or empty (LIVE). grove_headless treats any other string as live WITHOUT COMPLAINING."
+  }
 }
 
 # === Carrier tracking poll — UPS Track + USPS Tracking v3 (GOL-2296) =========
@@ -593,5 +667,53 @@ variable "perenual_api_key" {
   validation {
     condition     = var.perenual_api_key == "" || can(regex("^[A-Za-z0-9._~+/=:-]{8,200}$", var.perenual_api_key))
     error_message = "perenual_api_key must be empty or a plain API token with NO whitespace or shell metacharacters (A-Z a-z 0-9 and . _ ~ + / = : - only, 8-200 chars) — cloud-init writes it UNQUOTED into the bash-sourced /etc/grove/.env, so a space, quote or $ would break set -euo pipefail at boot."
+  }
+}
+
+###############################################################################
+# GOL-2566 - legacy Ghost snowflake holding-action firewall. See
+# legacy-ghost-fw.tf for the full rationale and rollback.
+###############################################################################
+
+variable "legacy_ghost_firewall_enabled" {
+  description = "Attach `grove-legacy-ghost-fw` to the un-codified `ghostgoldberrygrove-nyc1` snowflake (droplet 468914087), closing its internet-wide :22 (and :80/:443, see legacy_ghost_http_public). Defaults FALSE so merging this file is not an apply -- the box is not Terraform-managed, and a holding action on a snowflake nobody has logged into in months is Josh's call to make deliberately, not a side effect of someone else's plan. Set true in tfvars (or `-var`) when applying. Flip back to false to detach."
+  type        = bool
+  default     = false
+}
+
+variable "legacy_ghost_droplet_name" {
+  description = "Name the legacy Ghost droplet is resolved by, rather than pinning the bare id 468914087 in code. The DO `droplet` data source has no id lookup, and the name is the stable handle: if the box is rebuilt the name is what gets reused. Only read when legacy_ghost_firewall_enabled is true."
+  type        = string
+  default     = "ghostgoldberrygrove-nyc1"
+}
+
+variable "legacy_ghost_http_public" {
+  description = "Keep :80/:443 on the legacy Ghost box open to the world. FALSE by default: verified 2026-09-29 that ZERO DNS records across all four Cloudflare zones resolve to 178.128.152.218 (every blog.* A record points at 159.89.243.121, every apex is an App Platform CNAME), and no DO load balancer or reserved IP references it -- so the box is DNS-orphaned and fencing HTTP breaks no routed path. What is listening on :443 is a Ghost ADMIN login behind a cert that expired 2025-10-07. Set true to restore world access if an unknown raw-IP consumer surfaces; the :22 fence is unaffected either way. Both legs resolve to var.admin_ip_cidrs, so a new operator address added there (GOL-1842) covers this box too."
+  type        = bool
+  default     = false
+}
+
+# --- grove_support live chat switch-on (GOL-3302 / GOL-2023, Train #3) -------
+#
+# The nursery storefront embeds Odoo's im_livechat widget (grove-sites
+# apps/nursery/app/support-chat.tsx, PRs #669 + #794) and stays INERT until it
+# is handed a channel id. The id is read at RUNTIME by the root layout (a
+# Server Component) from LIVECHAT_CHANNEL_ID / LIVECHAT_ODOO_URL (grove-sites
+# #1058) -- NOT from a NEXT_PUBLIC_* build arg, because the storefront images
+# are built once in grove-sites CI and pulled prebuilt from GHCR, so a
+# NEXT_PUBLIC_ value on the app spec (any scope) never reaches the bundle.
+# RUN_TIME scope therefore suffices, and flipping the value is an app-spec
+# update + redeploy of the SAME pinned image, no rebuild.
+#
+# Nursery ONLY (grove_support phase 1). Empty => the env is not emitted at all
+# and the widget stays dark; that is the rollback.
+variable "nursery_livechat_channel_id" {
+  description = "Integer id of the im_livechat.channel record on the prod Odoo that the nursery storefront's support widget loads (/im_livechat/loader/<id>). Empty string = widget OFF (env omitted from the app spec) -- the documented rollback. Default 1: verified 2026-10-13 that channel 1 is the ONLY livechat channel on prod (loader/1 -> 200, loader/2 + /3 -> 404 'Record does not exist'); Josh confirms it is the At The Grove Nursery channel (company 3) in review. PUBLIC value (it is in the page source), not a secret. Nursery only; RUN_TIME scope; see apps.tf."
+  type        = string
+  default     = "1"
+
+  validation {
+    condition     = can(regex("^[0-9]*$", var.nursery_livechat_channel_id))
+    error_message = "nursery_livechat_channel_id must be empty (widget off) or the integer id of the im_livechat.channel record on the prod Odoo."
   }
 }

@@ -109,6 +109,34 @@ established safe path (precedents `34cc4548` / `22fbb71` / `0b36ecfa`) edits the
 pin on the running box and lets git-sync plus the GOL-1009 entrypoint upgrade do
 the rest.
 
+### HARD PREREQUISITE -- soak the `-u` migrations on QA first
+
+**Never run Leg B against prod with a migration that has not run on QA.** Any
+target SHA whose `grove_headless` manifest version exceeds the installed one makes
+the GOL-1009 entrypoint run `--update=grove_headless`, which executes every
+`migrations/<version>/{pre,post}-migrate.py` between the two. On prod that is a
+one-way door: the pin rolls back, the migration's data edits do not (see
+"Rollback" in `RUNBOOK-release-train.md`).
+
+```bash
+# On QA, pinned to the SAME SHA you will hand Leg B. EXPECT_REF makes the script
+# refuse a QA box that is not actually on the bundle SHA.
+EXPECT_REF=<modules-sha> scripts/qa-module-upgrade.sh grove_headless
+```
+
+Then confirm each migration's effects **in the database**, not in the log:
+
+- the recorded version advanced -- `SELECT latest_version FROM ir_module_module
+  WHERE name = 'grove_headless';`
+- every table / column / row the migrations write actually exists. A clean log
+  line is a proxy, not the truth: a `-u` against a DB already past a migration's
+  version legitimately **skips** it. The WV-tax bind is the standing example --
+  it binds only on install or migration 1.47.0, so on a DB at >= 19.0.1.47.0 the
+  log is clean and the only proof is the tax tables.
+
+Record the soak result in the train manifest before Leg B. **If the soak did not
+run, the module half of the train does not promote** -- it rides the next train.
+
 ### Run it
 
 ```bash
@@ -186,6 +214,114 @@ reaches `done`, and check `ir.config_parameter
 grove_headless.perenual_calls.<UTC-today>` increments. Prod's daily budget stays
 **80** (`grove_headless.perenual_daily_budget`); QA holds the other 20 of the
 shared vendor quota (one free-tier key, 100 calls/UTC day, counted per database).
+
+### Landing the Printify env passthrough on prod (GOL-3316, Train #3)
+
+`grove_headless` reads `PRINTIFY_API_TOKEN`, `PRINTIFY_SHOP_ID`,
+`PRINTIFY_WEBHOOK_SECRET` and `PRINTIFY_DRY_RUN` from `os.environ` (spec
+grove-odoo-modules#340). The committed chain (`variables.tf` ->
+`cloud-init-odoo.yaml.tpl` -> `compose/docker-compose.odoo.yml`) renders all
+four, but it lives inside the ignored `user_data`, so a box built before
+GOL-3316 has **neither** the `.env` lines nor the compose passthrough -- and a
+value written to `/etc/grove/.env` without the compose passthrough never
+reaches the process (the same trap as `PERENUAL_API_KEY` above). Land the
+passthrough in the Leg B touch:
+
+```bash
+PRINTIFY_PASSTHROUGH=1 TARGET_REF=<same sha> CONFIRM=PROMOTE \
+  scripts/prod-modules-promote.sh
+```
+
+- **A flag, not a value channel.** The script adds the four compose
+  passthroughs (`ensure_compose_key`, one backup) and appends an **empty**
+  `KEY=` line to `.env` only where no line exists. It carries no Printify
+  secret and never echoes one; the pre-flight reports the three secrets as
+  set/empty/unset plus a char count, and `PRINTIFY_DRY_RUN` by value.
+- **Existing lines are never touched.** If Josh already wrote the values
+  (design doc, "set the env vars from the terminal"), they stay byte-for-byte.
+- **Recreate + verify.** odoo is recreated and each key must be **present** in
+  `printenv` afterwards (empty is fine before the values land; absent => exit
+  10, the module promote itself still succeeded).
+- **Then the values.** On `grove-prod-odoo`, Josh sets the three secrets in
+  `/etc/grove/.env` (`PRINTIFY_DRY_RUN` stays empty on prod = live) and runs
+  `cd /etc/grove && docker compose --env-file /etc/grove/.env up -d
+  --force-recreate --no-deps odoo`; confirm with `docker compose --env-file
+  /etc/grove/.env exec -T odoo printenv PRINTIFY_SHOP_ID`. A plain `restart`
+  does nothing -- a container's env is fixed at create time.
+- **Idempotent.** A second run is a `NO-OP`, and a droplet already on the
+  target SHA does not take the `NO-OP` shortcut while the passthrough is
+  pending. The next rebuild reproduces everything from cloud-init alone.
+
+### Flipping the Stripe Tax cutover flag on prod (GOL-2568 / GOL-2584)
+
+`grove_headless` decides per order whether Stripe or Odoo computes sales tax by
+reading `GROVE_STRIPE_TAX_{TENANT}` out of `os.environ`
+(`controllers/main.py::_stripe_tax_enabled`). Unset, empty, or an unresolvable
+tenant is **OFF**, and OFF is byte-identical to the pre-GOL-2568 checkout — so
+OFF is also the rollback. Truthy values are `1` / `true` / `yes` / `on`.
+
+**This is a money path: the flag changes what customers are charged.** Flip it
+only as a separate, named, board-approved step, and only after the QA e2e gate
+asserted amounts for a WV *and* a non-WV address (grove-odoo-modules
+`docs/stripe-tax-cutover.md`, Gate 4).
+
+**The train rule (ruled 2026-10-02, GOL-2584): ship inert, flip at the Wednesday
+promote only if the gates passed.** The Terraform chain lands with
+`grove_stripe_tax_tenants` empty, so prod keeps running the pre-GOL-2568 path no
+matter what merged. Then, at promote (step 7 of the order of operations in
+`RUNBOOK-release-train.md`):
+
+- **Gates 3 + 4 green on QA** -- the gate runner is grove-odoo-modules #826, which
+  reads the flag off observed **session behaviour** rather than a log line -> flip
+  with Path A below, verify, and record it in the train issue.
+- **Any gate unmet, inconclusive, or not run -> do not flip.** The flip rides the
+  next train. This is a planned outcome, not an incident, and needs no escalation.
+- **Rollback at any point = flag off**, which is byte-identical to the pre-flag
+  path. In-flight Stripe sessions settle on the rules they were created with.
+
+> ⚠️ **The deposit path bypasses Stripe Tax entirely.** `automatic_tax` is
+> `tax_enabled and not is_deposit`, so a deposit order never exercises the Stripe
+> computation. After the 2026-10-15 bareroot cutover the deposit path is the
+> dominant one -- which means a green Gate 4 can be green on a road most orders
+> have stopped taking. **Gate the flip on a non-deposit checkout assertion.**
+
+All three keys are now rendered **unconditionally** by the committed Terraform
+chain — `var.grove_stripe_tax_tenants` (a set of tenant slugs, empty by default)
+→ `cloud-init-odoo.yaml.tpl` `/etc/grove/.env` → the odoo service's
+`environment:` block in `compose/docker-compose.odoo.yml`. That matters because
+of the GOL-1772/GOL-1786 footgun: a key that is **not listed in the deployed
+compose** can never be injected into a running container no matter what
+`/etc/grove/.env` says. With the keys always present, activation is a *value*
+change, never a compose edit.
+
+Because prod's droplet carries `user_data` in `ignore_changes`, merging the
+Terraform change is a provable no-op on the running box, and a plain (or
+`-target`ed) `terraform apply` will **not** activate the flag. Two real paths:
+
+| Path | Cost | When |
+|------|------|------|
+| **A — env-file upsert** (GOL-1772 Option B, recommended) | seconds, no outage | promote day. On `grove-prod-odoo`: `sed -i '/^GROVE_STRIPE_TAX_NURSERY=/d' /etc/grove/.env && echo 'GROVE_STRIPE_TAX_NURSERY=1' >> /etc/grove/.env`, confirm `grep 'GROVE_STRIPE_TAX_NURSERY:' /etc/grove/docker-compose.yml` is present (add it to the odoo `environment:` block if the box predates this change), then `cd /etc/grove && docker compose --env-file /etc/grove/.env up -d --force-recreate --no-deps odoo`. **A container's env is fixed at create time — a plain `restart` does nothing.** |
+| **B — droplet REPLACE** | ~10-20 min Odoo outage | only if a rebuild is already planned; re-triggers the GOL-93 filestore gate |
+
+Verify against the **process**, not the files:
+
+```bash
+docker compose --env-file /etc/grove/.env exec -T odoo printenv GROVE_STRIPE_TAX_NURSERY
+# -> 1        (files converged + process not = the state that looks live and charges Odoo tax)
+```
+
+Then place one real test order per address class and check
+`sale.order.grove_stripe_tax_amount` / `grove_stripe_tax_jurisdictions` are
+written back by the `checkout.session.completed` webhook.
+
+**Rollback:** drop the line (or set it to `0`) and recreate the container the
+same way. No code change, no data migration; in-flight Stripe sessions settle
+normally and new sessions go back to the Odoo WV tax line.
+
+**Follow-up (GOL-2584 child):** teach `scripts/prod-modules-promote.sh` to carry
+`GROVE_STRIPE_TAX_NURSERY` the way it already carries `PERENUAL_API_KEY` above,
+so the pin bump and the flag flip are one converge with process-level
+verification instead of a hand-edited second touch.
 
 ### The money guard -- the real success condition
 

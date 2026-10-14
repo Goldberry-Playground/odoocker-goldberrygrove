@@ -257,6 +257,19 @@ resource "digitalocean_app" "tenant" {
         scope = "RUN_AND_BUILD_TIME"
       }
 
+      # Guides publish webhook receiver (/api/webhooks/publish, GOL-985/986).
+      # tenant.secrets.ts reads GROVE_PUBLISH_WEBHOOK_SECRET; unset => the
+      # receiver fails closed (401 on every delivery), which is why Odoo's
+      # "Publish Guide to Storefront" never reached prod. Reuses the shared
+      # revalidate secret (same Odoo -> storefront signed-webhook trust domain)
+      # rather than minting a new credential. Must byte-match the Odoo sender's
+      # GROVE_PUBLISH_WEBHOOK_SECRET_<TENANT> (cloud-init-odoo.yaml.tpl).
+      env {
+        key   = "GROVE_PUBLISH_WEBHOOK_SECRET"
+        value = var.grove_revalidate_secret
+        scope = "RUN_TIME"
+      }
+
       env {
         key   = "GHOST_URL"
         value = local.ghost_urls[each.key]
@@ -274,6 +287,32 @@ resource "digitalocean_app" "tenant" {
         key   = "GHOST_NEWSLETTER_INSTANCES"
         value = local.ghost_newsletter_instances
         scope = "RUN_AND_BUILD_TIME"
+      }
+
+      # grove_support live chat (GOL-3302 / GOL-2023), NURSERY ONLY. The
+      # storefront's root layout reads these at request time and mounts the
+      # im_livechat widget pointed at the prod Odoo host; both are omitted
+      # (widget dark) when var.nursery_livechat_channel_id is empty. RUN_TIME
+      # on purpose: the value is a runtime read of a prebuilt GHCR image, and
+      # a NEXT_PUBLIC_/BUILD_TIME env could never reach that bundle (see the
+      # variable's doc). Changing either triggers an app-spec redeploy of the
+      # same pinned image -- it rides the promote-storefronts targeted apply.
+      dynamic "env" {
+        for_each = each.key == "nursery" && var.nursery_livechat_channel_id != "" ? [1] : []
+        content {
+          key   = "LIVECHAT_CHANNEL_ID"
+          value = var.nursery_livechat_channel_id
+          scope = "RUN_TIME"
+        }
+      }
+
+      dynamic "env" {
+        for_each = each.key == "nursery" && var.nursery_livechat_channel_id != "" ? [1] : []
+        content {
+          key   = "LIVECHAT_ODOO_URL"
+          value = "https://${local.odoo_host}"
+          scope = "RUN_TIME"
+        }
       }
 
       env {

@@ -149,6 +149,15 @@ services:
       GROVE_PUBLISH_WEBHOOK_SECRET_GGG: ${GROVE_PUBLISH_WEBHOOK_SECRET_GGG:-}
       GROVE_PUBLISH_WEBHOOK_URL_NURSERY: ${GROVE_PUBLISH_WEBHOOK_URL_NURSERY:-}
       GROVE_PUBLISH_WEBHOOK_SECRET_NURSERY: ${GROVE_PUBLISH_WEBHOOK_SECRET_NURSERY:-}
+      # Stripe Tax per-tenant cutover flag (GOL-2568). controllers/main.py
+      # _stripe_tax_enabled(order) reads GROVE_STRIPE_TAX_{TENANT} from
+      # os.environ, so the key has to be listed HERE or the value in
+      # --env-file never reaches the process. Empty => OFF => Odoo's computed
+      # WV tax line, i.e. today's checkout unchanged; empty is also the
+      # rollback. cloud-init writes all three from var.grove_stripe_tax_tenants.
+      GROVE_STRIPE_TAX_GOLDBERRY: ${GROVE_STRIPE_TAX_GOLDBERRY:-}
+      GROVE_STRIPE_TAX_GGG: ${GROVE_STRIPE_TAX_GGG:-}
+      GROVE_STRIPE_TAX_NURSERY: ${GROVE_STRIPE_TAX_NURSERY:-}
       # Shippo fulfillment (GOL-988). Outbound: sale_order.py reads
       # SHIPPO_API_KEY via os.environ (UserError when empty). Inbound:
       # controllers/main.py compares GROVE_SHIPPO_WEBHOOK_TOKEN (empty =>
@@ -156,6 +165,19 @@ services:
       # source as stripe_test_* above; cloud-init writes both.
       SHIPPO_API_KEY: ${SHIPPO_API_KEY:-}
       GROVE_SHIPPO_WEBHOOK_TOKEN: ${GROVE_SHIPPO_WEBHOOK_TOKEN:-}
+      # Printify merch (GOL-3316, Train #3; spec grove-odoo-modules#340).
+      # printify_client / product_template / sale_order / the printify webhook
+      # route read these four from os.environ, and os.environ comes ONLY from
+      # this block -- a value in /etc/grove/.env that is not listed here never
+      # reaches the process (the GOL-3209 / PERENUAL_API_KEY trap). Empty
+      # token/shop => sync and push raise a clear error; empty webhook secret
+      # => verify_signature fails closed; PRINTIFY_DRY_RUN truthy => orders are
+      # created but never sent to production (QA default). cloud-init writes
+      # all four from the TF vars.
+      PRINTIFY_API_TOKEN: ${PRINTIFY_API_TOKEN:-}
+      PRINTIFY_SHOP_ID: ${PRINTIFY_SHOP_ID:-}
+      PRINTIFY_WEBHOOK_SECRET: ${PRINTIFY_WEBHOOK_SECRET:-}
+      PRINTIFY_DRY_RUN: ${PRINTIFY_DRY_RUN:-}
       # Carrier tracking poll (GOL-2296 Pirate Ship C, grove-odoo-modules#232).
       # carrier_tracking.build_clients() reads these four UPPERCASE names from
       # os.environ; a client is built only when its ID *and* secret are both
@@ -184,6 +206,11 @@ services:
       # _notify_discord() prefers this over DISCORD_OPS_WEBHOOK_URL; empty =>
       # order alerts are a no-op in QA (QA plumbs no ops webhook either).
       DISCORD_ORDERS_WEBHOOK_URL: ${DISCORD_ORDERS_WEBHOOK_URL:-}
+      # #grove-ops webhook (GOL-3302 Train #3 live-chat gate). grove_support's
+      # chat-start ping (grove_support/models/discord.py) reads ONLY this name
+      # from os.environ -- it has no ORDERS fallback -- and os.environ comes
+      # ONLY from this block, so without this line the QA ping is a no-op.
+      DISCORD_OPS_WEBHOOK_URL: ${DISCORD_OPS_WEBHOOK_URL:-}
       # Perenual plant-facts enrichment (GOL-2507, parent GOL-2383).
       # grove_headless services/plant_data/perenual.py reads PERENUAL_API_KEY
       # from os.environ, and the odoo process env comes ONLY from this block
