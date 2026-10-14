@@ -8,14 +8,53 @@
 # calling workflow's conclusion then feeds discord-status.sh's streak /
 # recovery logic).
 #
+# Parked between trains: the release train tears QA compute down every
+# Thursday and rebuilds it the next train Monday (docs/RUNBOOK-release-train.md),
+# so for ~10 days of every 14 there is nothing to probe. When the env is
+# FULLY absent -- every host refuses (000) AND App Platform lists zero
+# grove-*-qa apps -- outside the train's live window, the sweep reports
+# PARKED and exits 0. Inside the live window (Tue-Wed of a train week) the
+# same state is a real outage and stays DEGRADED. A partial state (some hosts
+# up, or 1-3 apps) is never "parked". Without DIGITALOCEAN_TOKEN absence can't
+# be confirmed, so it stays DEGRADED.
+#
 # Env:
 #   DIGITALOCEAN_TOKEN   optional -- enables the App Platform phase checks.
 #                        Without it, only the HTTP sweep runs.
 #   QA_ZONE              default qa.gatheringatthegrove.com
+#   QA_HEALTH_DO_API     default https://api.digitalocean.com (tests stub it)
+#   QA_TRAIN_ANCHOR      default 2026-09-21 (Train #1 Monday; same anchor as
+#                        release-train-reminder.yml -- keep them in sync)
+#   QA_HEALTH_NOW        optional epoch seconds override (tests)
 set -uo pipefail
 
 QA_ZONE="${QA_ZONE:-qa.gatheringatthegrove.com}"
+QA_HEALTH_DO_API="${QA_HEALTH_DO_API:-https://api.digitalocean.com}"
+QA_TRAIN_ANCHOR="${QA_TRAIN_ANCHOR:-2026-09-21}"
 fail=0
+hosts_down=0
+qa_apps_seen=""
+
+# live    = Tue-Wed of a train week: QA must be up.
+# edge    = Mon (train-up) / Thu (teardown) of a train week: either is fine.
+# off     = Fri-Sun of a train week, or any day of an off week.
+train_phase() {
+  python3 - "$QA_TRAIN_ANCHOR" "${QA_HEALTH_NOW:-}" <<'PY'
+import sys, datetime as dt
+anchor = dt.date.fromisoformat(sys.argv[1])
+now = dt.datetime.fromtimestamp(int(sys.argv[2]), dt.timezone.utc) if sys.argv[2] else dt.datetime.now(dt.timezone.utc)
+week = (now.date() - anchor).days // 7
+dow = now.isoweekday()  # 1=Mon .. 7=Sun
+if week % 2:
+    print(f"off week={week}")
+elif dow in (2, 3):
+    print(f"live week={week}")
+elif dow in (1, 4):
+    print(f"edge week={week}")
+else:
+    print(f"off week={week}")
+PY
+}
 
 echo "== HTTP sweep =="
 # odoo returns 303 (redirect to /odoo login); any 2xx/3xx counts as
@@ -30,6 +69,7 @@ for host in hub goldberry ggg nursery odoo; do
   code=$(curl -sk -o /dev/null -w "%{http_code}" "https://${host}.${QA_ZONE}/" --connect-timeout 5 --max-time 12 2>/dev/null)
   case "$code" in
     2*|3*) echo "  ok   ${host}.${QA_ZONE} (${code})" ;;
+    000)   echo "  FAIL ${host}.${QA_ZONE} (${code})"; fail=1; hosts_down=$((hosts_down + 1)) ;;
     *)     echo "  FAIL ${host}.${QA_ZONE} (${code})"; fail=1 ;;
   esac
 done
@@ -105,7 +145,7 @@ rm -f "$img"
 if [ -n "${DIGITALOCEAN_TOKEN:-}" ]; then
   echo "== App Platform deployment phases =="
   resp=$(curl -s --max-time 20 -H "Authorization: Bearer $DIGITALOCEAN_TOKEN" \
-    "https://api.digitalocean.com/v2/apps?per_page=50" || true)
+    "${QA_HEALTH_DO_API}/v2/apps?per_page=50" || true)
   if [ -z "$resp" ]; then
     echo "  FAIL could not list apps (API unreachable)"; fail=1
   else
@@ -131,13 +171,27 @@ for app in d.get("apps", []):
 if seen < 4:
     print(f"  FAIL expected 4 grove-*-qa apps, found {seen}")
     bad = 1
+print(f"__qa_apps_seen__={seen}")
 sys.exit(bad)')
     rc=$?
+    qa_apps_seen=$(printf '%s\n' "$out" | sed -n 's/^__qa_apps_seen__=//p')
+    out=$(printf '%s\n' "$out" | grep -v '^__qa_apps_seen__=')
     echo "$out"
     [ "$rc" != "0" ] && fail=1
   fi
 else
   echo "== App Platform checks skipped (no DIGITALOCEAN_TOKEN) =="
+fi
+
+# 5 = every swept host (hub goldberry ggg nursery odoo).
+if [ "$fail" != "0" ] && [ "$hosts_down" = "5" ] && [ "$qa_apps_seen" = "0" ]; then
+  read -r phase week <<<"$(train_phase)"
+  if [ "$phase" = "live" ]; then
+    echo "  FAIL QA env absent during the train's live window (${week}, Tue-Wed): run make train-up"
+  else
+    echo "RESULT: parked (QA compute torn down between trains; ${phase} ${week})"
+    exit 0
+  fi
 fi
 
 if [ "$fail" = "0" ]; then
