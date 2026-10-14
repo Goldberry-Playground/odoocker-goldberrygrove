@@ -207,8 +207,7 @@ jobs:
 
           # Only the result/DRIFT/note lines, capped well under Discord's
           # 4096-char embed description limit.
-          DETAIL=$(grep -E '^(committed:|prod-live:|DRIFT:|note:|result:)' pin.out \
-                   | head -14 | head -c 1400)
+          DETAIL=$(grep -E '^(committed:|prod-live:|DRIFT:|note:|result:)' pin.out | head -14 | head -c 1400 || true)
 
           # --branch is passed explicitly: on main today discord-status.sh still
           # REQUIRES it and exits 1 without it, which `|| true` would swallow
