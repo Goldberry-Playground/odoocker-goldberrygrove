@@ -17,7 +17,15 @@ step sequence main() actually drives:
   app-plane-skips-keep       MONITORING_PLANE=app -> waits for OO only, OO
                              objects still upserted, NO Keep call of any kind.
   app-plane-needs-no-keep    with KEEP_WEBHOOK_TOKEN unset the app plane still
-                             completes (require_env for Keep is never reached).
+                             completes, running the REAL oo_bootstrap(): the
+                             token is only required when KEEP_EVENT_URL names a
+                             destination to attach it to (GOL-3308 found the
+                             earlier version of this test stubbed oo_bootstrap
+                             and so never exercised the require_env that made
+                             the prod bring-up exit 1 in Step 3).
+  obs-plane-still-needs-key  with KEEP_EVENT_URL set, a missing
+                             KEEP_WEBHOOK_TOKEN is still a hard error (exit 1)
+                             -- the fix must not silently drop the header.
   bad-plane-is-config-error  MONITORING_PLANE=typo exits 1 before any wait.
   render-keeps-plane         the go-live `env | grep -E` render filter passes
                              MONITORING_ through, else the plane is dropped.
@@ -64,14 +72,26 @@ class PlaneTests(unittest.TestCase):
                 return {"url": "http://example.invalid"} if name == "oo_bootstrap" else None
             return _f
 
+        self._orig_oo_bootstrap = m.oo_bootstrap
         m.wait_for = lambda url, _s, *, name: self.calls.append(f"wait:{name}")
         for fn in ("maybe_seed_canary", "oo_bootstrap", "oo_bootstrap_alerts",
                    "oo_bootstrap_dashboards", "keep_bootstrap_providers",
                    "keep_bootstrap_workflows"):
             setattr(m, fn, rec(fn))
         self._env = dict(os.environ)
-        for k in ("MONITORING_PLANE", "KEEP_WEBHOOK_TOKEN", "KEEP_BASE_URL"):
+        for k in ("MONITORING_PLANE", "KEEP_WEBHOOK_TOKEN", "KEEP_BASE_URL", "KEEP_EVENT_URL"):
             os.environ.pop(k, None)
+
+    def _real_oo_bootstrap(self) -> list[dict]:
+        """Swap the oo_bootstrap recorder for the real function with its HTTP
+        layer stubbed, returning the list of request bodies it would send."""
+        m = self.mod
+        sent: list[dict] = []
+        m.oo_bootstrap = self._orig_oo_bootstrap  # same module globals as the stubs below
+        m.oo_auth = lambda: ("root@example.invalid", "x")
+        m.oo_upsert_template = lambda tmpl: sent.append({"template": tmpl})
+        m.oo_upsert_destination = lambda dest: sent.append({"destination": dest})
+        return sent
 
     def tearDown(self) -> None:
         os.environ.clear()
@@ -97,9 +117,39 @@ class PlaneTests(unittest.TestCase):
     def test_app_plane_needs_no_keep_secrets(self) -> None:
         os.environ["MONITORING_PLANE"] = "app"
         self.assertNotIn("KEEP_WEBHOOK_TOKEN", os.environ)
-        # must not raise / SystemExit even though keep_headers() would require it
+        self.assertNotIn("KEEP_EVENT_URL", os.environ)
+        sent = self._real_oo_bootstrap()
+        # The REAL oo_bootstrap must run to completion: no SystemExit from
+        # require_env("KEEP_WEBHOOK_TOKEN"), and the steps AFTER it still fire.
         self.mod.main()
-        self.assertIn("oo_bootstrap", self.calls)
+        self.assertEqual(self.calls, [
+            "wait:OpenObserve",
+            "maybe_seed_canary", "oo_bootstrap_alerts", "oo_bootstrap_dashboards",
+        ])
+        # Template still upserted; destination handed over url-less (the
+        # upsert helper SKIPs it) and WITHOUT a fabricated X-API-KEY header.
+        self.assertEqual([list(d)[0] for d in sent], ["template", "destination"])
+        dest = sent[1]["destination"]
+        self.assertEqual(dest.get("url"), "")
+        self.assertNotIn("X-API-KEY", dest.get("headers", {}))
+
+    def test_obs_plane_with_event_url_still_requires_token(self) -> None:
+        os.environ["KEEP_EVENT_URL"] = "http://203.0.113.10:8080/alerts/event?provider_id=openobserve"
+        self.assertNotIn("KEEP_WEBHOOK_TOKEN", os.environ)
+        self._real_oo_bootstrap()
+        with self.assertRaises(SystemExit) as cm:
+            self.mod.main()
+        self.assertEqual(cm.exception.code, 1)
+        self.assertNotIn("oo_bootstrap_alerts", self.calls)
+
+    def test_obs_plane_with_event_url_and_token_attaches_header(self) -> None:
+        os.environ["KEEP_EVENT_URL"] = "http://203.0.113.10:8080/alerts/event?provider_id=openobserve"
+        os.environ["KEEP_WEBHOOK_TOKEN"] = "unit-test-token"
+        sent = self._real_oo_bootstrap()
+        self.mod.main()
+        dest = sent[1]["destination"]
+        self.assertEqual(dest["url"], os.environ["KEEP_EVENT_URL"])
+        self.assertEqual(dest["headers"]["X-API-KEY"], "unit-test-token")
 
     def test_bad_plane_is_config_error(self) -> None:
         os.environ["MONITORING_PLANE"] = "prod"
