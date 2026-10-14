@@ -297,6 +297,17 @@ jobs:
         run: python3 scripts/test_obs_firewall_check.py
       - name: Run monitoring bootstrap plane tests (GOL-2323 app plane must not wait on Keep)
         run: python3 scripts/test_setup_monitoring_plane.py
+      # GOL-2963: the odoo-logistics self-service env bootstrap. Guards the
+      # sidecar contract, the in-cluster-base/Host-header split, the shallow
+      # adapterConfig merge (which would otherwise drop sibling secrets), and
+      # that the credential never reaches a log line.
+      # Kept LAST in this job (GOL-3017): a failing step skips every step after
+      # it, and `Promotion script tests` is not a required context, so a new
+      # step that breaks (as this one did before #839 landed the test file)
+      # must not be able to silently disarm the guards above it, e.g. the
+      # GOL-2346 Leg B money guard.
+      - name: Run odoo-logistics bootstrap tests (GOL-2963)
+        run: python3 scripts/test_bootstrap_otto_env.py
 
   validate-compose:
     name: Validate Docker Compose (Grove)
