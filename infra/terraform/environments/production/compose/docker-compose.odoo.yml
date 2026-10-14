@@ -129,6 +129,21 @@ services:
       # fail-closed when empty). Same --env-file source as stripe_test_*.
       SHIPPO_API_KEY: ${SHIPPO_API_KEY:-}
       GROVE_SHIPPO_WEBHOOK_TOKEN: ${GROVE_SHIPPO_WEBHOOK_TOKEN:-}
+      # Printify merch (GOL-3316, Train #3; spec grove-odoo-modules#340).
+      # printify_client / product_template / sale_order / the printify webhook
+      # route read these four from os.environ, and os.environ comes ONLY from
+      # this block -- a value in /etc/grove/.env that is not listed here never
+      # reaches the process (GOL-1772/GOL-1786, the GOL-3209 / PERENUAL trap).
+      # Empty token/shop => sync and push raise a clear error; empty webhook
+      # secret => verify_signature fails closed; PRINTIFY_DRY_RUN truthy =>
+      # orders created but never sent to production (prod default EMPTY =
+      # live). cloud-init writes all four; on the RUNNING box Leg B
+      # (prod-modules-promote.sh PRINTIFY_PASSTHROUGH=1) adds these lines via
+      # ensure_compose_key so no droplet replace is needed.
+      PRINTIFY_API_TOKEN: ${PRINTIFY_API_TOKEN:-}
+      PRINTIFY_SHOP_ID: ${PRINTIFY_SHOP_ID:-}
+      PRINTIFY_WEBHOOK_SECRET: ${PRINTIFY_WEBHOOK_SECRET:-}
+      PRINTIFY_DRY_RUN: ${PRINTIFY_DRY_RUN:-}
       # Carrier tracking poll (GOL-2296 Pirate Ship C, grove-odoo-modules#232).
       # carrier_tracking.build_clients() reads these four UPPERCASE names from
       # os.environ; a client is built only when its ID *and* secret are both

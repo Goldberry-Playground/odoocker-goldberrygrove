@@ -78,6 +78,24 @@ The properties tested are the ones that would actually cost money or an outage:
   stripe-tax-runtime-verified  files converged + the flag NOT in the odoo
                              process env is the state that looks live and still
                              charges Odoo tax => exit 10, never success.
+  printify-off-by-default    with PRINTIFY_PASSTHROUGH unset the promote is
+                             byte-for-byte what it was (no .env line, no compose
+                             edit, restart not recreate) but the four-key state
+                             is still reported.
+  printify-flag-contract     only the truthy/falsey tokens are accepted, and
+                             ONLY locally (no SSH) -- a flag, not a value.
+  printify-lands-passthrough all four keys gain a compose passthrough + an EMPTY
+                             .env line, odoo is RECREATED, and each key is
+                             verified PRESENT in the process env.
+  printify-never-overwrites  a key that already has a .env line (Josh's value,
+                             or cloud-init's empty render) is left byte-for-byte
+                             alone, and the value is never echoed.
+  printify-idempotent        a second run is a NO-OP (one compose backup, no
+                             duplicate lines); a droplet already ON the target
+                             SHA does not take the NO-OP exit while the
+                             passthrough is still pending.
+  printify-runtime-verified  if a key is ABSENT from the odoo process env after
+                             the recreate, exit 10 rather than report success.
 
     python3 scripts/test_prod_modules_promote.py
 """
@@ -176,7 +194,9 @@ case "$cmd" in
         # NOT listed there can never reach the process no matter what .env
         # says (GOL-1772/GOL-1786). Model exactly that.
         for key in PERENUAL_API_KEY GROVE_STRIPE_TAX_GOLDBERRY \
-                   GROVE_STRIPE_TAX_GGG GROVE_STRIPE_TAX_NURSERY; do
+                   GROVE_STRIPE_TAX_GGG GROVE_STRIPE_TAX_NURSERY \
+                   PRINTIFY_API_TOKEN PRINTIFY_SHOP_ID \
+                   PRINTIFY_WEBHOOK_SECRET PRINTIFY_DRY_RUN; do
           if grep -Eq "^[[:space:]]*$key:" "$compose"; then
             sed -n "s/^$key=//p" "$S/envfile" | tail -1 | tr -d '\r' \
               > "$S/container_env/$key"
@@ -277,7 +297,9 @@ class Droplet:
                  perenual_env=None, compose_has_perenual=False,
                  container_perenual=None, env_blackhole=False,
                  stripe_tax_env=None, compose_stripe_tax=(),
-                 container_stripe_tax=None):
+                 container_stripe_tax=None,
+                 printify_env=None, compose_printify=(),
+                 container_printify=None):
         self.root = tempfile.mkdtemp(prefix="fakegrove-")
         self.deploy = os.path.join(self.root, "grove")
         self.state = os.path.join(self.root, "state")
@@ -297,12 +319,18 @@ class Droplet:
             # empty = OFF. `None` models a droplet that predates that chain.
             for tenant, value in (stripe_tax_env or {}).items():
                 fh.write(f"GROVE_STRIPE_TAX_{tenant}={value}\n")
+            # PRINTIFY_* lines as Josh (or cloud-init) may already have written
+            # them; `None` models a box that predates the GOL-3316 chain.
+            for key, value in (printify_env or {}).items():
+                fh.write(f"{key}={value}\n")
 
         compose = COMPOSE_WITH_AUTO if auto_upgrade else COMPOSE_WITHOUT_AUTO
         if compose_has_perenual:
             compose += "      PERENUAL_API_KEY: ${PERENUAL_API_KEY:-}\n"
         for tenant in compose_stripe_tax:
             key = f"GROVE_STRIPE_TAX_{tenant}"
+            compose += f"      {key}: ${{{key}:-}}\n"
+        for key in compose_printify:
             compose += f"      {key}: ${{{key}:-}}\n"
         with open(os.path.join(self.deploy, "docker-compose.yml"), "w") as fh:
             fh.write(compose)
@@ -315,6 +343,8 @@ class Droplet:
             self._write(
                 os.path.join(self.container_env_dir,
                              f"GROVE_STRIPE_TAX_{tenant}"), value)
+        for key, value in (container_printify or {}).items():
+            self._write(os.path.join(self.container_env_dir, key), value)
         if env_blackhole:
             self._write(os.path.join(self.state, "env_blackhole"), "1")
 
@@ -1332,6 +1362,222 @@ def test_stripe_tax_inert_passthrough_on_pre805_box_at_live_pin():
               f"rc={again.returncode} {again.stdout[-300:]}")
         check("inert-prep-rerun-no-new-backup", len(d.compose_backups()) == 1,
               str(d.compose_backups()))
+    finally:
+        d.cleanup()
+
+
+# --- PRINTIFY_* passthrough (GOL-3316, Train #3) -----------------------------
+# The Printify half of a prod promote is a PASSTHROUGH, not a value: the four
+# keys must exist in the odoo service's compose `environment:` (and have a .env
+# line to edit) so the secrets Josh writes to /etc/grove/.env afterwards reach
+# os.environ on the next recreate. Miss the compose point and the sync action
+# raises "token missing" with the token sitting right there in .env.
+
+PRINTIFY_KEYS = ("PRINTIFY_API_TOKEN", "PRINTIFY_SHOP_ID",
+                 "PRINTIFY_WEBHOOK_SECRET", "PRINTIFY_DRY_RUN")
+# Shaped like a placeholder on purpose (see FAKE_KEY): must still clear the
+# cloud-init charset rule, so no underscores.
+FAKE_PRINTIFY_TOKEN = "your-key-here-gol3316-fixture"
+
+
+def _printify_pass(key):
+    return f"      {key}: ${{{key}:-}}\n"
+
+
+def test_printify_off_by_default():
+    """PRINTIFY_PASSTHROUGH unset => the promote is byte-for-byte what it was:
+    no .env line, no compose edit, a plain `restart`. The four-key state is
+    still reported so a read-only pre-flight answers "is the passthrough in?"."""
+    d = Droplet()
+    try:
+        before_env, before_compose = d.env_text(), d.compose_text()
+        r = d.run(confirm="PROMOTE")
+        check("printify-off-exit-0", r.returncode == 0, f"rc={r.returncode} {r.stderr[-300:]}")
+        check("printify-off-no-env-line", "PRINTIFY_" not in d.env_text(), repr(d.env_text()))
+        check("printify-off-env-byte-for-byte", d.env_text() == before_env.replace(
+            f"CUSTOM_MODULES_REF={OLD}", f"CUSTOM_MODULES_REF={NEW}"), repr(d.env_text()))
+        check("printify-off-compose-untouched", d.compose_text() == before_compose)
+        check("printify-off-no-compose-backup", d.compose_backups() == [])
+        check("printify-off-restart-not-recreate",
+              d.odoo_restarted() and not d.odoo_recreated())
+        for key in PRINTIFY_KEYS:
+            check(f"printify-off-still-reports-{key}",
+                  f"{key} (GOL-3316)" in r.stdout and "passthrough = no" in r.stdout,
+                  r.stdout[-900:])
+    finally:
+        d.cleanup()
+
+
+def test_printify_flag_contract():
+    """Only the recognised tokens are accepted, and the check runs LOCALLY:
+    a mis-set flag never reaches the droplet. A falsey token is 'not asked'."""
+    for bad in ("maybe", "ture", "PRINTIFY_API_TOKEN=abc"):
+        d = Droplet()
+        try:
+            r = d.run(confirm="PROMOTE", extra_env={"PRINTIFY_PASSTHROUGH": bad})
+            check(f"printify-rejects[{bad}]",
+                  r.returncode == 2 and "PRINTIFY_PASSTHROUGH=" in r.stderr,
+                  f"rc={r.returncode} {r.stderr[-300:]}")
+            check(f"printify-rejects[{bad}]-no-ssh",
+                  "PRINTIFY_" not in d.env_text() and not d.odoo_restarted())
+        finally:
+            d.cleanup()
+    for ok in ("1", "TRUE", "yes", "On"):
+        d = Droplet()
+        try:
+            r = d.run(extra_env={"PRINTIFY_PASSTHROUGH": ok})
+            check(f"printify-accepts[{ok}]",
+                  r.returncode == 0 and "passthrough PENDING" in r.stdout,
+                  f"rc={r.returncode} {r.stdout[-300:]} {r.stderr[-200:]}")
+        finally:
+            d.cleanup()
+    d = Droplet()
+    try:
+        r = d.run(confirm="PROMOTE", extra_env={"PRINTIFY_PASSTHROUGH": "off"})
+        check("printify-falsey-is-not-asked",
+              r.returncode == 0 and "PRINTIFY_" not in d.env_text()
+              and d.odoo_restarted() and not d.odoo_recreated(),
+              f"rc={r.returncode} {repr(d.env_text())}")
+    finally:
+        d.cleanup()
+
+
+def test_printify_preflight_writes_nothing():
+    d = Droplet()
+    try:
+        before_env, before_compose = d.env_text(), d.compose_text()
+        r = d.run(extra_env={"PRINTIFY_PASSTHROUGH": "1"})
+        check("printify-preflight-exit-0", r.returncode == 0, f"rc={r.returncode}")
+        check("printify-preflight-says-pending",
+              r.stdout.count("passthrough PENDING") == 4, r.stdout[-900:])
+        check("printify-preflight-writes-nothing",
+              d.env_text() == before_env and d.compose_text() == before_compose)
+        check("printify-preflight-no-restart", not d.odoo_restarted())
+    finally:
+        d.cleanup()
+
+
+def test_printify_lands_passthrough():
+    """Happy path on a box that predates the GOL-3316 chain: four EMPTY .env
+    lines, four compose passthroughs (ONE backup), a RECREATE, and each key
+    verified PRESENT in the process env."""
+    d = Droplet()
+    try:
+        r = d.run(confirm="PROMOTE", extra_env={"PRINTIFY_PASSTHROUGH": "1"})
+        check("printify-land-exit-0", r.returncode == 0,
+              f"rc={r.returncode} {r.stderr[-500:]}")
+        for key in PRINTIFY_KEYS:
+            check(f"printify-land-env-line-{key}",
+                  d.env_text().count(f"{key}=\n") == 1
+                  and d.env_text().count(f"{key}=") == 1, repr(d.env_text()))
+            check(f"printify-land-compose-{key}",
+                  _printify_pass(key) in d.compose_text(), repr(d.compose_text()))
+            check(f"printify-land-runtime-present-{key}",
+                  d.container_env(key) == "", repr(d.container_env(key)))
+            check(f"printify-land-verified-{key}",
+                  f"OK -- {key}" in r.stdout, r.stdout[-1200:])
+        check("printify-land-one-compose-backup", len(d.compose_backups()) == 1,
+              str(d.compose_backups()))
+        check("printify-land-recreated", d.odoo_recreated())
+        # No collateral: Perenual and Stripe Tax lines are not created.
+        check("printify-land-no-collateral",
+              "PERENUAL_API_KEY=" not in d.env_text()
+              and "GROVE_STRIPE_TAX" not in d.env_text(), repr(d.env_text()))
+    finally:
+        d.cleanup()
+
+
+def test_printify_never_overwrites_existing_values():
+    """Josh may set the values BEFORE Leg B runs (the design doc's 'set the env
+    vars from the terminal' step). An existing line is never rewritten, the
+    missing keys still get their empty line + passthrough, and the token is
+    never echoed on any channel."""
+    d = Droplet(printify_env={"PRINTIFY_API_TOKEN": FAKE_PRINTIFY_TOKEN,
+                              "PRINTIFY_DRY_RUN": "1"})
+    try:
+        r = d.run(confirm="PROMOTE", extra_env={"PRINTIFY_PASSTHROUGH": "1"})
+        check("printify-keep-exit-0", r.returncode == 0,
+              f"rc={r.returncode} {r.stderr[-500:]}")
+        check("printify-keep-token-line",
+              d.env_text().count(f"PRINTIFY_API_TOKEN={FAKE_PRINTIFY_TOKEN}\n") == 1
+              and d.env_text().count("PRINTIFY_API_TOKEN=") == 1, repr(d.env_text()))
+        check("printify-keep-dry-run-line",
+              d.env_text().count("PRINTIFY_DRY_RUN=1\n") == 1
+              and d.env_text().count("PRINTIFY_DRY_RUN=") == 1, repr(d.env_text()))
+        check("printify-keep-adds-missing",
+              d.env_text().count("PRINTIFY_SHOP_ID=\n") == 1
+              and d.env_text().count("PRINTIFY_WEBHOOK_SECRET=\n") == 1,
+              repr(d.env_text()))
+        check("printify-keep-runtime-token",
+              d.container_env("PRINTIFY_API_TOKEN") == FAKE_PRINTIFY_TOKEN)
+        check("printify-keep-runtime-dry-run",
+              d.container_env("PRINTIFY_DRY_RUN") == "1"
+              and "PRINTIFY_DRY_RUN='1'" in r.stdout, r.stdout[-900:])
+        _no_leak("printify-keep", r, FAKE_PRINTIFY_TOKEN)
+        # The pre-flight reports a char count, never the value.
+        check("printify-keep-reports-count",
+              f"({len(FAKE_PRINTIFY_TOKEN)} chars" in r.stdout, r.stdout[-1500:])
+    finally:
+        d.cleanup()
+
+
+def test_printify_idempotent_and_noop_shortcut():
+    """A second run is a NO-OP (no duplicate lines, one compose backup), and a
+    droplet already ON the target SHA does not take the NO-OP exit while the
+    passthrough is still pending."""
+    d = Droplet(env_ref=NEW, synced=NEW, marker=NEW)
+    try:
+        r = d.run(target=NEW, confirm="PROMOTE", extra_env={"PRINTIFY_PASSTHROUGH": "1"})
+        check("printify-noop-not-taken", "NO-OP" not in r.stdout, r.stdout[-400:])
+        check("printify-noop-exit-0", r.returncode == 0,
+              f"rc={r.returncode} {r.stderr[-400:]}")
+        check("printify-noop-landed",
+              all(d.container_env(k) == "" for k in PRINTIFY_KEYS))
+        again = d.run(target=NEW, confirm="PROMOTE", extra_env={"PRINTIFY_PASSTHROUGH": "1"})
+        check("printify-idem-second-noop",
+              again.returncode == 0 and "NO-OP" in again.stdout,
+              f"rc={again.returncode} {again.stdout[-400:]}")
+        for key in PRINTIFY_KEYS:
+            check(f"printify-idem-single-line-{key}",
+                  d.env_text().count(f"{key}=") == 1, repr(d.env_text()))
+            check(f"printify-idem-single-compose-{key}",
+                  d.compose_text().count(_printify_pass(key)) == 1,
+                  repr(d.compose_text()))
+        check("printify-idem-one-compose-backup", len(d.compose_backups()) == 1,
+              str(d.compose_backups()))
+    finally:
+        d.cleanup()
+
+
+def test_printify_runtime_unverified_fails():
+    """Files converged + a key ABSENT from the odoo process env => exit 10,
+    never success: Josh's value would stop at odoorc.sh."""
+    d = Droplet(env_blackhole=True)
+    try:
+        r = d.run(confirm="PROMOTE", extra_env={"PRINTIFY_PASSTHROUGH": "1"})
+        check("printify-blackhole-exit-10", r.returncode == 10,
+              f"rc={r.returncode} {r.stderr[-400:]}")
+        check("printify-blackhole-says-why",
+              "has no PRINTIFY_API_TOKEN" in r.stderr
+              and "Printify half only" in r.stderr, r.stderr[-600:])
+    finally:
+        d.cleanup()
+
+
+def test_printify_does_not_disturb_stripe_or_perenual():
+    """Landing the passthrough in the same touch as a Stripe Tax flip leaves
+    both converges intact and independent."""
+    d = Droplet()
+    try:
+        r = d.run(confirm="PROMOTE",
+                  extra_env={"PRINTIFY_PASSTHROUGH": "1", NURSERY_KEY: "1"})
+        check("printify-with-stripe-exit-0", r.returncode == 0,
+              f"rc={r.returncode} {r.stderr[-400:]}")
+        check("printify-with-stripe-flag", d.container_env(NURSERY_KEY) == "1")
+        check("printify-with-stripe-passthrough",
+              all(d.container_env(k) == "" for k in PRINTIFY_KEYS))
+        check("printify-with-stripe-one-backup", len(d.compose_backups()) == 1)
+        check("printify-with-stripe-no-perenual", "PERENUAL_API_KEY=" not in d.env_text())
     finally:
         d.cleanup()
 

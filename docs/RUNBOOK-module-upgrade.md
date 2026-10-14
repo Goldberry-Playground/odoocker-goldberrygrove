@@ -215,6 +215,43 @@ grove_headless.perenual_calls.<UTC-today>` increments. Prod's daily budget stays
 **80** (`grove_headless.perenual_daily_budget`); QA holds the other 20 of the
 shared vendor quota (one free-tier key, 100 calls/UTC day, counted per database).
 
+### Landing the Printify env passthrough on prod (GOL-3316, Train #3)
+
+`grove_headless` reads `PRINTIFY_API_TOKEN`, `PRINTIFY_SHOP_ID`,
+`PRINTIFY_WEBHOOK_SECRET` and `PRINTIFY_DRY_RUN` from `os.environ` (spec
+grove-odoo-modules#340). The committed chain (`variables.tf` ->
+`cloud-init-odoo.yaml.tpl` -> `compose/docker-compose.odoo.yml`) renders all
+four, but it lives inside the ignored `user_data`, so a box built before
+GOL-3316 has **neither** the `.env` lines nor the compose passthrough -- and a
+value written to `/etc/grove/.env` without the compose passthrough never
+reaches the process (the same trap as `PERENUAL_API_KEY` above). Land the
+passthrough in the Leg B touch:
+
+```bash
+PRINTIFY_PASSTHROUGH=1 TARGET_REF=<same sha> CONFIRM=PROMOTE \
+  scripts/prod-modules-promote.sh
+```
+
+- **A flag, not a value channel.** The script adds the four compose
+  passthroughs (`ensure_compose_key`, one backup) and appends an **empty**
+  `KEY=` line to `.env` only where no line exists. It carries no Printify
+  secret and never echoes one; the pre-flight reports the three secrets as
+  set/empty/unset plus a char count, and `PRINTIFY_DRY_RUN` by value.
+- **Existing lines are never touched.** If Josh already wrote the values
+  (design doc, "set the env vars from the terminal"), they stay byte-for-byte.
+- **Recreate + verify.** odoo is recreated and each key must be **present** in
+  `printenv` afterwards (empty is fine before the values land; absent => exit
+  10, the module promote itself still succeeded).
+- **Then the values.** On `grove-prod-odoo`, Josh sets the three secrets in
+  `/etc/grove/.env` (`PRINTIFY_DRY_RUN` stays empty on prod = live) and runs
+  `cd /etc/grove && docker compose --env-file /etc/grove/.env up -d
+  --force-recreate --no-deps odoo`; confirm with `docker compose --env-file
+  /etc/grove/.env exec -T odoo printenv PRINTIFY_SHOP_ID`. A plain `restart`
+  does nothing -- a container's env is fixed at create time.
+- **Idempotent.** A second run is a `NO-OP`, and a droplet already on the
+  target SHA does not take the `NO-OP` shortcut while the passthrough is
+  pending. The next rebuild reproduces everything from cloud-init alone.
+
 ### Flipping the Stripe Tax cutover flag on prod (GOL-2568 / GOL-2584)
 
 `grove_headless` decides per order whether Stripe or Odoo computes sales tax by

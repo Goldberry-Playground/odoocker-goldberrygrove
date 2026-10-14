@@ -196,6 +196,16 @@ resource "digitalocean_droplet" "odoo" {
     shippo_api_key             = var.shippo_api_key
     grove_shippo_webhook_token = var.grove_shippo_webhook_token
 
+    # Printify merch (GOL-3316, Train #3). Token/shop default-empty => sync and
+    # push raise a clear error; webhook secret empty => fails closed; dry-run
+    # default EMPTY = live once the secrets land. user_data input (in
+    # ignore_changes below): the RUNNING box gets the compose passthrough from
+    # Leg B (prod-modules-promote.sh PRINTIFY_PASSTHROUGH=1), values from Josh.
+    printify_api_token      = var.printify_api_token
+    printify_shop_id        = var.printify_shop_id
+    printify_webhook_secret = var.printify_webhook_secret
+    printify_dry_run        = var.printify_dry_run
+
     # Carrier tracking poll (GOL-2296 Pirate Ship C, grove-odoo-modules#232).
     # Default-empty => each carrier client is not built and the
     # poll_carrier_tracking cron no-ops. Activation rides the same board-gated

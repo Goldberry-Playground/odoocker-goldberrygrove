@@ -508,6 +508,14 @@ resource "digitalocean_droplet" "odoo" {
     shippo_api_key             = var.shippo_api_key
     grove_shippo_webhook_token = var.grove_shippo_webhook_token
 
+    # Printify merch (GOL-3316, Train #3). Token/shop default-empty => sync and
+    # push raise a clear error; webhook secret empty => fails closed. QA keeps
+    # PRINTIFY_DRY_RUN=1 (real token, orders never sent to production).
+    printify_api_token      = var.printify_api_token
+    printify_shop_id        = var.printify_shop_id
+    printify_webhook_secret = var.printify_webhook_secret
+    printify_dry_run        = var.printify_dry_run
+
     # Carrier tracking poll (GOL-2296 Pirate Ship C, grove-odoo-modules#232).
     # Default-empty => each carrier client is not built and the
     # poll_carrier_tracking cron no-ops. Feeds user_data (droplet replace).
