@@ -24,7 +24,9 @@ name: Firewall Membership Check
 #   census    asks the DO ACCOUNT instead. Every live droplet must be behind
 #             some firewall; no firewall may open a SENSITIVE port to the world
 #             (22, 5432, 6379, 8069, 9090, ... -- GOL-2572; 80/443 are expected
-#             and deliberately not in that table).
+#             and deliberately not in that table); and every managed DATABASE
+#             cluster must have trusted sources that narrow something
+#             (GOL-2582).
 #
 # An UN-CODIFIED droplet has no Terraform resource, therefore no expectation,
 # therefore no finding -- it is invisible to the per-env leg BY CONSTRUCTION.
@@ -33,6 +35,14 @@ name: Firewall Membership Check
 # were found by a hand-run audit. Nothing scheduled would have found either,
 # and nothing scheduled would find the third. The census leg is what makes
 # "nobody happened to look" stop being the detection mechanism.
+#
+# Managed databases are a THIRD surface again (GOL-2582): trusted sources live
+# at `/v2/databases/{id}/firewall`, not `/v2/firewalls`, so neither leg above
+# could ever see them however much droplet coverage it gained. `grove-qa-l3-pg`
+# sat with an EMPTY list -- which on DO means "any source with the password",
+# not "closed" -- because its codified `digitalocean_database_firewall` is
+# destroyed every release train as a DEPENDENT of the droplet named in the
+# teardown's `-target`. Nothing was misconfigured and nothing alerted.
 on:
   schedule:
     - cron: "0 13 * * *" # daily, ~09:00 ET — before the market-season workday
@@ -105,7 +115,7 @@ jobs:
       # repo — infra/terraform/firewall-census-allowlist.json — so an accepted
       # exposure is a reviewed commit, and an exemption that outlives its
       # `expires` date starts failing again by itself.
-      - name: Account-wide census (no droplet outside a firewall, no world-open sensitive port)
+      - name: Account-wide census (every droplet covered, no world-open sensitive port, every DB narrowed)
         id: census
         timeout-minutes: 3
         run: |
@@ -129,6 +139,14 @@ jobs:
           # DRIFT and ! are the per-env leg's. The census prints the droplet
           # name, id and created_at on the finding line itself, so the alert
           # carries enough to act on without opening the run.
+          #
+          # The database leg (GOL-2582) deliberately prefixes its findings with
+          # the SAME severity words -- `ERROR OPEN-DB`, `ERROR UNREADABLE-DB`,
+          # `WARN database` -- rather than inventing new ones, so this grep and
+          # the ERROR count below pick them up with no edit. Keep it that way:
+          # a prefix this grep does not know still fails the job (the exit code
+          # drives the `if:` above) but reaches Discord with an EMPTY detail
+          # block, which reads like a glitch rather than an exposure.
           #
           # `|| true` on EVERY grep, including the ones that look safe.
           # GitHub's default shell here is `bash -e {0}` -- `-e` but NOT
@@ -169,8 +187,8 @@ jobs:
             # ERROR = something is reachable right now. Named separately from a
             # WARN so the person reading this at 09:00 knows whether to open a
             # terminal or open a ticket.
-            TITLE="🚨 A droplet is unprotected, or a sensitive port is open to the world"
-            BLURB="The account-wide census found a LIVE exposure the per-env check cannot see (GOL-2572). Codify a firewall and apply, or narrow the rule to known /32s."
+            TITLE="🚨 A droplet is unprotected, a sensitive port is open to the world, or a database is not narrowed"
+            BLURB="The account-wide census found a LIVE exposure the per-env check cannot see (GOL-2572/GOL-2582). Codify a firewall and apply, narrow the rule to known /32s, or give the cluster trusted sources — an OPEN-DB with an EMPTY list means its public host answers for anyone holding the password."
           elif [ -n "$CENSUS_DETAIL" ]; then
             TITLE="⚠️ A dormant firewall opens a sensitive port to the world"
             BLURB="Inert today — nothing is attached — but world-open the moment a droplet is (GOL-2572/GOL-2570). Delete the firewall, or add a dated, port-scoped allowlist entry."

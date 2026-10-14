@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression tests for the firewall-membership guard's HCL parsing (no network).
+"""Regression tests for the firewall-membership guard's parsing + fetch layer (no network).
 
 Run: python3 infra/terraform/scripts/test_check_firewall_membership.py
 
@@ -14,6 +14,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 import tempfile
+import urllib.error
 from pathlib import Path
 
 _SRC = Path(__file__).with_name("check-firewall-membership.py")
@@ -137,10 +138,135 @@ def test_iter_blocks_does_not_run_past_a_nested_block() -> None:
     assert fw.literal_name(bodies['resource "digitalocean_firewall" "a"']) == "fw-a"
 
 
+
+# ---------------------------------------------------------------------------
+# The managed-database fetch layer (GOL-2582 / GOL-2913). `census()` itself is
+# pinned by the script's own `--selftest`, which can stay offline because the
+# fetch lives out here. THESE are the two decisions that cannot be made inside
+# census(): what a per-cluster read failure returns, and what losing the whole
+# cluster list does. Both are "how the check behaves when the API says no",
+# which is precisely where a security check quietly turns into a no-op.
+# ---------------------------------------------------------------------------
+
+_PROD_RULES = [
+    {"type": "ip_addr", "value": "173.84.140.152"},
+    {"type": "droplet", "value": "601081550"},
+]
+
+
+def _patch_api(fn):
+    """Swap `fw.api` for `fn` and give back a restore callable."""
+    saved = fw.api
+    fw.api = fn
+    return lambda: setattr(fw, "api", saved)
+
+
+def test_a_per_cluster_read_failure_is_none_not_empty() -> None:
+    """`None` and `[]` are different claims and must not collapse.
+
+    `[]` is "read fine, the cluster narrows nothing" -- the GOL-2582 exposure.
+    `None` is "could not read it". Returning `[]` for a failed read would
+    INVENT that exposure; returning nothing at all would hide a real one by
+    dropping the cluster from the census entirely. So the cluster is still
+    returned, paired with None.
+    """
+
+    def api(path, token):
+        if path.startswith("databases?"):
+            return {"databases": [{"id": "c-ok", "name": "a"}, {"id": "c-bad", "name": "b"}]}
+        if path == "databases/c-ok/firewall":
+            return {"rules": _PROD_RULES}
+        raise urllib.error.HTTPError(path, 403, "forbidden", None, None)
+
+    restore = _patch_api(api)
+    try:
+        pairs, fatal = fw.fetch_database_firewalls("tok")
+    finally:
+        restore()
+
+    assert fatal is None, fatal
+    assert [c["id"] for c, _ in pairs] == ["c-ok", "c-bad"], pairs
+    assert pairs[0][1] == _PROD_RULES
+    assert pairs[1][1] is None, "a failed read must be None, never []"
+
+
+def test_a_missing_rules_key_is_empty_not_none() -> None:
+    """`{}` from the API is still a successful read of nothing.
+
+    Only an exception means "could not read". A response without a `rules` key
+    must land as `[]` -- i.e. as the EMPTY-trusted-sources finding -- and not be
+    laundered into the softer UNREADABLE one.
+    """
+
+    def api(path, token):
+        if path.startswith("databases?"):
+            return {"databases": [{"id": "c", "name": "a"}]}
+        return {}
+
+    restore = _patch_api(api)
+    try:
+        pairs, fatal = fw.fetch_database_firewalls("tok")
+    finally:
+        restore()
+    assert fatal is None
+    assert pairs[0][1] == [], pairs
+
+
+def test_losing_the_cluster_list_is_fatal_and_returns_no_pairs() -> None:
+    """A census that cannot ask must not print "0 database cluster(s)".
+
+    That line is indistinguishable from an account with no clusters, which is
+    the exact silence this leg exists to remove -- so the caller turns this
+    into exit 2 (the workflow's "the watcher could not run" alert) rather than
+    a quiet omission. The empty pair list is what stops a caller that ignored
+    the error from reporting a clean bill of health.
+    """
+
+    def api(path, token):
+        raise urllib.error.URLError("no route to host")
+
+    restore = _patch_api(api)
+    try:
+        pairs, fatal = fw.fetch_database_firewalls("tok")
+    finally:
+        restore()
+    assert pairs == [], pairs
+    assert fatal and "database clusters" in fatal, fatal
+
+
+def test_an_account_with_no_clusters_is_not_an_error() -> None:
+    def api(path, token):
+        return {"databases": []}
+
+    restore = _patch_api(api)
+    try:
+        pairs, fatal = fw.fetch_database_firewalls("tok")
+    finally:
+        restore()
+    assert (pairs, fatal) == ([], None)
+
+
+def test_world_db_covers_the_maskless_forms() -> None:
+    """A trusted-source `ip_addr` rule holds a BARE address, so the maskless
+    forms are the ones an operator would actually type. Matching only the
+    droplet-side CIDR set would wave them through."""
+    assert fw.WORLD <= fw.WORLD_DB
+    for value in ("0.0.0.0", "::", "0.0.0.0/0", "::/0"):
+        assert value in fw.WORLD_DB, value
+    # ...and it must not have grown into a blanket match on anything short.
+    for value in ("10.0.0.0", "0.0.0.1", "173.84.140.152", ""):
+        assert value not in fw.WORLD_DB, value
+
+
 if __name__ == "__main__":
     test_droplet_ids_survives_an_index_bracket()
     test_managed_ref_does_not_swallow_the_data_form()
     test_literal_name_falls_back_to_a_variable_default()
     test_parse_env_resolves_both_firewall_shapes()
     test_iter_blocks_does_not_run_past_a_nested_block()
-    print("ok: firewall-membership parser regression tests", file=sys.stderr)
+    test_a_per_cluster_read_failure_is_none_not_empty()
+    test_a_missing_rules_key_is_empty_not_none()
+    test_losing_the_cluster_list_is_fatal_and_returns_no_pairs()
+    test_an_account_with_no_clusters_is_not_an_error()
+    test_world_db_covers_the_maskless_forms()
+    print("ok: firewall-membership parser + fetch regression tests", file=sys.stderr)

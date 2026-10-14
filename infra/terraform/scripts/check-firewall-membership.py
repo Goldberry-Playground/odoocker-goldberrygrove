@@ -41,7 +41,24 @@ or the next one. The census asks the account itself instead of the repo:
   * every live droplet must be covered by SOME firewall, counting both
     explicit `droplet_ids` and TAG-resolved membership;
   * no firewall may allow a SENSITIVE PORT from the whole internet -- attached
-    or not, a dormant world-open rule is a lockless door waiting for a droplet.
+    or not, a dormant world-open rule is a lockless door waiting for a droplet;
+  * every MANAGED DATABASE cluster must have trusted sources that actually
+    narrow something (GOL-2582).
+
+THE THIRD INVISIBLE SURFACE -- managed databases (GOL-2582). A cluster's
+trusted sources are a DIFFERENT API object (`/v2/databases/{id}/firewall`) and
+a different Terraform resource (`digitalocean_database_firewall`) from the
+droplet firewalls under `/v2/firewalls`. Neither leg above can ever see them,
+however much droplet coverage it gains -- green because the surface is
+invisible, not because the surface is safe, exactly like an un-codified
+firewall. And the trap is the EMPTY LIST: on DO `trusted_sources: []` is not
+"closed", it means the cluster's public host answers :25060 for ANY source that
+presents credentials, so the whole perimeter is the doadmin/odoo password. A
+check that asks only "does the firewall object exist?" reads that as healthy.
+`grove-qa-l3-pg` was in exactly that state on 2026-09-29 while `grove-prod-pg`
+carried three rules -- and its allowlist had been CODIFIED all along: it is
+destroyed every release train as a DEPENDENT of the droplet named in the
+teardown's `-target`. Nothing was misconfigured and nothing alerted.
 
 The port set is `SENSITIVE_PORTS` below, not just :22 (GOL-2572): the same
 console click that opens SSH opens Postgres, and GOL-2582 showed a data store
@@ -70,8 +87,8 @@ Env required:
 
 Exit codes:
   0  every codified firewall contains exactly the droplets its config names,
-     and (with --census) every live droplet is covered and no firewall opens
-     a sensitive port to the world
+     and (with --census) every live droplet is covered, no firewall opens a
+     sensitive port to the world, and every database cluster is narrowed
   1  membership drift, or a census finding
   2  bad env: no token, no such env dir, bad allowlist, or DO unreachable
 """
@@ -95,6 +112,15 @@ API = "https://api.digitalocean.com/v2"
 # "Open to the world" on either stack. DO stores an empty source as an absent
 # key, not as 0.0.0.0/0, so only these literals mean "everyone".
 WORLD = {"0.0.0.0/0", "::/0"}
+
+# The same idea on the database side, and NOT the same literal set. A
+# trusted-source `ip_addr` rule holds a BARE address, not a CIDR -- the qa and
+# prod configs `split("/", ...)` precisely for that -- so "allow everything"
+# written by an operator reaching for the obvious thing is `0.0.0.0`, and DO
+# accepts it. A superset of WORLD on purpose: a maskless 0.0.0.0 here is every
+# bit as open as 0.0.0.0/0 and must not slip through a string compare against
+# the droplet-side set.
+WORLD_DB = WORLD | {"0.0.0.0", "::"}
 ISSUE_REF = re.compile(r"^GOL-\d+$")
 
 # Ports that must never answer the whole internet. Each one is either a service
@@ -329,7 +355,7 @@ def describe_ports(ports: set) -> str:
 
 
 def load_allowlist():
-    """-> (droplet_exempt, firewall_exempt, problems).
+    """-> (droplet_exempt, firewall_exempt, database_exempt, problems).
 
     Entries are keyed by DO id and MUST carry an `issue` (GOL-NNNN) and a
     dated `expires`. A malformed or expired entry does not suppress anything
@@ -340,24 +366,32 @@ def load_allowlist():
     the ports a human actually looked at: accepting `General`'s dormant :22 for
     a fortnight must not also pre-accept a 5432 somebody adds to it next week.
     Omitting `ports` exempts every sensitive port on that firewall and says so
-    on the finding line, because that is the blunter instrument.
+    on the finding line, because that is the blunter instrument. `ports` is
+    meaningless on the other two sections -- a database cluster exposes one
+    port and an uncovered droplet exposes all of them -- so it is validated
+    wherever it appears but only consulted for firewalls.
     """
     problems: list[str] = []
     if not ALLOWLIST.exists():
-        return {}, {}, problems
+        return {}, {}, {}, problems
     try:
         raw = json.loads(ALLOWLIST.read_text())
     except (OSError, json.JSONDecodeError) as e:
-        return None, None, [f"allowlist {ALLOWLIST.name} is unreadable: {e}"]
+        return None, None, None, [f"allowlist {ALLOWLIST.name} is unreadable: {e}"]
 
     today = dt.date.today()
-    out: dict[str, dict] = {"uncovered_droplets": {}, "open_port_firewalls": {}}
+    out: dict[str, dict] = {
+        "uncovered_droplets": {},
+        "open_port_firewalls": {},
+        "open_databases": {},
+    }
     # `open_ssh_firewalls` was this section's name while the census only knew
     # about :22. Still read, so an existing entry does not silently stop
     # suppressing the moment the port table widened underneath it.
     sections = {
         "uncovered_droplets": ["uncovered_droplets"],
         "open_port_firewalls": ["open_port_firewalls", "open_ssh_firewalls"],
+        "open_databases": ["open_databases"],
     }
     for section, keys in sections.items():
         for key_name in keys:
@@ -401,10 +435,15 @@ def load_allowlist():
                     )
                     continue
                 out[section][str(key)] = entry
-    return out["uncovered_droplets"], out["open_port_firewalls"], problems
+    return (
+        out["uncovered_droplets"],
+        out["open_port_firewalls"],
+        out["open_databases"],
+        problems,
+    )
 
 
-def census(live_droplets, live_fws):
+def census(live_droplets, live_fws, live_dbs=()):
     """Account-wide, config-independent. -> (n_errors, n_warnings).
 
     Deliberately asks the ACCOUNT, not the repo. The per-env check compares
@@ -415,7 +454,8 @@ def census(live_droplets, live_fws):
 
     SEVERITY is keyed on whether the exposure is load-bearing TODAY:
 
-      ERROR  something is actually reachable -- an uncovered droplet, or a
+      ERROR  something is actually reachable -- an uncovered droplet, a
+             database cluster that narrows nothing, or a
              world-open sensitive port on a firewall that holds droplets or
              carries a `tags` entry (a tag firewall AUTO-ADOPTS any droplet
              wearing that tag, so "no droplet_ids" is not "nothing attached").
@@ -429,14 +469,26 @@ def census(live_droplets, live_fws):
     the account is the same silence GOL-2565 was made of. If an inert exposure
     is genuinely accepted, that belongs in the allowlist with an owner and an
     expiry, not in the exit code.
+
+    `live_dbs` is a sequence of (cluster, rules_or_None) pairs as returned by
+    `fetch_database_firewalls` -- pairs rather than raw clusters because the
+    trusted-source list is a second API call per cluster, and keeping the
+    fetch in the caller keeps this function pure and offline-testable.
+    `rules is None` means that read FAILED, which is reported rather than
+    skipped. There is no WARN tier for the "open" database findings, for the
+    same reason an uncovered droplet has none: a managed cluster always has a
+    live public host, so there is no dormant version of the exposure.
     """
-    droplet_exempt, fw_exempt, problems = load_allowlist()
+    droplet_exempt, fw_exempt, db_exempt, problems = load_allowlist()
     if droplet_exempt is None:
         for msg in problems:
             print(f"  ! census: {msg}")
         return 1, 0
 
-    print(f"\n=== census: {len(live_droplets)} live droplet(s), {len(live_fws)} live firewall(s)")
+    print(
+        f"\n=== census: {len(live_droplets)} live droplet(s), "
+        f"{len(live_fws)} live firewall(s), {len(live_dbs)} database cluster(s)"
+    )
     errors = warns = 0
     # A broken or lapsed allowlist is an ERROR, not a WARN: it means the file
     # that decides what gets suppressed can no longer be trusted to suppress
@@ -545,14 +597,138 @@ def census(live_droplets, live_fws):
             )
             warns += 1
 
+    # The third surface (GOL-2582): managed-database trusted sources. A
+    # different API object and a different Terraform resource from everything
+    # above, so nothing above can see it. Every cluster is checked on EVERY
+    # run, prod included -- the exposure that got found was in QA, but a check
+    # that only watches the box that was wrong once is how the next one gets
+    # missed (GOL-2582 item 3).
+    live_droplet_ids = {str(d["id"]) for d in live_droplets}
+    for cluster, rules in sorted(live_dbs, key=lambda x: x[0].get("name") or ""):
+        cid, cname = str(cluster.get("id")), cluster.get("name") or "?"
+        engine = cluster.get("engine") or "?"
+        exempt = db_exempt.get(cid)
+
+        if rules is None:
+            # Fail closed, and keep it distinguishable from "read fine, no
+            # rules". Conflating the two would either invent a finding or hide
+            # one. An exemption deliberately does NOT cover this: the entry
+            # records that a human accepted a KNOWN exposure, and this posture
+            # is not known. ERROR rather than WARN because a census that
+            # silently skips a surface is the GOL-2565 silence.
+            print(
+                f"  ERROR UNREADABLE-DB database {cname} ({cid}, {engine}): could not read "
+                f"its trusted sources -- posture UNVERIFIED, treating as a finding"
+            )
+            errors += 1
+            continue
+
+        # Non-empty is NOT the test. One `ip_addr: 0.0.0.0` rule is a longer
+        # list and a wider hole, so the CONTENT is what gets judged.
+        world = {
+            str(r.get("value"))
+            for r in rules
+            if r.get("type") == "ip_addr" and str(r.get("value")) in WORLD_DB
+        }
+        if not rules:
+            problem = (
+                "trusted sources are EMPTY -- on DO this is NOT closed, the public "
+                "host answers :25060 for ANY source presenting credentials"
+            )
+        elif world:
+            problem = f"trusted sources include the whole internet: {sorted(world)}"
+        else:
+            problem = None
+
+        if problem is not None:
+            if exempt:
+                print(
+                    f"  ALLOWED database {cname} ({cid}): {problem}; exempt until "
+                    f"{exempt['expires']} per {exempt['issue']}"
+                )
+                if exempt.get("name") and exempt["name"] != cname:
+                    print(
+                        f"  ! allowlist entry for {cid} says name {exempt['name']!r}, "
+                        f"live name is {cname!r}"
+                    )
+                continue
+            print(f"  ERROR OPEN-DB database {cname} (id {cid}, {engine}): {problem}")
+            errors += 1
+            continue
+
+        # Narrowed. Print the rules rather than just the count: this is what
+        # makes prod's allowlist ASSERTED on every run instead of assumed to
+        # still be whatever it was the day somebody last looked.
+        shape = ", ".join(sorted(f"{r.get('type')}:{r.get('value')}" for r in rules))
+        print(
+            f"  OK database {cname} ({cid}, {engine}): {len(rules)} trusted source(s) "
+            f"-- {shape}"
+        )
+        if exempt:
+            # A cluster that is fine no longer needs cover. Say so, or the
+            # allowlist only ever grows and stops meaning anything.
+            print(
+                f"  ! allowlist still exempts {cname} ({cid}) per {exempt['issue']}, "
+                f"but it is CLEAN now -- drop the entry"
+            )
+
+        # A `droplet` rule naming a droplet that no longer exists is PRESENT
+        # but not load-bearing -- the cluster is narrower than its rule list
+        # reads, and the rule is the exact shape GOL-2582 was about: a
+        # trusted source hanging off a droplet's lifetime. WARN, not ERROR:
+        # nothing is reachable through a dead id (DO does not recycle them),
+        # but the next person to debug "QA cannot reach the database" is one
+        # step from widening the list by hand. `tag` rules are deliberately
+        # NOT resolved the same way -- a tag with nobody wearing it yet is the
+        # normal state between release trains, and alarming on it nightly is
+        # how a watcher gets muted.
+        dangling = sorted(
+            str(r.get("value"))
+            for r in rules
+            if r.get("type") == "droplet" and str(r.get("value")) not in live_droplet_ids
+        )
+        if dangling:
+            print(
+                f"  WARN database {cname} ({cid}): trusted-source droplet rule(s) "
+                f"{dangling} name no live droplet -- the rule is dead weight and the "
+                f"cluster is narrower than its list reads"
+            )
+            warns += 1
+
     if not errors and not warns:
         print(
-            "  OK: every live droplet is behind a firewall, and no firewall opens a "
-            "sensitive port to the world"
+            "  OK: every live droplet is behind a firewall, no firewall opens a "
+            "sensitive port to the world, and every database cluster is narrowed"
         )
     else:
         print(f"  census: {errors} error(s), {warns} warning(s)")
     return errors, warns
+
+
+def fetch_database_firewalls(token):
+    """-> ([(cluster, rules_or_None)], fatal_error_or_None).
+
+    Two calls: list the clusters, then read each one's trusted sources. A
+    per-cluster read that fails yields `None` rather than `[]` -- conflating
+    "could not read" with "read fine, no rules" would either invent a finding
+    or, worse, hide one. Losing the cluster LIST is different in kind and is
+    reported as fatal by the caller: the leg would have run blind, and a census
+    that silently skips a whole surface is the failure this check exists to
+    prevent.
+    """
+    try:
+        clusters = api("databases?per_page=200", token).get("databases") or []
+    except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError) as e:
+        return [], f"could not list database clusters: {e}"
+
+    out = []
+    for c in clusters:
+        try:
+            rules = api(f"databases/{c['id']}/firewall", token).get("rules") or []
+        except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError):
+            rules = None
+        out.append((c, rules))
+    return out, None
 
 
 # --------------------------------------------------------------------------
@@ -621,7 +797,7 @@ def selftest() -> int:
     ]:
         check(f"ports_cover_22({ports!r})", ports_cover_22(ports), want)
 
-    def run(droplets, fws, allowlist=None):
+    def run(droplets, fws, allowlist=None, dbs=()):
         """-> (found, printed output) with ALLOWLIST pointed at `allowlist`."""
         global ALLOWLIST
         saved = ALLOWLIST
@@ -633,12 +809,12 @@ def selftest() -> int:
             buf = io.StringIO()
             try:
                 with contextlib.redirect_stdout(buf):
-                    errors, warns = census(droplets, fws)
+                    errors, warns = census(droplets, fws, dbs)
             finally:
                 ALLOWLIST = saved
         return bool(errors or warns), buf.getvalue()
 
-    def severity(droplets, fws, allowlist=None):
+    def severity(droplets, fws, allowlist=None, dbs=()):
         """-> (n_errors, n_warnings). The split is the point of the check, so
         it is asserted directly and not inferred from the printed prefix."""
         global ALLOWLIST
@@ -650,9 +826,15 @@ def selftest() -> int:
             ALLOWLIST = path
             try:
                 with contextlib.redirect_stdout(io.StringIO()):
-                    return census(droplets, fws)
+                    return census(droplets, fws, dbs)
             finally:
                 ALLOWLIST = saved
+
+    def _db(cid, name, engine="pg"):
+        return {"id": cid, "name": name, "engine": engine}
+
+    def _dbrule(rtype, value):
+        return {"type": rtype, "value": value}
 
     today = dt.date.today()
     future = (today + dt.timedelta(days=30)).isoformat()
@@ -842,6 +1024,249 @@ def selftest() -> int:
     check("rename does not break the exemption", found, False)
     check("rename is flagged", "live name is 'renamed'" in out, True)
 
+    # ---- managed databases (GOL-2582 / GOL-2913) ---------------------------
+    # Pinned against the REAL API payloads, extra keys and all: the live
+    # response carries `uuid`, `cluster_uuid` and `created_at` on every rule,
+    # and a decode that only tolerates the three keys the finding needs would
+    # pass here and break on the account. Read read-only 2026-10-02 from
+    # GET /v2/databases/{id}/firewall for both clusters.
+    PROD_RULES = [
+        {
+            "uuid": "43655cb7-eeaf-4b8a-878f-bc16d93bf968",
+            "cluster_uuid": "fe81c735-d0f8-47ed-9f28-47d2542d2e01",
+            "type": "ip_addr",
+            "value": "173.84.140.152",
+            "created_at": "2026-09-16T14:53:57Z",
+        },
+        {
+            "uuid": "516bb147-197d-4657-86ac-37beb1ad175f",
+            "cluster_uuid": "fe81c735-d0f8-47ed-9f28-47d2542d2e01",
+            "type": "droplet",
+            "value": "601081550",
+            "created_at": "2026-09-16T14:53:57Z",
+        },
+        {
+            "uuid": "e226d032-02f2-4b31-a8c4-1fccc12d8b6b",
+            "cluster_uuid": "fe81c735-d0f8-47ed-9f28-47d2542d2e01",
+            "type": "ip_addr",
+            "value": "74.47.41.38",
+            "created_at": "2026-09-16T14:53:57Z",
+        },
+    ]
+    QA_RULES = [
+        {
+            "uuid": "b4ab16e6-b709-4397-bba7-aaec5eb2d328",
+            "cluster_uuid": "44e19536-269a-40a5-be28-e1d554d20831",
+            "type": "ip_addr",
+            "value": "173.84.140.152",
+            "created_at": "2026-09-29T19:21:31Z",
+        },
+        {
+            "uuid": "bd31ff9e-1a70-4823-bdb8-c02a44623e71",
+            "cluster_uuid": "44e19536-269a-40a5-be28-e1d554d20831",
+            "type": "ip_addr",
+            "value": "74.47.41.38",
+            "created_at": "2026-09-29T19:21:31Z",
+        },
+    ]
+    PROD_DB = _db("fe81c735-d0f8-47ed-9f28-47d2542d2e01", "grove-prod-pg")
+    QA_DB = _db("44e19536-269a-40a5-be28-e1d554d20831", "grove-qa-l3-pg")
+    # grove-prod-odoo, the droplet prod's `droplet` rule names, and the
+    # firewall that covers it -- otherwise the droplet leg reports it as
+    # UNCOVERED and the database assertions below get a borrowed error.
+    PROD_ODOO = _droplet(601081550, "grove-prod-odoo")
+    PROD_FW = [_fw("grove-prod-odoo-fw", fid="fc0ff910", droplet_ids=[601081550])]
+
+    # THE WHOLE REASON THE LEG EXISTS. DO renders "open to anyone with the
+    # password" as an EMPTY list, which reads like "closed" to anything that
+    # only tests for the presence of the firewall object. Pinned first and
+    # hardest, in the state grove-qa-l3-pg was actually found in.
+    found, out = run([], [], {}, dbs=[(QA_DB, [])])
+    check("empty trusted sources is a finding", found, True)
+    check("empty trusted sources names the cluster", "OPEN-DB database grove-qa-l3-pg" in out, True)
+    check("empty trusted sources explains DO's semantics", "NOT closed" in out, True)
+    check(
+        "an open cluster is an ERROR, never a WARN -- there is no dormant DB",
+        severity([], [], {}, dbs=[(QA_DB, [])]),
+        (1, 0),
+    )
+
+    # Both clusters' real shapes are clean, and the rules are PRINTED, so
+    # prod's allowlist is asserted on every run rather than assumed to still
+    # be whatever it was the day somebody last looked (GOL-2582 item 3).
+    found, out = run([PROD_ODOO], PROD_FW, {}, dbs=[(PROD_DB, PROD_RULES), (QA_DB, QA_RULES)])
+    check("both live clusters' real shapes are clean", found, False)
+    check("prod's droplet rule is printed", "droplet:601081550" in out, True)
+    check("prod's ip rules are printed", "ip_addr:173.84.140.152" in out, True)
+    check("the qa cluster is reported too, not just prod", "grove-qa-l3-pg" in out, True)
+    check("the header counts the clusters", "2 database cluster(s)" in out, True)
+
+    # Losing prod's rules is the same finding as QA's was. The leg is not
+    # keyed on which cluster was wrong once.
+    check(
+        "prod going empty is an ERROR like any other cluster",
+        severity([PROD_ODOO], PROD_FW, {}, dbs=[(PROD_DB, []), (QA_DB, QA_RULES)]),
+        (1, 0),
+    )
+
+    # Non-empty is NOT the test: one world-open rule is a longer list and a
+    # wider hole. The MASKLESS forms matter most -- a trusted-source ip_addr
+    # rule holds a bare address, so 0.0.0.0 is what an operator would actually
+    # type, and matching only the droplet-side WORLD set would wave it through.
+    for value in ["0.0.0.0/0", "0.0.0.0", "::/0", "::"]:
+        found, out = run([], [], {}, dbs=[(_db("c-w", "wide"), [_dbrule("ip_addr", value)])])
+        check(f"ip_addr {value} is world-open", found, True)
+        check(f"ip_addr {value} is reported as such", "whole internet" in out, True)
+    check(
+        "WORLD_DB is a strict superset of the droplet-side WORLD",
+        WORLD_DB > WORLD,
+        True,
+    )
+
+    # ...and a narrow rule that merely looks broad is not a finding.
+    found, _ = run([], [], {}, dbs=[(_db("c-p", "priv"), [_dbrule("ip_addr", "10.0.0.0")])])
+    check("a private ip_addr is not world-open", found, False)
+    # A world-open value on a non-ip_addr rule type is not an address at all --
+    # `droplet`/`tag`/`k8s`/`app` values are ids and names, so a string compare
+    # against them would be a category error, not a check.
+    found, _ = run([], [], {}, dbs=[(_db("c-t", "tagged"), [_dbrule("tag", "0.0.0.0")])])
+    check("a tag literally named 0.0.0.0 is not an address", found, False)
+
+    # A failed per-cluster read must not read as clean. `None` (could not read)
+    # and `[]` (read fine, no rules) are different claims and only the second
+    # is a statement about the cluster.
+    found, out = run([], [], {}, dbs=[(_db("c-u", "unknown-posture"), None)])
+    check("unreadable cluster firewall is a finding", found, True)
+    check("unreadable cluster says UNVERIFIED", "UNVERIFIED" in out, True)
+    check("unreadable is labelled apart from open", "UNREADABLE-DB" in out, True)
+    check("unreadable is not reported as OPEN-DB", "OPEN-DB" in out, False)
+
+    # A `droplet` rule naming a droplet that no longer exists: present, but
+    # not load-bearing. WARN -- nothing is reachable through a dead id, but
+    # the list reads narrower than it is, and this is the GOL-2582 shape (a
+    # trusted source hanging off a droplet's lifetime).
+    check(
+        "a dangling droplet rule is a WARN, not an ERROR",
+        severity([], [], {}, dbs=[(PROD_DB, PROD_RULES)]),
+        (0, 1),
+    )
+    found, out = run([], [], {}, dbs=[(PROD_DB, PROD_RULES)])
+    check("the WARN line itself names the id", "['601081550'] name no live droplet" in out, True)
+    check("the dangling rule is called dead weight", "dead weight" in out, True)
+    # ...and resolves clean the moment that droplet is in the live list, which
+    # is the state of the account today.
+    check(
+        "the same rules are clean when the droplet is live",
+        severity([PROD_ODOO], PROD_FW, {}, dbs=[(PROD_DB, PROD_RULES)]),
+        (0, 0),
+    )
+    # A `tag` rule is deliberately NOT resolved this way: a tag nobody wears
+    # yet is the normal state between release trains (the GOL-2582 fix is a
+    # tag rule), and a nightly that alarms on it is a nightly that gets muted.
+    check(
+        "a tag rule with nobody wearing the tag is not a finding",
+        severity([], [], {}, dbs=[(QA_DB, [_dbrule("tag", "pg-client")])]),
+        (0, 0),
+    )
+
+    # Exemptions behave exactly as they do for droplets and firewalls...
+    live_db_exempt = {
+        "open_databases": [
+            {"id": "c-qa", "name": "grove-qa-l3-pg", "issue": "GOL-2582", "expires": future}
+        ]
+    }
+    found, out = run([], [], live_db_exempt, dbs=[(_db("c-qa", "grove-qa-l3-pg"), [])])
+    check("a live db exemption suppresses", found, False)
+    check("a live db exemption is announced", "ALLOWED database" in out, True)
+
+    # ...including expiry: an accepted exposure that outlives its review is a
+    # finding again, and the lapsed entry is itself reported.
+    found, out = run(
+        [], [],
+        {"open_databases": [
+            {"id": "c-qa", "name": "grove-qa-l3-pg", "issue": "GOL-2582", "expires": past}
+        ]},
+        dbs=[(_db("c-qa", "grove-qa-l3-pg"), [])],
+    )
+    check("an expired db exemption stops suppressing", found, True)
+    check("an expired db exemption is reported", "EXPIRED" in out, True)
+    check("an expired db exemption still surfaces the cluster", "OPEN-DB database" in out, True)
+
+    # ...and the issue/date regexes, which are what stop an exemption being a
+    # free-text excuse.
+    found, out = run(
+        [], [],
+        {"open_databases": [{"id": "c-qa", "name": "grove-qa-l3-pg", "expires": future}]},
+        dbs=[(_db("c-qa", "grove-qa-l3-pg"), [])],
+    )
+    check("an issue-less db exemption does not suppress", found, True)
+    check("an issue-less db exemption is reported", "must be GOL-NNNN" in out, True)
+
+    # An exemption covering a cluster that has since been fixed is dead weight.
+    found, out = run(
+        [PROD_ODOO], PROD_FW,
+        {"open_databases": [
+            {"id": PROD_DB["id"], "name": "grove-prod-pg", "issue": "GOL-2582", "expires": future}
+        ]},
+        dbs=[(PROD_DB, PROD_RULES)],
+    )
+    check("a clean cluster with an exemption is not a finding", found, False)
+    check("a stale db exemption is flagged for pruning", "drop the entry" in out, True)
+
+    # An UNREADABLE cluster must NOT be covered by an exemption: the entry
+    # accepts a KNOWN exposure and this posture is unknown.
+    found, _ = run(
+        [], [],
+        {"open_databases": [
+            {"id": "c-u", "name": "unknown-posture", "issue": "GOL-2582", "expires": future}
+        ]},
+        dbs=[(_db("c-u", "unknown-posture"), None)],
+    )
+    check("an exemption does not cover an unreadable cluster", found, True)
+
+    # A renamed cluster keeps its exemption but says so, like a droplet.
+    found, out = run(
+        [], [], live_db_exempt, dbs=[(_db("c-qa", "renamed-pg"), [])]
+    )
+    check("a db rename does not break the exemption", found, False)
+    check("a db rename is flagged", "live name is 'renamed-pg'" in out, True)
+
+    # No clusters at all must not print a false all-clear about databases --
+    # and must not invent a finding either.
+    found, out = run([_droplet(1, "a", tags=["p"])], [_fw("f", tags=["p"])])
+    check("no clusters is not a finding", found, False)
+    check("no clusters still says every cluster is narrowed", "is narrowed" in out, True)
+    check("no clusters is counted as zero", "0 database cluster(s)" in out, True)
+
+    # -- fetch_database_firewalls: the list/per-cluster split, offline.
+    saved_api = globals()["api"]
+    try:
+        def fake_api(path, token):
+            if path.startswith("databases?"):
+                return {"databases": [PROD_DB, QA_DB]}
+            if path == f"databases/{PROD_DB['id']}/firewall":
+                return {"rules": PROD_RULES}
+            raise urllib.error.HTTPError(path, 403, "forbidden", None, None)
+
+        globals()["api"] = fake_api
+        pairs, fatal = fetch_database_firewalls("t")
+        check("a per-cluster failure is not fatal", fatal, None)
+        check("every cluster is still returned", [c["name"] for c, _ in pairs],
+              ["grove-prod-pg", "grove-qa-l3-pg"])
+        check("the readable cluster keeps its rules", pairs[0][1], PROD_RULES)
+        check("the unreadable cluster is None, not []", pairs[1][1], None)
+
+        def dead_api(path, token):
+            raise urllib.error.HTTPError(path, 500, "boom", None, None)
+
+        globals()["api"] = dead_api
+        pairs, fatal = fetch_database_firewalls("t")
+        check("losing the cluster LIST is fatal", bool(fatal), True)
+        check("the fatal names the surface", "database clusters" in (fatal or ""), True)
+        check("a fatal returns no pairs to misread as 'no clusters'", pairs, [])
+    finally:
+        globals()["api"] = saved_api
+
     # -- an unreadable allowlist fails closed rather than exempting nothing quietly
     saved = ALLOWLIST
     with tempfile.TemporaryDirectory() as tmp:
@@ -855,9 +1280,12 @@ def selftest() -> int:
     check("unreadable allowlist is an ERROR, not a WARN", (errors, warns), (1, 0))
 
     # -- the real allowlist in this repo must itself be valid
-    dex, fex, problems = load_allowlist()
+    dex, fex, dbex, problems = load_allowlist()
     check(f"repo allowlist parses ({ALLOWLIST.name})", dex is not None, True)
     check(f"repo allowlist has no problems: {problems}", problems, [])
+    # All THREE sections must load, not just the two the droplet legs read: a
+    # typo'd `open_databases` key would otherwise exempt nothing in silence.
+    check("repo allowlist exposes all three sections", (fex, dbex) != (None, None), True)
 
     if failures:
         for f in failures:
@@ -879,10 +1307,12 @@ def main() -> int:
         "--census",
         action="store_true",
         help="ALSO run the account-wide census: every live droplet must be behind some "
-        "firewall, and no firewall may open a sensitive port to 0.0.0.0/0 or ::/0. "
-        "Reads the DO "
+        "firewall, no firewall may open a sensitive port to 0.0.0.0/0 or ::/0, and "
+        "every managed database cluster must have trusted sources that narrow "
+        "something. Reads the DO "
         "account rather than the repo, so it sees UN-CODIFIED droplets the per-env "
-        "check cannot (GOL-2576).",
+        "check cannot (GOL-2576) and database trusted sources, which live behind a "
+        "different API object entirely (GOL-2582).",
     )
     ap.add_argument(
         "--allow-absent",
@@ -1022,7 +1452,19 @@ def main() -> int:
             if not missing and not unexpected:
                 print(f"  OK {name}: droplet_ids={sorted(live_ids)} matches {fw['file']}")
 
-    census_errors, census_warns = census(live_droplets, live_fws) if args.census else (0, 0)
+    census_errors, census_warns = 0, 0
+    if args.census:
+        live_dbs, db_err = fetch_database_firewalls(token)
+        if db_err:
+            # The cluster list is the only thing that makes the database leg
+            # possible at all. Losing it means the leg ran blind, and a census
+            # reporting "0 database cluster(s)" when it simply could not ask is
+            # indistinguishable from an account with no clusters -- so it is
+            # fatal (exit 2, the "broken watcher" code the workflow alerts on
+            # separately), not a quiet omission.
+            print(f"::error::census: {db_err}", file=sys.stderr)
+            return 2
+        census_errors, census_warns = census(live_droplets, live_fws, live_dbs)
     census_found = bool(census_errors or census_warns)
 
     if not drift and not census_found:
@@ -1041,8 +1483,17 @@ def main() -> int:
             "  infra/terraform/environments/production/<name>-fw.tf\n"
             "A world-open sensitive port should be narrowed to known /32s if the\n"
             "firewall is in use (ERROR), or the firewall deleted if it is dormant\n"
-            "(WARN -- inert today, one console click from live). If an exposure is\n"
-            "genuinely accepted, add a dated, GOL-referencing entry to\n"
+            "(WARN -- inert today, one console click from live).\n"
+            "An OPEN-DB cluster needs a `digitalocean_database_firewall` in its env --\n"
+            "and find out WHY it is empty before re-applying one. An allowlist that was\n"
+            "codified all along can still be destroyed every train as a DEPENDENT of a\n"
+            "droplet named in `-target` (GOL-2582); re-applying without fixing that just\n"
+            "resets the clock. Prefer a `tag` rule over a droplet-id rule so the resource\n"
+            "does not hang off the droplet's lifetime -- which is also what clears a\n"
+            "WARN about a droplet rule naming no live droplet. UNREADABLE-DB is not a\n"
+            "finding about the cluster: re-run, and if it persists check the DO token's\n"
+            "database scope.\n"
+            "If an exposure is genuinely accepted, add a dated, GOL-referencing entry to\n"
             f"  {ALLOWLIST.relative_to(Path.cwd()) if ALLOWLIST.is_relative_to(Path.cwd()) else ALLOWLIST}\n"
             "scoped with `ports` to what you actually reviewed, so the acceptance is a\n"
             "reviewed commit with an expiry, not silence.",
