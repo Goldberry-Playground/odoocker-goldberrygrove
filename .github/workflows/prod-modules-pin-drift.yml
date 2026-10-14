@@ -1,0 +1,239 @@
+name: Prod Modules Pin Drift
+
+###############################################################################
+# Nightly watch on the ONE piece of prod state that has silently rotted five
+# times: the committed `var.custom_modules_ref` default vs. the grove_headless
+# version prod is actually running.  (GOL-2580, spun out of GOL-2579.)
+#
+# THE FOOTGUN THIS CLOSES
+#
+# `digitalocean_droplet.odoo` carries `lifecycle { ignore_changes = [user_data,
+# monitoring] }`.  Every prod modules promote / incident hand-edits
+# `/etc/grove/.env`'s CUSTOM_MODULES_REF on the live box with NO commit, so the
+# committed default rots behind and the next droplet REBUILD rolls prod
+# backward.  It has happened at 34cc4548, 22fbb71, 0b36ecfa, GOL-2134/GOL-2238,
+# and GOL-2579 -- the last sat undetected for SIX DAYS across a money-path
+# release.  `reconcile-modules-pin.yml` (GOL-2281) already makes the FIX one
+# command.  Nothing made the DETECTION automatic; a human happening to notice
+# is not a control.  This is the control.
+#
+# WHY JSON-RPC AND NOT SSH / ROUTE PROBING
+#
+# Actions runners are firewalled off prod :22 (GOL-2282), so `/etc/grove/.env`
+# is unreadable from CI.  Route probing saturates at grove_headless 1.45 (the
+# 20-route surface is identical 1.45 -> 1.53), so it cannot discriminate the
+# versions that actually drifted.  Prod HTTPS is reachable and Odoo reports the
+# installed version directly -- that is the discriminator GOL-2579 used to pin
+# the live SHA.  The call is a read-only `search_read` on `ir.module.module`
+# and the script refuses any other execute_kw method by construction.
+#
+# NEVER TOUCHES PROD.  No terraform, no doctl, no ssh, no writes.  One
+# authenticate + one search_read, then two public GitHub reads.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# CREDENTIAL -- READ BEFORE MERGING  (GOL-2580 security flag)
+#
+# This needs a prod Odoo login.  Deliberately NOT wired to
+# `op://Grove Prod/Odoo - At The Grove Prod/confirm_password` (the admin
+# PASSWORD): a nightly cron is the last place that belongs.  Instead it reads a
+# dedicated item holding an Odoo **API key**, mirroring what QA already does
+# with `op://Grove QA/Gather At the Grove QA Odoo/odoo_mcp_qa_api_key`.
+#
+# An API key is revocable on its own (no password rotation), never exposes the
+# password, and `common.authenticate` accepts it in the password position.
+#
+# PROVISIONING (Josh -- merge precondition, ~2 minutes, no new GitHub secret):
+#   1. Log into https://odoo.gatheringatthegrove.com as the prod admin.
+#   2. Preferences -> Account Security -> New API Key, label
+#      "ci-modules-pin-drift (GOL-2580)".
+#   3. In 1Password, vault **Grove Prod**, create a LOGIN item titled
+#      **Odoo - Prod Drift Readonly**:
+#        username   = the admin login (same as `Odoo - At The Grove Prod/login`)
+#        credential = the API key from step 2
+#   4. Nothing else.  `OP_CI_SA_TOKEN` (grove-ci-prod-ro) already reads the
+#      Grove Prod vault -- the earlier "provision repo secrets" blocker on this
+#      issue was stale.
+#   5. Smoke-test with `gh workflow run prod-modules-pin-drift.yml`.
+#
+# Until that item exists the job alerts every night as BROKEN with these
+# instructions -- fail-closed on purpose.  A drift watcher that goes green
+# because its credential is missing is the exact anti-pattern this issue
+# exists to kill (cf. GOL-2564, and the `discord-status.sh --branch` trap where
+# `|| true` hid two alert paths for their entire lifetime).
+#
+# If the board would rather ship before minting the key, the fallback is a
+# two-line edit: point PROD_ODOO_LOGIN/PROD_ODOO_SECRET at
+# `op://Grove Prod/Odoo - At The Grove Prod/{login,confirm_password}`.  That is
+# strictly worse and should be temporary.
+#
+# NOISE POLICY: matches qa-health.yml / obs-firewall-drift.yml.  A clean run
+# posts NOTHING (--quiet-success).  Discord hears drift, a broken watcher, and
+# the RECOVERED edge when a reconcile PR merges.
+###############################################################################
+
+on:
+  schedule:
+    # 12:40 UTC = 08:40 ET -- lands before the 13:00 obs-firewall-drift slot so
+    # the two nightly watchers do not post on top of each other, and during
+    # waking hours so an alert reaches someone who can act on it.
+    - cron: '40 12 * * *'
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: prod-modules-pin-drift
+  cancel-in-progress: false
+
+jobs:
+  pin-drift:
+    name: custom_modules_ref vs. prod grove_headless
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+
+    permissions:
+      contents: read
+      # discord-status.sh reads this workflow's own run history for the
+      # streak/RECOVERED grammar. No id-token: 1Password uses a service-account
+      # token, not OIDC.
+      actions: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        timeout-minutes: 2
+
+      - name: Setup Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        timeout-minutes: 2
+        with:
+          python-version: "3.12"
+
+      # Repo-level OP_CI_SA_TOKEN (grove-ci-prod-ro, read-only to Grove Prod),
+      # NOT a gated `environment:` -- gating a nightly check behind production's
+      # required reviewers would hang it every single night.
+      #
+      # ⚠️  THE ALERT PATH LOADS IN ITS OWN STEP, AND IT LOADS FIRST.
+      #
+      # `1password/load-secrets-action` resolves its refs ATOMICALLY: one
+      # unresolvable `op://` ref fails the step and exports NOTHING (the same
+      # fail-whole behaviour that bit obs #759 / GOL-2598). This workflow's
+      # CREDENTIAL header promises it will "alert every night as BROKEN" until
+      # Josh mints `Odoo - Prod Drift Readonly` -- but if the webhook shared a
+      # step with those two not-yet-provisioned refs, that step would fail,
+      # DISCORD_OPS_WEBHOOK_URL would never export, and discord-status.sh skips
+      # SILENTLY on an empty webhook (scripts/discord-status.sh: `::warning::`
+      # then exit 0). The alert the header promises would never fire during the
+      # exact provisioning window it exists for -- leaving only a red Actions
+      # run, i.e. "a human happens to notice", the failure mode GOL-2580 exists
+      # to kill. Same latent risk if the Odoo item is ever rotated or deleted.
+      #
+      # So: webhook first, alone, and NOT continue-on-error. If the alert path
+      # itself cannot load there is no way to report anything, and a loud red
+      # run with nothing else attempted is the honest signal.
+      - name: Load Discord webhook from 1Password
+        uses: 1password/load-secrets-action@v2
+        timeout-minutes: 2
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_CI_SA_TOKEN }}
+          DISCORD_OPS_WEBHOOK_URL: op://Grove Prod/odoocker/DISCORD_OPS_WEBHOOK_URL
+        with:
+          export-env: true
+
+      # continue-on-error is load-bearing HERE, and only here: if the
+      # Odoo - Prod Drift Readonly item has not been provisioned yet, this step
+      # errors, and we need the job to survive long enough to ALERT about it
+      # (over the webhook loaded above) rather than die silently before the
+      # Discord step. Nothing but the Odoo credential may share this step.
+      - name: Load prod Odoo credential from 1Password
+        id: op
+        continue-on-error: true
+        uses: 1password/load-secrets-action@v2
+        timeout-minutes: 2
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_CI_SA_TOKEN }}
+          PROD_ODOO_LOGIN:  op://Grove Prod/Odoo - Prod Drift Readonly/username
+          PROD_ODOO_SECRET: op://Grove Prod/Odoo - Prod Drift Readonly/credential
+        with:
+          export-env: true
+
+      - name: Check committed pin against prod grove_headless
+        id: check
+        timeout-minutes: 4
+        # continue-on-error so the Discord step always runs; the final step
+        # re-asserts the real result as the run conclusion, which is what the
+        # NEXT run's streak detection reads.
+        continue-on-error: true
+        env:
+          # Lifts the anonymous rate limit on the two public grove-odoo-modules
+          # reads. The repo is public, so this is a courtesy, not access.
+          GH_RAW_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          python3 scripts/check_prod_modules_pin.py 2>&1 | tee pin.out
+          RC="${PIPESTATUS[0]}"
+
+          # Exit 2 is the transient bucket (prod/GitHub unreachable) -- retry
+          # once. Exit 1 (drift) and exit 3 (missing credential, bad auth,
+          # unparseable HCL) are deterministic; a second identical run just
+          # burns a minute and doubles the log.
+          if [ "$RC" -eq 2 ]; then
+            echo "::warning::check_prod_modules_pin.py exited 2 (transient) -- retrying once in 30s"
+            sleep 30
+            python3 scripts/check_prod_modules_pin.py 2>&1 | tee pin.out
+            RC="${PIPESTATUS[0]}"
+          fi
+          set -e
+
+          echo "rc=$RC" >> "$GITHUB_OUTPUT"
+
+      - name: Discord (drift + broken-watcher + recoveries only)
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RC: ${{ steps.check.outputs.rc }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          case "$RC" in
+            0) STATUS=success
+               TITLE="Prod modules pin (custom_modules_ref)" ;;
+            1) STATUS=failure
+               TITLE="Prod modules pin DRIFT — a rebuild would move grove_headless" ;;
+            *) STATUS=failure
+               # Distinct title: this is the watcher failing to watch, not the
+               # pin being wrong. Same severity -- we are blind either way.
+               TITLE="Prod modules pin watcher BROKEN" ;;
+          esac
+
+          # Only the result/DRIFT/note lines, capped well under Discord's
+          # 4096-char embed description limit.
+          DETAIL=$(grep -E '^(committed:|prod-live:|DRIFT:|note:|result:)' pin.out \
+                   | head -14 | head -c 1400)
+
+          # --branch is passed explicitly: on main today discord-status.sh still
+          # REQUIRES it and exits 1 without it, which `|| true` would swallow
+          # into a dead alert path (GOL-2564 / PR #744 makes it optional, but
+          # this workflow must not depend on that merge order).
+          bash scripts/discord-status.sh \
+            --status="$STATUS" \
+            --workflow=prod-modules-pin-drift.yml \
+            --branch="${{ github.ref_name }}" \
+            --run-url="$RUN_URL" \
+            --title="$TITLE" \
+            --description="$DETAIL" \
+            --field "reconcile=gh workflow run reconcile-modules-pin.yml -f modules_sha=<sha>" \
+            --quiet-success || true
+
+      # Re-assert the check's result as the run conclusion. Without this the job
+      # is green on drift (continue-on-error above), the alert reads as a one-off
+      # every night, and RECOVERED never fires.
+      - name: Assert check result as run conclusion
+        env:
+          RC: ${{ steps.check.outputs.rc }}
+        run: |
+          case "$RC" in
+            0) echo "committed custom_modules_ref matches prod grove_headless" ;;
+            1) echo "::error::DRIFT — see the Discord alert and pin.out above"; exit 1 ;;
+            3) echo "::error::watcher BROKEN (config): missing credential / bad auth / unparseable HCL — see this workflow's CREDENTIAL header"; exit 1 ;;
+            *) echo "::error::watcher BROKEN — check_prod_modules_pin.py exited '$RC'"; exit 1 ;;
+          esac
