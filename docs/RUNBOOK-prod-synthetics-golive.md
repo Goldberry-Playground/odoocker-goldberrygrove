@@ -135,7 +135,7 @@ fires** (spec §1 invariant).
 ```sh
 cd /etc/grove
 op run --env-file=scripts/prod-monitoring.env.op -- \
-  sh -c 'env | grep -E "^(OPENOBSERVE|KEEP|DISCORD|SYNTHETIC|ODOO|GHOST|POSTGRES|COST|OTELCOL|BEYLA)_" \
+  sh -c 'env | grep -E "^(MONITORING|OPENOBSERVE|KEEP|DISCORD|SYNTHETIC|ODOO|GHOST|POSTGRES|COST|OTELCOL|BEYLA)_" \
          > /etc/grove/.env.monitoring'
 chmod 600 /etc/grove/.env.monitoring
 
@@ -148,6 +148,14 @@ make monitoring-up \
 `monitoring-setup` runs `setup-monitoring.py`, which (with
 `SYNTHETIC_CANARY_ENABLED=true`) invokes `canary.py --seed` to upsert the
 unpublished `$0` product per company before any journey runs.
+
+`prod-monitoring.env.op` sets `MONITORING_PLANE=app` and
+`OPENOBSERVE_BASE_URL=http://10.132.23.199:5080`, so on this droplet
+`setup-monitoring.py` only waits on / upserts into OpenObserve and **skips the
+Keep half**. It has to: grove-obs-fw admits `:8080` (Keep) from admin IPs only
+(ADR-010), so a bootstrap that waited for Keep here would time out and
+`monitoring-up` would never run. Keep providers/workflows (Keep → Discord,
+GOL-2329) are installed by the obs-plane deploy on grove-obs itself.
 
 ---
 

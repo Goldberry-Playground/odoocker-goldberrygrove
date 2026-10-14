@@ -188,6 +188,19 @@ write_files:
       # --env-file path as stripe_test_*.
       SHIPPO_API_KEY=${shippo_api_key}
       GROVE_SHIPPO_WEBHOOK_TOKEN=${grove_shippo_webhook_token}
+      # Printify merch (GOL-3316, Train #3; spec grove-odoo-modules#340).
+      # grove_headless reads all four from os.environ: token+shop drive the
+      # product sync and the order push (empty => clear error, no call),
+      # PRINTIFY_WEBHOOK_SECRET authenticates inbound webhooks (empty =>
+      # fail-closed 401), PRINTIFY_DRY_RUN=1 creates Printify orders but never
+      # sends them to production (QA runs the REAL token -- no test mode).
+      # Consumed via the compose environment: block, same --env-file path as
+      # SHIPPO_* above. Written UNQUOTED (bash-sourced) -- TF validation
+      # forbids spaces/shell metachars.
+      PRINTIFY_API_TOKEN=${printify_api_token}
+      PRINTIFY_SHOP_ID=${printify_shop_id}
+      PRINTIFY_WEBHOOK_SECRET=${printify_webhook_secret}
+      PRINTIFY_DRY_RUN=${printify_dry_run}
       # Carrier tracking poll (GOL-2296 Pirate Ship C). UPS Track + USPS
       # Tracking v3 OAuth2 client-credentials; carrier_tracking.build_clients()
       # reads all four from os.environ and builds a client only when ID+secret
@@ -212,6 +225,9 @@ write_files:
       # grove_headless _notify_discord() prefers this over DISCORD_OPS (QA sets
       # neither by default => alerts silent). Bare webhook URL, no /slack.
       DISCORD_ORDERS_WEBHOOK_URL=${discord_orders_webhook_url}
+      # #grove-ops webhook (GOL-3302): grove_support's chat-start Discord ping
+      # reads ONLY DISCORD_OPS_WEBHOOK_URL (no ORDERS fallback). Bare URL.
+      DISCORD_OPS_WEBHOOK_URL=${discord_ops_webhook_url}
       # Perenual plant-facts enrichment (GOL-2507, parent GOL-2383).
       # grove_headless services/plant_data/perenual.py reads this from
       # os.environ (compose environment: block -> here), so it MUST also be

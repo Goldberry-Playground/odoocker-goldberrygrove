@@ -508,6 +508,14 @@ resource "digitalocean_droplet" "odoo" {
     shippo_api_key             = var.shippo_api_key
     grove_shippo_webhook_token = var.grove_shippo_webhook_token
 
+    # Printify merch (GOL-3316, Train #3). Token/shop default-empty => sync and
+    # push raise a clear error; webhook secret empty => fails closed. QA keeps
+    # PRINTIFY_DRY_RUN=1 (real token, orders never sent to production).
+    printify_api_token      = var.printify_api_token
+    printify_shop_id        = var.printify_shop_id
+    printify_webhook_secret = var.printify_webhook_secret
+    printify_dry_run        = var.printify_dry_run
+
     # Carrier tracking poll (GOL-2296 Pirate Ship C, grove-odoo-modules#232).
     # Default-empty => each carrier client is not built and the
     # poll_carrier_tracking cron no-ops. Feeds user_data (droplet replace).
@@ -526,6 +534,11 @@ resource "digitalocean_droplet" "odoo" {
     # Dedicated order/pickup-summaries Discord channel (Josh 2026-09-03),
     # mirrors prod. Empty default = order alerts stay silent in QA.
     discord_orders_webhook_url = var.discord_orders_webhook_url
+
+    # #grove-ops webhook for grove_support's chat-start ping (GOL-3302 Train #3
+    # gate) -- grove_support reads ONLY DISCORD_OPS_WEBHOOK_URL. Mirrors prod
+    # odoo.tf. Empty default = ping silent in QA.
+    discord_ops_webhook_url = var.discord_ops_webhook_url
 
     # Perenual plant-facts enrichment (GOL-2507, parent GOL-2383). The
     # grove.enrich.job cron only drains when PerenualProvider.configured is

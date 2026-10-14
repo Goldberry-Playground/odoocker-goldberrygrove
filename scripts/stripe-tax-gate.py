@@ -497,6 +497,29 @@ def _post_json(url: str, body: dict, headers: dict, timeout: int = 45) -> tuple:
             return exc.code, {"error": raw[:400]}
 
 
+STRIPE_TEST_KEY_PREFIXES = ("sk_test", "rk_test")
+
+
+def _test_mode_key_kind(key: str) -> str:
+    """The matched TEST-mode prefix as a CONSTANT ("sk_test"/"rk_test"), or "" —
+    for banners. Deliberately never a slice of the key itself, so no byte of the
+    secret is ever logged (CodeQL py/clear-text-logging-sensitive-data)."""
+    for prefix in STRIPE_TEST_KEY_PREFIXES:
+        if key.startswith(prefix):
+            return prefix
+    return ""
+
+
+def _is_test_mode_key(key: str) -> bool:
+    """True only for a Stripe TEST-mode key: a standard secret key (sk_test…) or a
+    restricted key (rk_test…). The Grove QA vault item `stripe-nursery-qa` is a
+    restricted test key; restricted is fine (it is MORE scoped, not less) as long
+    as it carries customers:write, payment_methods:write, checkout_sessions:read
+    and payment_intents:read, which is what this gate uses. Anything live
+    (sk_live/rk_live) or unrecognised is refused."""
+    return key.startswith(STRIPE_TEST_KEY_PREFIXES)
+
+
 def _stripe_get(secret_key: str, path: str, params: str = "", timeout: int = 30) -> tuple:
     url = f"https://api.stripe.com/v1/{path}" + (f"?{params}" if params else "")
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {secret_key}",
@@ -614,8 +637,8 @@ class Runner:
             problems.append("QA_ODOO_API_KEY is unset (bearer key for /grove/api/v1/checkout/session)")
         if not self.stripe_key:
             problems.append("STRIPE_TEST_SECRET_KEY is unset")
-        elif not self.stripe_key.startswith("sk_test"):
-            problems.append("STRIPE_TEST_SECRET_KEY is not a test-mode key (must start with sk_test). "
+        elif not _is_test_mode_key(self.stripe_key):
+            problems.append("STRIPE_TEST_SECRET_KEY is not a test-mode key (must start with sk_test or rk_test). "
                             "Refusing: a live key here would create real charges.")
         if not self.variants["instock"]:
             problems.append("--variant-instock is required (an in-stock, ships-now nursery variant id)")
@@ -804,7 +827,8 @@ def main(argv=None) -> int:
     if args.dry_run:
         print("DRY RUN — nothing will be created.")
         print(f"  QA Odoo : {runner.odoo_base or '(unset)'}  tenant={runner.tenant}")
-        print(f"  Stripe  : {'sk_test…' if runner.stripe_key.startswith('sk_test') else '(unset/not test)'}")
+        key_kind = _test_mode_key_kind(runner.stripe_key)
+        print(f"  Stripe  : {key_kind + '…' if key_kind else '(unset/not test)'}")
         print("  cases   :")
         for n in names:
             print(f"    - {CASES[n]['label']}")

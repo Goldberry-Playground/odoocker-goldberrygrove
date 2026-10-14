@@ -146,6 +146,20 @@ write_files:
       # empty). Same --env-file -> compose environment: path as stripe_test_*.
       SHIPPO_API_KEY=${shippo_api_key}
       GROVE_SHIPPO_WEBHOOK_TOKEN=${grove_shippo_webhook_token}
+      # Printify merch (GOL-3316, Train #3; spec grove-odoo-modules#340).
+      # grove_headless reads all four from os.environ: token+shop drive the
+      # product sync and the order push (empty => clear error, no call),
+      # PRINTIFY_WEBHOOK_SECRET authenticates inbound webhooks (empty =>
+      # fail-closed 401), PRINTIFY_DRY_RUN truthy => orders are created but
+      # never sent to production (prod default EMPTY = live). Consumed via the
+      # compose environment: block, same --env-file path as SHIPPO_* above.
+      # Written UNQUOTED (bash-sourced) -- TF validation forbids metachars.
+      # On the RUNNING box these lines are added by Leg B
+      # (prod-modules-promote.sh PRINTIFY_PASSTHROUGH=1), values by Josh.
+      PRINTIFY_API_TOKEN=${printify_api_token}
+      PRINTIFY_SHOP_ID=${printify_shop_id}
+      PRINTIFY_WEBHOOK_SECRET=${printify_webhook_secret}
+      PRINTIFY_DRY_RUN=${printify_dry_run}
       # Carrier tracking poll (GOL-2296 Pirate Ship C). UPS Track + USPS
       # Tracking v3 OAuth2 client-credentials; carrier_tracking.build_clients()
       # reads all four from os.environ and builds a client only when ID+secret

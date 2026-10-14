@@ -97,6 +97,65 @@ jobs:
             exit 1
           fi
 
+      # GOL-2727. The `concurrency` group above SERIALIZES two dispatches but it
+      # does NOT dedupe them: the second run checks out the same still-unmerged
+      # `main`, so the reconcile edit still "changes" the file and a
+      # byte-identical SECOND PR is opened. That happened on 2026-09-30 — #785
+      # and #786 were dispatched for `bbb580e0` 30s apart and a human had to
+      # hand-close the duplicate. An open reconcile PR for the SAME target SHA
+      # already carries this exact edit, so opening another is pure noise (and
+      # each one costs a review + a self-dispatch of the four required checks).
+      #
+      # Also surfaced, alert-only: open reconcile PRs for a DIFFERENT target
+      # SHA. Those are not duplicates (a different pin is a different reconcile)
+      # but once prod moves on, the older one is STALE — merging it would roll
+      # the committed default BACKWARD. That is exactly how #780 (-> 84dc5218)
+      # was left behind by #785 (-> bbb580e0) and then wedged at "Expected —
+      # waiting for status" until the GOL-1958 sweep filed an issue on it. This
+      # workflow only warns; it never closes someone else's PR.
+      - name: Skip if a reconcile PR for this SHA is already open
+        id: dup
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Reconcile branches are `reconcile-modules-pin-<sha12>-<run_id>`, so
+          # the 12-char SHA prefix identifies the target pin across run ids.
+          export PREFIX="reconcile-modules-pin-${MODULES_SHA:0:12}-"
+          # Fail OPEN on a read error: a duplicate PR is recoverable by closing
+          # it, but a reconcile blocked during an incident is not.
+          if ! OPEN_JSON="$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --base main --limit 100 --json number,headRefName,url)"; then
+            echo "::warning::could not list open PRs — skipping the duplicate check and proceeding (fail-open, GOL-2727)."
+            echo "existing_pr=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          EXISTING="$(printf '%s' "$OPEN_JSON" \
+            | jq -r '[.[] | select(.headRefName | startswith(env.PREFIX)) | .url] | first // ""')"
+          OTHERS="$(printf '%s' "$OPEN_JSON" \
+            | jq -r '[.[]
+                      | select(.headRefName | startswith("reconcile-modules-pin-"))
+                      | select(.headRefName | startswith(env.PREFIX) | not)
+                      | "#\(.number)"] | join(", ")')"
+          if [ -n "$OTHERS" ]; then
+            echo "::warning::open modules-pin reconcile PR(s) targeting a DIFFERENT SHA: $OTHERS — if prod now runs $MODULES_SHA those are stale; close them, do not merge (GOL-2727)."
+          fi
+          if [ -z "$EXISTING" ]; then
+            echo "existing_pr=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "existing_pr=$EXISTING" >> "$GITHUB_OUTPUT"
+          echo "::warning::a reconcile PR for $MODULES_SHA is already open ($EXISTING) — not opening a duplicate (GOL-2727)."
+          {
+            echo "## Modules pin reconcile PR already open"
+            echo ""
+            echo "- Target pin: \`$MODULES_SHA\`"
+            echo "- Existing PR: $EXISTING"
+            if [ -n "$OTHERS" ]; then
+              echo "- Open reconcile PR(s) for a different SHA (stale once prod moves — close, do not merge): $OTHERS"
+            fi
+            echo ""
+            echo "This dispatch was a **no-op**: no branch pushed, no PR opened. Review and merge the PR above instead of a duplicate (GOL-2727)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Apply the reconcile edit
         id: edit
         run: |
@@ -123,7 +182,7 @@ jobs:
 
       - name: Commit + open reconcile PR
         id: pr
-        if: steps.edit.outputs.changed == 'true'
+        if: steps.edit.outputs.changed == 'true' && steps.dup.outputs.existing_pr == ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -196,7 +255,7 @@ jobs:
           fi
 
       - name: Reconcile summary
-        if: steps.edit.outputs.changed == 'true'
+        if: steps.edit.outputs.changed == 'true' && steps.dup.outputs.existing_pr == ''
         env:
           PR_URL: ${{ steps.pr.outputs.pr_url }}
         run: |

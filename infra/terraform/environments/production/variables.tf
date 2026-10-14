@@ -460,6 +460,68 @@ variable "grove_shippo_webhook_token" {
   default     = ""
 }
 
+# === Printify print-on-demand merch (GOL-3316, Train #3; spec gom#340) =======
+# grove_headless reads all four UPPERCASE names from os.environ
+# (models/printify_client.py / product_template.py / sale_order.py / the
+# /grove/api/v1/printify/webhook route). The odoo process env comes ONLY from
+# the compose `environment:` block, so each key is declared here, rendered into
+# /etc/grove/.env by cloud-init AND listed in docker-compose.odoo.yml -- the
+# same three-point chain as SHIPPO_API_KEY. Empty token/shop => sync and push
+# raise a clear error and no Printify call is made; empty webhook secret =>
+# verify_signature fails closed (401). All four are user_data inputs and
+# user_data is in ignore_changes, so landing this scaffold does NOT touch the
+# running droplet: the RUNNING box gets the passthrough from Leg B
+# (scripts/prod-modules-promote.sh, PRINTIFY_PASSTHROUGH=1) and the values from
+# Josh's /etc/grove/.env edit; the next rebuild reproduces both from code.
+# Values are written UNQUOTED into the bash-sourced .env, hence the charset
+# validation.
+variable "printify_api_token" {
+  description = "Printify personal access token (JWT) for the farm shop. grove_headless printify_client reads os.environ PRINTIFY_API_TOKEN; empty => sync/push raise a clear error, no API call. 1P: op://Grove Prod/Printify Prod Key/api_token (commented in .env.op until the item exists). user_data input (ignore_changes) => activates on a rebuild; the running box is converged by Leg B + Josh's .env edit."
+  type        = string
+  sensitive   = true
+  default     = ""
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9._~+/=:-]*$", var.printify_api_token))
+    error_message = "printify_api_token must contain no whitespace or shell metacharacters (A-Za-z0-9 . _ ~ + / = : - only): cloud-init writes it unquoted into the bash-sourced /etc/grove/.env, so a bad value breaks the droplet's boot, not the apply."
+  }
+}
+
+variable "printify_shop_id" {
+  description = "Numeric id of the farm's Printify shop (the API / custom-integration sales channel). grove_headless reads os.environ PRINTIFY_SHOP_ID; empty => sync/push raise a clear error. 1P: op://Grove Prod/Printify Prod Key/shop_id (commented in .env.op until the item exists). user_data input, same semantics as printify_api_token."
+  type        = string
+  sensitive   = true
+  default     = ""
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9._~+/=:-]*$", var.printify_shop_id))
+    error_message = "printify_shop_id must contain no whitespace or shell metacharacters (A-Za-z0-9 . _ ~ + / = : - only): it is written unquoted into the bash-sourced /etc/grove/.env."
+  }
+}
+
+variable "printify_webhook_secret" {
+  description = "Shared secret Printify signs webhook bodies with (HMAC-SHA256); grove_headless /grove/api/v1/printify/webhook reads os.environ PRINTIFY_WEBHOOK_SECRET and verify_signature fails CLOSED when it is empty (every webhook => 401). Registered with Printify by scripts/printify_register_webhooks.py against the prod URL. DISTINCT from the QA secret so revoking one stage never breaks the other. 1P: op://Grove Prod/Printify Prod Key/webhook_secret (commented in .env.op until the item exists). user_data input, same semantics as printify_api_token."
+  type        = string
+  sensitive   = true
+  default     = ""
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9._~+/=:-]*$", var.printify_webhook_secret))
+    error_message = "printify_webhook_secret must contain no whitespace or shell metacharacters (A-Za-z0-9 . _ ~ + / = : - only): it is written unquoted into the bash-sourced /etc/grove/.env."
+  }
+}
+
+variable "printify_dry_run" {
+  description = "Printify dry-run flag. grove_headless sale_order push does `(os.environ.get(\"PRINTIFY_DRY_RUN\") or \"\").strip().lower() in (\"1\",\"true\",\"yes\",\"on\")`: truthy => Printify orders are CREATED but never sent to production; anything else (including empty) => LIVE. Prod defaults to EMPTY (live) per the spec; a truthy value here is the one-line way to hold prod in dry run (e.g. during the first sync). Restricted to the tokens the module recognises so a typo cannot silently go live. Not secret. user_data input (ignore_changes)."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = contains(["", "1", "true", "yes", "on", "0", "false", "no", "off"], lower(var.printify_dry_run))
+    error_message = "printify_dry_run must be one of 1/true/yes/on (dry run: create orders, never send to production), 0/false/no/off or empty (LIVE). grove_headless treats any other string as live WITHOUT COMPLAINING."
+  }
+}
+
 # === Carrier tracking poll — UPS Track + USPS Tracking v3 (GOL-2296) =========
 # Pirate Ship C (grove-odoo-modules#232). carrier_tracking.build_clients() reads
 # these four UPPERCASE names from os.environ and builds a carrier client only
@@ -605,5 +667,53 @@ variable "perenual_api_key" {
   validation {
     condition     = var.perenual_api_key == "" || can(regex("^[A-Za-z0-9._~+/=:-]{8,200}$", var.perenual_api_key))
     error_message = "perenual_api_key must be empty or a plain API token with NO whitespace or shell metacharacters (A-Z a-z 0-9 and . _ ~ + / = : - only, 8-200 chars) — cloud-init writes it UNQUOTED into the bash-sourced /etc/grove/.env, so a space, quote or $ would break set -euo pipefail at boot."
+  }
+}
+
+###############################################################################
+# GOL-2566 - legacy Ghost snowflake holding-action firewall. See
+# legacy-ghost-fw.tf for the full rationale and rollback.
+###############################################################################
+
+variable "legacy_ghost_firewall_enabled" {
+  description = "Attach `grove-legacy-ghost-fw` to the un-codified `ghostgoldberrygrove-nyc1` snowflake (droplet 468914087), closing its internet-wide :22 (and :80/:443, see legacy_ghost_http_public). Defaults FALSE so merging this file is not an apply -- the box is not Terraform-managed, and a holding action on a snowflake nobody has logged into in months is Josh's call to make deliberately, not a side effect of someone else's plan. Set true in tfvars (or `-var`) when applying. Flip back to false to detach."
+  type        = bool
+  default     = false
+}
+
+variable "legacy_ghost_droplet_name" {
+  description = "Name the legacy Ghost droplet is resolved by, rather than pinning the bare id 468914087 in code. The DO `droplet` data source has no id lookup, and the name is the stable handle: if the box is rebuilt the name is what gets reused. Only read when legacy_ghost_firewall_enabled is true."
+  type        = string
+  default     = "ghostgoldberrygrove-nyc1"
+}
+
+variable "legacy_ghost_http_public" {
+  description = "Keep :80/:443 on the legacy Ghost box open to the world. FALSE by default: verified 2026-09-29 that ZERO DNS records across all four Cloudflare zones resolve to 178.128.152.218 (every blog.* A record points at 159.89.243.121, every apex is an App Platform CNAME), and no DO load balancer or reserved IP references it -- so the box is DNS-orphaned and fencing HTTP breaks no routed path. What is listening on :443 is a Ghost ADMIN login behind a cert that expired 2025-10-07. Set true to restore world access if an unknown raw-IP consumer surfaces; the :22 fence is unaffected either way. Both legs resolve to var.admin_ip_cidrs, so a new operator address added there (GOL-1842) covers this box too."
+  type        = bool
+  default     = false
+}
+
+# --- grove_support live chat switch-on (GOL-3302 / GOL-2023, Train #3) -------
+#
+# The nursery storefront embeds Odoo's im_livechat widget (grove-sites
+# apps/nursery/app/support-chat.tsx, PRs #669 + #794) and stays INERT until it
+# is handed a channel id. The id is read at RUNTIME by the root layout (a
+# Server Component) from LIVECHAT_CHANNEL_ID / LIVECHAT_ODOO_URL (grove-sites
+# #1058) -- NOT from a NEXT_PUBLIC_* build arg, because the storefront images
+# are built once in grove-sites CI and pulled prebuilt from GHCR, so a
+# NEXT_PUBLIC_ value on the app spec (any scope) never reaches the bundle.
+# RUN_TIME scope therefore suffices, and flipping the value is an app-spec
+# update + redeploy of the SAME pinned image, no rebuild.
+#
+# Nursery ONLY (grove_support phase 1). Empty => the env is not emitted at all
+# and the widget stays dark; that is the rollback.
+variable "nursery_livechat_channel_id" {
+  description = "Integer id of the im_livechat.channel record on the prod Odoo that the nursery storefront's support widget loads (/im_livechat/loader/<id>). Empty string = widget OFF (env omitted from the app spec) -- the documented rollback. Default 1: verified 2026-10-13 that channel 1 is the ONLY livechat channel on prod (loader/1 -> 200, loader/2 + /3 -> 404 'Record does not exist'); Josh confirms it is the At The Grove Nursery channel (company 3) in review. PUBLIC value (it is in the page source), not a secret. Nursery only; RUN_TIME scope; see apps.tf."
+  type        = string
+  default     = "1"
+
+  validation {
+    condition     = can(regex("^[0-9]*$", var.nursery_livechat_channel_id))
+    error_message = "nursery_livechat_channel_id must be empty (widget off) or the integer id of the im_livechat.channel record on the prod Odoo."
   }
 }

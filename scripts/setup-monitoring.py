@@ -48,6 +48,17 @@ Local vs remote:
             KEEP_BASE_URL=http://keep-backend:8080 \
             ./scripts/setup-monitoring.py
 
+Planes (MONITORING_PLANE, default "obs"):
+    obs   OpenObserve + Keep live side-by-side (grove-obs). Full bootstrap:
+          wait for both, upsert OO objects, install Keep providers/workflows.
+    app   An app-plane deploy (the prod Odoo droplet's
+          docker-compose.monitoring.app-plane.yml) that only SHIPS to a remote
+          OpenObserve. Keep is not reachable from there (grove-obs-fw :8080 is
+          admin-only, ADR-010) and the obs-plane deploy owns its bootstrap, so
+          the Keep wait + Keep install are SKIPPED and KEEP_* vars are not
+          required. OO objects are still upserted (idempotent) so a fresh
+          app-plane bring-up never runs without its alerts. GOL-2323/GOL-2325.
+
 Secrets (from .env.monitoring / op at runtime):
     OPENOBSERVE_ROOT_EMAIL / OPENOBSERVE_ROOT_PASSWORD  -> OO Basic auth
     KEEP_WEBHOOK_TOKEN        -> Keep X-API-KEY + OO destination header
@@ -335,6 +346,24 @@ def keep_base() -> str:
     return get_env("KEEP_BASE_URL", f"http://localhost:{get_env('KEEP_BACKEND_PORT', '8080')}").rstrip("/")
 
 
+PLANES = ("obs", "app")
+
+
+def monitoring_plane() -> str:
+    """
+    Which half of the stack this bootstrap is responsible for.
+
+    "obs" (default) = OpenObserve + Keep; "app" = OpenObserve objects only,
+    because the app plane cannot reach Keep (see module docstring). Any other
+    value is a config error, not a silent fallback.
+    """
+    plane = get_env("MONITORING_PLANE", "obs").strip().lower()
+    if plane not in PLANES:
+        _log(f"ERROR: MONITORING_PLANE={plane!r} is not one of {PLANES}.")
+        sys.exit(1)
+    return plane
+
+
 def keep_headers() -> dict[str, str]:
     return {"X-API-KEY": require_env("KEEP_WEBHOOK_TOKEN")}
 
@@ -476,8 +505,13 @@ def main() -> None:
     _log("Step 1/5: wait for OpenObserve")
     wait_for(f"{oo_root()}/healthz", 90, name="OpenObserve")
 
-    _log("\nStep 2/5: wait for Keep backend")
-    wait_for(f"{keep_base()}/healthcheck", 120, name="Keep")
+    plane = monitoring_plane()
+    if plane == "app":
+        _log("\nStep 2/5: wait for Keep backend — SKIPPED (MONITORING_PLANE=app;"
+             " Keep is bootstrapped by the obs-plane deploy on grove-obs)")
+    else:
+        _log("\nStep 2/5: wait for Keep backend")
+        wait_for(f"{keep_base()}/healthcheck", 120, name="Keep")
 
     _log("\nStep 3/5: bootstrap OpenObserve (template + destination + alerts + dashboards)")
     maybe_seed_canary()
@@ -485,18 +519,25 @@ def main() -> None:
     oo_bootstrap_alerts(dest_available=bool(dest.get("url")))
     oo_bootstrap_dashboards()
 
-    _log("\nStep 4/5: bootstrap Keep (providers + workflows)")
-    keep_bootstrap_providers()
-    keep_bootstrap_workflows()
+    if plane == "app":
+        _log("\nStep 4/5: bootstrap Keep — SKIPPED (MONITORING_PLANE=app)")
+    else:
+        _log("\nStep 4/5: bootstrap Keep (providers + workflows)")
+        keep_bootstrap_providers()
+        keep_bootstrap_workflows()
 
     _log("\nStep 5/5: summary")
     _log("=" * 60)
     _log(f"  OpenObserve:  {oo_root()}")
-    _log(f"  Keep:         {keep_base()}")
+    _log(f"  Keep:         {keep_base() if plane == 'obs' else 'not managed here (MONITORING_PLANE=app)'}")
     if not dest.get("url"):
         _log("  ⚠ KEEP_EVENT_URL unset — OO alerts will NOT reach Keep until the")
         _log("    Keep destination is created against an SSRF-allowed URL (see docstring).")
     _log("")
+    if plane == "app":
+        _log("Keep → Discord routing is armed from the obs-plane deploy (GOL-2329);")
+        _log("nothing further to verify from this plane.")
+        return
     _log("Verify Discord routing (fires a test event through Keep → Discord):")
     _log("  curl -X POST '%s/alerts/event?provider_id=openobserve' \\" % keep_base())
     _log("    -H \"X-API-KEY: $KEEP_WEBHOOK_TOKEN\" -H 'Content-Type: application/json' \\")

@@ -506,6 +506,23 @@ docker compose up -d --build
    `/etc/grove` edits made by hand) is destroyed on the next apply. Durable state
    must live on an attached block volume (`LABEL=`-mounted), and existing
    root-disk data must be copied off before the replacing apply.
+   **Corollary — a replace silently orphans the droplet's cloud firewall.**
+   `digitalocean_firewall.<x>.droplet_ids` is computed from
+   `digitalocean_droplet.<x>.id`, but it is a *separate* resource, so a
+   `-target`'d apply naming only the droplet leaves the firewall pointing at the
+   **dead** id; DO drops it and `droplet_ids` becomes `[]`. The firewall still
+   exists with perfectly correct *rules* and filters nothing. That is GOL-2565:
+   the 09-16 `grove-prod-odoo` replace left prod `:22` open to the internet for
+   13 days, and every rules-based check passed the whole time. So on any
+   targeted apply that replaces a droplet, carry its firewall in the same
+   `-target` set, and read membership back afterwards — never infer it from the
+   rules:
+   ```sh
+   terraform apply -target=digitalocean_droplet.odoo -target=digitalocean_firewall.odoo
+   DO_TOKEN=<read-only> infra/terraform/scripts/check-firewall-membership.py production
+   ```
+   The nightly `.github/workflows/firewall-membership.yml` is the backstop (≤24h);
+   the apply-time step is what keeps the exposure window at zero.
 4. **A DB promotion moves the filestore WITH the DB, and the attachment
    invariant gates the cutover.** The 2026-07-23 QA outage was a DB promoted
    without its filestore — 676 file-backed `ir_attachment` rows, 47 files on

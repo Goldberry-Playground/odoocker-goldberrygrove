@@ -1,0 +1,117 @@
+name: Firewall Membership Check
+
+# Assert every codified DO cloud firewall CONTAINS the droplets its Terraform
+# names (GOL-2565).
+#
+# Why this is a separate workflow from terraform-drift.yml: that one runs a
+# real `terraform plan`, so it needs the S3 backend, the env's TF_VARs, and it
+# takes the state lock -- which is why it watches exactly one env and is not on
+# a cron. This check needs none of that. It reads the *.tf in the repo and the
+# DO API read-only, takes no lock, and touches no state, so it is safe to run
+# nightly across every env at once and safe to run concurrently with an apply.
+#
+# The gap it closes: grove-prod-odoo was REPLACED on 2026-09-16 and
+# grove-prod-odoo-fw was never re-converged onto the new droplet id. Its rules
+# stayed correct, so a rules-only check passed; `droplet_ids` was `[]`, so
+# production Odoo had no edge filtering at all and :22 was open to the
+# internet for 13 days before a human happened to look. Nightly, this fires on
+# day one.
+on:
+  schedule:
+    - cron: "0 13 * * *" # daily, ~09:00 ET — before the market-season workday
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  # Read-only and lock-free, so this never needs to serialize against an
+  # apply — but there is no point stacking duplicate nightly runs either.
+  group: firewall-membership
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Assert firewall membership
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    permissions:
+      contents: read # no id-token: 1Password uses a service-account token, not OIDC
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        timeout-minutes: 2
+
+      # Same read-only path terraform-drift.yml uses: a REPO-level
+      # OP_CI_SA_TOKEN (grove-ci-prod-ro, read-only to Grove Prod), NOT a gated
+      # `environment:` — gating a scheduled check behind production's required
+      # reviewers would hang it every night. Vault is "Grove Prod" (GOL-2413);
+      # "Grove Production" does not exist and fails the op load step.
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
+        timeout-minutes: 2
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_CI_SA_TOKEN }}
+          DIGITALOCEAN_TOKEN:      op://Grove Prod/odoocker/DIGITALOCEAN_TOKEN
+          DISCORD_OPS_WEBHOOK_URL: op://Grove Prod/odoocker/DISCORD_OPS_WEBHOOK_URL
+        with:
+          export-env: true
+
+      # production and observability are fail-closed: a declared droplet or
+      # firewall that is absent live is drift, because neither env is meant to
+      # be torn down. qa-app-platform IS torn down between release trains
+      # (GOL-2327), so it runs --allow-absent — otherwise this alerts every
+      # night the QA env is down, and an alert that always fires gets muted,
+      # which is how GOL-2565 stayed invisible in the first place.
+      - name: Check production + observability (fail-closed)
+        id: strict
+        timeout-minutes: 3
+        run: |
+          set +e
+          ./infra/terraform/scripts/check-firewall-membership.py \
+            production observability 2>&1 | tee strict.txt
+          echo "exitcode=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Check qa-app-platform (tolerates teardown)
+        id: ephemeral
+        timeout-minutes: 3
+        run: |
+          set +e
+          ./infra/terraform/scripts/check-firewall-membership.py \
+            --allow-absent qa-app-platform 2>&1 | tee ephemeral.txt
+          echo "exitcode=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      # Exit 2 is "bad env" (no token, DO unreachable) — a broken watcher, not
+      # a clean bill of health. It must be as loud as drift, or the check
+      # silently stops checking.
+      - name: Alert Discord on drift or broken check
+        if: steps.strict.outputs.exitcode != '0' || steps.ephemeral.outputs.exitcode != '0'
+        timeout-minutes: 1
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          STRICT: ${{ steps.strict.outputs.exitcode }}
+          EPHEMERAL: ${{ steps.ephemeral.outputs.exitcode }}
+        run: |
+          DETAIL="$(grep -hE '^\s+(DRIFT|!)' strict.txt ephemeral.txt | head -10)"
+          [ -n "$DETAIL" ] || DETAIL="check could not run (exit 2: no token or DO unreachable)"
+          PAYLOAD=$(jq -n \
+            --arg run_url "$RUN_URL" \
+            --arg detail "$DETAIL" \
+            '{
+              username: "🧱 Firewall Membership",
+              embeds: [{
+                title: "⚠️ A DO firewall does not contain the droplets it names",
+                description: ("A codified firewall is not protecting its droplet — the box may be exposed at the DO edge.\n```\n" + $detail + "\n```"),
+                url: $run_url,
+                color: 15158332
+              }]
+            }')
+          curl -fsS -X POST -H "Content-Type: application/json" \
+            -d "$PAYLOAD" "$DISCORD_OPS_WEBHOOK_URL"
+
+      - name: Fail the run if membership drifted
+        if: steps.strict.outputs.exitcode != '0' || steps.ephemeral.outputs.exitcode != '0'
+        run: |
+          echo "::error::firewall membership check failed (strict=${{ steps.strict.outputs.exitcode }} ephemeral=${{ steps.ephemeral.outputs.exitcode }})"
+          exit 1
