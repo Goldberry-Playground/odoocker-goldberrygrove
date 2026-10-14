@@ -76,7 +76,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [ "${{ steps.sweep.outputs.rc }}" = "0" ]; then STATUS=success; else STATUS=failure; fi
-          DETAIL=$(grep -E "FAIL|RESULT" sweep.out | head -6 | tr '\n' ';' | head -c 900)
+          # `|| true` is load-bearing and asserted by
+          # scripts/ci/alert-step-grep-guard.test.mjs: a no-match grep exits 1,
+          # and if this step ever gains pipefail (`shell: bash`) or loses the
+          # `| head`, `set -e` would kill it here -- before discord-status.sh
+          # runs -- so the failure alert this step exists to send never posts.
+          DETAIL=$(grep -E "FAIL|RESULT" sweep.out | head -6 | tr '\n' ';' | head -c 900 || true)
           bash scripts/discord-status.sh \
             --status="$STATUS" \
             --workflow=qa-health.yml \
