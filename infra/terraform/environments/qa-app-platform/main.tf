@@ -527,6 +527,11 @@ resource "digitalocean_droplet" "odoo" {
     # mirrors prod. Empty default = order alerts stay silent in QA.
     discord_orders_webhook_url = var.discord_orders_webhook_url
 
+    # #grove-ops webhook for grove_support's chat-start ping (GOL-3302 Train #3
+    # gate) -- grove_support reads ONLY DISCORD_OPS_WEBHOOK_URL. Mirrors prod
+    # odoo.tf. Empty default = ping silent in QA.
+    discord_ops_webhook_url = var.discord_ops_webhook_url
+
     # Perenual plant-facts enrichment (GOL-2507, parent GOL-2383). The
     # grove.enrich.job cron only drains when PerenualProvider.configured is
     # true, i.e. os.environ PERENUAL_API_KEY is non-empty; default-empty here

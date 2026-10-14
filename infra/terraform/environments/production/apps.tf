@@ -289,6 +289,32 @@ resource "digitalocean_app" "tenant" {
         scope = "RUN_AND_BUILD_TIME"
       }
 
+      # grove_support live chat (GOL-3302 / GOL-2023), NURSERY ONLY. The
+      # storefront's root layout reads these at request time and mounts the
+      # im_livechat widget pointed at the prod Odoo host; both are omitted
+      # (widget dark) when var.nursery_livechat_channel_id is empty. RUN_TIME
+      # on purpose: the value is a runtime read of a prebuilt GHCR image, and
+      # a NEXT_PUBLIC_/BUILD_TIME env could never reach that bundle (see the
+      # variable's doc). Changing either triggers an app-spec redeploy of the
+      # same pinned image -- it rides the promote-storefronts targeted apply.
+      dynamic "env" {
+        for_each = each.key == "nursery" && var.nursery_livechat_channel_id != "" ? [1] : []
+        content {
+          key   = "LIVECHAT_CHANNEL_ID"
+          value = var.nursery_livechat_channel_id
+          scope = "RUN_TIME"
+        }
+      }
+
+      dynamic "env" {
+        for_each = each.key == "nursery" && var.nursery_livechat_channel_id != "" ? [1] : []
+        content {
+          key   = "LIVECHAT_ODOO_URL"
+          value = "https://${local.odoo_host}"
+          scope = "RUN_TIME"
+        }
+      }
+
       env {
         key   = "NEXT_TELEMETRY_DISABLED"
         value = "1"

@@ -630,3 +630,28 @@ variable "legacy_ghost_http_public" {
   type        = bool
   default     = false
 }
+
+# --- grove_support live chat switch-on (GOL-3302 / GOL-2023, Train #3) -------
+#
+# The nursery storefront embeds Odoo's im_livechat widget (grove-sites
+# apps/nursery/app/support-chat.tsx, PRs #669 + #794) and stays INERT until it
+# is handed a channel id. The id is read at RUNTIME by the root layout (a
+# Server Component) from LIVECHAT_CHANNEL_ID / LIVECHAT_ODOO_URL (grove-sites
+# #1058) -- NOT from a NEXT_PUBLIC_* build arg, because the storefront images
+# are built once in grove-sites CI and pulled prebuilt from GHCR, so a
+# NEXT_PUBLIC_ value on the app spec (any scope) never reaches the bundle.
+# RUN_TIME scope therefore suffices, and flipping the value is an app-spec
+# update + redeploy of the SAME pinned image, no rebuild.
+#
+# Nursery ONLY (grove_support phase 1). Empty => the env is not emitted at all
+# and the widget stays dark; that is the rollback.
+variable "nursery_livechat_channel_id" {
+  description = "Integer id of the im_livechat.channel record on the prod Odoo that the nursery storefront's support widget loads (/im_livechat/loader/<id>). Empty string = widget OFF (env omitted from the app spec) -- the documented rollback. Default 1: verified 2026-10-13 that channel 1 is the ONLY livechat channel on prod (loader/1 -> 200, loader/2 + /3 -> 404 'Record does not exist'); Josh confirms it is the At The Grove Nursery channel (company 3) in review. PUBLIC value (it is in the page source), not a secret. Nursery only; RUN_TIME scope; see apps.tf."
+  type        = string
+  default     = "1"
+
+  validation {
+    condition     = can(regex("^[0-9]*$", var.nursery_livechat_channel_id))
+    error_message = "nursery_livechat_channel_id must be empty (widget off) or the integer id of the im_livechat.channel record on the prod Odoo."
+  }
+}

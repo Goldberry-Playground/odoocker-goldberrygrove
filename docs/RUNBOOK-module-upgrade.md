@@ -109,6 +109,34 @@ established safe path (precedents `34cc4548` / `22fbb71` / `0b36ecfa`) edits the
 pin on the running box and lets git-sync plus the GOL-1009 entrypoint upgrade do
 the rest.
 
+### HARD PREREQUISITE -- soak the `-u` migrations on QA first
+
+**Never run Leg B against prod with a migration that has not run on QA.** Any
+target SHA whose `grove_headless` manifest version exceeds the installed one makes
+the GOL-1009 entrypoint run `--update=grove_headless`, which executes every
+`migrations/<version>/{pre,post}-migrate.py` between the two. On prod that is a
+one-way door: the pin rolls back, the migration's data edits do not (see
+"Rollback" in `RUNBOOK-release-train.md`).
+
+```bash
+# On QA, pinned to the SAME SHA you will hand Leg B. EXPECT_REF makes the script
+# refuse a QA box that is not actually on the bundle SHA.
+EXPECT_REF=<modules-sha> scripts/qa-module-upgrade.sh grove_headless
+```
+
+Then confirm each migration's effects **in the database**, not in the log:
+
+- the recorded version advanced -- `SELECT latest_version FROM ir_module_module
+  WHERE name = 'grove_headless';`
+- every table / column / row the migrations write actually exists. A clean log
+  line is a proxy, not the truth: a `-u` against a DB already past a migration's
+  version legitimately **skips** it. The WV-tax bind is the standing example --
+  it binds only on install or migration 1.47.0, so on a DB at >= 19.0.1.47.0 the
+  log is clean and the only proof is the tax tables.
+
+Record the soak result in the train manifest before Leg B. **If the soak did not
+run, the module half of the train does not promote** -- it rides the next train.
+
 ### Run it
 
 ```bash
@@ -199,6 +227,26 @@ OFF is also the rollback. Truthy values are `1` / `true` / `yes` / `on`.
 only as a separate, named, board-approved step, and only after the QA e2e gate
 asserted amounts for a WV *and* a non-WV address (grove-odoo-modules
 `docs/stripe-tax-cutover.md`, Gate 4).
+
+**The train rule (ruled 2026-10-02, GOL-2584): ship inert, flip at the Wednesday
+promote only if the gates passed.** The Terraform chain lands with
+`grove_stripe_tax_tenants` empty, so prod keeps running the pre-GOL-2568 path no
+matter what merged. Then, at promote (step 7 of the order of operations in
+`RUNBOOK-release-train.md`):
+
+- **Gates 3 + 4 green on QA** -- the gate runner is grove-odoo-modules #826, which
+  reads the flag off observed **session behaviour** rather than a log line -> flip
+  with Path A below, verify, and record it in the train issue.
+- **Any gate unmet, inconclusive, or not run -> do not flip.** The flip rides the
+  next train. This is a planned outcome, not an incident, and needs no escalation.
+- **Rollback at any point = flag off**, which is byte-identical to the pre-flag
+  path. In-flight Stripe sessions settle on the rules they were created with.
+
+> ⚠️ **The deposit path bypasses Stripe Tax entirely.** `automatic_tax` is
+> `tax_enabled and not is_deposit`, so a deposit order never exercises the Stripe
+> computation. After the 2026-10-15 bareroot cutover the deposit path is the
+> dominant one -- which means a green Gate 4 can be green on a road most orders
+> have stopped taking. **Gate the flip on a non-deposit checkout assertion.**
 
 All three keys are now rendered **unconditionally** by the committed Terraform
 chain — `var.grove_stripe_tax_tenants` (a set of tenant slugs, empty by default)
