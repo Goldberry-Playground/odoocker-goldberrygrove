@@ -206,9 +206,11 @@ jobs:
           esac
 
           # Only the result/DRIFT/note lines, capped well under Discord's
-          # 4096-char embed description limit.
-          DETAIL=$(grep -E '^(committed:|prod-live:|DRIFT:|note:|result:)' pin.out \
-                   | head -14 | head -c 1400)
+          # 4096-char embed description limit. `|| true`: a no-match grep exits
+          # 1 and under `shell: bash` (-eo pipefail) would kill this step before
+          # discord-status.sh runs -- the GREP-KILLS-THE-ALERT class (GOL-2630),
+          # enforced repo-wide by scripts/ci/alert-step-grep-guard.test.mjs.
+          DETAIL=$(grep -E '^(committed:|prod-live:|DRIFT:|note:|result:)' pin.out | head -14 | head -c 1400 || true)
 
           # --branch is passed explicitly: on main today discord-status.sh still
           # REQUIRES it and exits 1 without it, which `|| true` would swallow
