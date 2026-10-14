@@ -1,0 +1,174 @@
+name: Obs Firewall Drift
+
+###############################################################################
+# Nightly drift watch on grove-obs-fw -- the DO firewall in front of the
+# canonical observability droplet (ADR-010).
+#
+# WHY THIS IS A SEPARATE WORKFLOW FROM terraform-drift.yml (GOL-2564)
+#
+# grove-obs is the longest-lived env we own and it had NO drift coverage at
+# all: terraform-drift.yml plans only qa-app-platform, and its cron is off.
+# That gap is how grove-obs-fw drifted unnoticed for ~3 weeks -- the admin
+# allowlist stuck on a stale /32, and 5080 still admitting 167.71.109.184/32
+# after that address stopped being ours, which ALSO left the QA collector
+# blocked from ingest. Nothing told us.
+#
+# The obvious fix -- point a `terraform plan` at environments/observability --
+# is the expensive one. That env declares ~20 required vars, most of them
+# secrets (root password, Spaces keys, two Cloudflare origin cert/key pairs,
+# six Discord-bridge values). Every one would have to be mirrored into
+# 1Password and kept byte-identical to what was actually applied, or the
+# watcher false-alarms on its very first run and we mute it -- which is how
+# assets/ and cloudflare-policy/ ended up uncovered in the first place. A
+# watcher that cries wolf is worse than no watcher.
+#
+# So this workflow schedules the CHEAP, HONEST check instead:
+# scripts/check-firewall.sh asserts the live firewall against the declared
+# defaults in variables.tf using a read-only DO token and nothing else -- no
+# Terraform, no S3 backend, no state lock, no tfvars. Zero marginal cost, no
+# false-alarm surface, and it covers the highest-blast-radius question we
+# have: who can reach SSH / OTLP ingest / Keep on the obs droplet.
+#
+# It is NOT a substitute for a full plan (it sees the firewall only, not the
+# droplet/volume/DNS). Full plan-based coverage stays open on GOL-2564 behind
+# the TF_VAR-mirroring work.
+#
+# Noise policy: matches qa-health.yml. A clean run posts NOTHING
+# (--quiet-success). Discord hears drift, a broken watcher, and the RECOVERED
+# edge when drift is reconciled.
+###############################################################################
+
+on:
+  schedule:
+    # 13:00 UTC = 09:00 ET -- deliberately during waking hours, so a drift
+    # alert lands when someone can act on it rather than overnight.
+    - cron: '0 13 * * *'
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  # Read-only + stateless, so this genuinely cannot collide with a Terraform
+  # apply -- it gets its own group rather than borrowing terraform-drift.yml's.
+  # cancel-in-progress:false: a run is ~10s, let it finish.
+  group: obs-firewall-drift
+  cancel-in-progress: false
+
+jobs:
+  firewall-drift:
+    name: grove-obs-fw vs. variables.tf
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+
+    permissions:
+      contents: read
+      # discord-status.sh reads this workflow's own run history for the
+      # streak/RECOVERED grammar. No id-token: 1Password uses a service-account
+      # token, not OIDC.
+      actions: read
+
+    env:
+      OBS_DIR: infra/terraform/environments/observability
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        timeout-minutes: 2
+
+      # Authenticated by the repo-level OP_CI_SA_TOKEN (grove-ci-prod-ro,
+      # read-only to the Grove Prod vault), NOT a gated `environment:` --
+      # gating a scheduled check behind production's required reviewers would
+      # hang it every single night. check-firewall.sh only ever GETs from the
+      # DO API, so a read-only token is sufficient here by construction.
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
+        timeout-minutes: 2
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_CI_SA_TOKEN }}
+          DIGITALOCEAN_TOKEN:       op://Grove Prod/odoocker/DIGITALOCEAN_TOKEN
+          DISCORD_OPS_WEBHOOK_URL:  op://Grove Prod/odoocker/DISCORD_OPS_WEBHOOK_URL
+        with:
+          export-env: true
+
+      - name: Check grove-obs-fw against variables.tf
+        id: check
+        timeout-minutes: 4
+        # continue-on-error so the Discord step always runs; the last step
+        # re-asserts the real result as the run conclusion, which is what the
+        # NEXT run's streak detection reads.
+        continue-on-error: true
+        run: |
+          set +e
+          bash "$OBS_DIR/scripts/check-firewall.sh" 2>&1 | tee fw.out
+          RC="${PIPESTATUS[0]}"
+
+          # Exit 2 is "bad env" and that bucket includes `DO API unreachable`,
+          # which is transient. Retry ONCE before calling the watcher broken.
+          # Exit 1 (drift) is deterministic -- never retry it, a second
+          # identical report just burns a minute.
+          if [ "$RC" -eq 2 ]; then
+            echo "::warning::check-firewall.sh exited 2 (bad env / DO unreachable) -- retrying once in 30s"
+            sleep 30
+            bash "$OBS_DIR/scripts/check-firewall.sh" 2>&1 | tee fw.out
+            RC="${PIPESTATUS[0]}"
+          fi
+          set -e
+
+          echo "rc=$RC" >> "$GITHUB_OUTPUT"
+
+      - name: Discord (drift + broken-watcher + recoveries only)
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RC: ${{ steps.check.outputs.rc }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          case "$RC" in
+            0) STATUS=success
+               TITLE="Obs firewall (grove-obs-fw)" ;;
+            1) STATUS=failure
+               TITLE="Obs firewall DRIFT (grove-obs-fw)" ;;
+            *) STATUS=failure
+               # Distinct title: this is the watcher failing to watch, not the
+               # firewall being wrong. Same severity -- we are blind either way.
+               TITLE="Obs firewall check BROKEN (grove-obs-fw)" ;;
+          esac
+
+          # Only the DRIFT/note lines, capped well under Discord's 4096-char
+          # embed description limit.
+          #
+          # `|| true` is LOAD-BEARING -- do not "clean it up" (GOL-2630).
+          # check-firewall.sh prints its first `firewall:` line only after the
+          # env checks pass, so on every exit-2 path (no DO token, unparseable
+          # variables.tf, DO API unreachable, no such firewall) fw.out has no
+          # matching line and this grep exits 1. Today that survives `set -e`
+          # only by accident: a `run:` with no `shell:` key gets `bash -e`
+          # WITHOUT pipefail, so the pipeline reports `head`'s 0 and swallows
+          # grep's 1. Add `shell: bash` (-eo pipefail) or drop the `| head`
+          # and the step dies here, BEFORE discord-status.sh runs -- so the
+          # "check BROKEN" alert never posts on any exit-2 path, which is the
+          # same silently-dead-alert class this PR exists to fix.
+          # Empty description is fine: discord-status.sh maps "" -> null.
+          DETAIL=$(grep -E '^( *DRIFT|note:|firewall:)' fw.out | head -12 | head -c 1200 || true)
+
+          bash scripts/discord-status.sh \
+            --status="$STATUS" \
+            --workflow=obs-firewall-drift.yml \
+            --run-url="$RUN_URL" \
+            --title="$TITLE" \
+            --description="$DETAIL" \
+            --field "reconcile=terraform -chdir=$OBS_DIR apply -target=digitalocean_firewall.obs" \
+            --quiet-success || true
+
+      # Re-assert the check's result as the run conclusion. Without this the
+      # job is green on drift (continue-on-error above), the alert reads as a
+      # one-off every night, and RECOVERED never fires.
+      - name: Assert check result as run conclusion
+        env:
+          RC: ${{ steps.check.outputs.rc }}
+        run: |
+          if [ "$RC" != "0" ]; then
+            echo "::error::check-firewall.sh exited $RC -- see the Discord alert and fw.out above"
+            exit 1
+          fi
+          echo "grove-obs-fw matches variables.tf"

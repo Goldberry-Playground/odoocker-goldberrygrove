@@ -3,8 +3,13 @@
 **Owner:** DevOps (Terra) · **Epic:** GOL-2324 · **Automation issue:** GOL-2326
 **Cadence:** biweekly. Train-up **Monday**, promote **Wednesday**, teardown **Thursday**.
 **Train #1 anchor:** Mon **2026-09-21** (promote Wed **2026-09-23**, first
-teardown Thu **2026-09-24**). The weekday is authoritative — 2026-09-25 is a
-Friday.
+teardown **scheduled** Thu **2026-09-24**). The weekday is authoritative —
+2026-09-25 is a Friday. **That first teardown actually ran 2026-09-29**, five
+days late and five days of QA spend; it is the concrete reason
+`release-train-reminder.yml` exists.
+**Train #2:** up Mon **2026-10-05**, promote Wed **2026-10-07**, teardown Thu
+**2026-10-08** — the *Oct 5* week. (Any "Oct 6 week" wording in an older copy is
+wrong.)
 
 The train exists to cut idle QA compute ~70%: the Level 3 QA env
 (`infra/terraform/environments/qa-app-platform` — 4 App Platform apps + 2
@@ -17,11 +22,26 @@ zone, reserved IP) survives every teardown, so a rebuild is unattended.
 ## The one command per leg
 
 Both legs are **local, human-run** (see the design decision below for why).
+**Josh runs them, from his own shell** — both resolve `op://` refs out of the
+`Goldberry Grove - Admin` vault, which no agent service account can read.
+**Terra conducts** the train (bundle, manifest, gate reading, promote PRs,
+verification) and executes neither leg.
+The Wednesday **promote** leg has no Makefile target and is written up
+separately — see "The Wednesday promote leg" below.
 
 | Leg | When | Command | What it does |
 |-----|------|---------|--------------|
 | **train-up** | Mon | `make train-up` | `= make qa-l3-up`. Idempotent `terraform apply` of the QA env. Droplets re-bootstrap from cloud-init; Odoo reconnects to the surviving Managed PG. **Safe to re-run.** Hard-gated on the publish-webhook secret guard — see below. |
-| **train-teardown** | Thu | `make train-teardown` | `= make qa-l3-teardown` → `scripts/qa-l3-teardown.sh compute`. Destroys the 4 apps + the Odoo droplet + 2 volume attachments (the spend). Typed-confirm gated. **Data/DNS/certs survive**, and so does the exempt **grove-qa-l3-obs** droplet — see below. |
+| **train-teardown** | Thu | `make train-teardown` | `= make qa-l3-teardown` → `scripts/qa-l3-teardown.sh compute`. Destroys the 4 apps + the Odoo droplet + 2 volume attachments (the spend) — GOL-2327 resolved as **Option A: destroy**, not park and not scale-to-zero, so anything live-only on an app (an un-vaulted env secret) is gone. Typed-confirm gated. **Data/DNS/certs survive.** There is no obs exemption any more — `grove-qa-l3-obs` was retired 2026-09-29 under ADR-010, see below. |
+
+The **promote** leg (Wed) is not a `make` target: it is the odoocker modules-pin
+bump (`scripts/prod-modules-promote.sh`, see
+[`RUNBOOK-module-upgrade.md`](RUNBOOK-module-upgrade.md)) plus
+`promote-storefronts.yml`, and Josh approves the production environment.
+Any **per-tenant env flag** a train activates on prod — e.g. the Stripe Tax
+cutover `GROVE_STRIPE_TAX_{TENANT}` (GOL-2568) — is a *separate named step* in
+that runbook, because prod's `user_data` is in `ignore_changes` and no
+`terraform apply` injects it into the running droplet.
 
 Preview before either (read-only, no spend, no lock-and-leave):
 
@@ -58,33 +78,17 @@ two places an un-vaulted secret lives. Any secret that is live-only and not in
 1Password is **gone** after teardown, guard or no guard — the guard covers
 applies, not destroys.
 
-### The obs droplet is exempt from teardown (GOL-2333 / GOL-2472)
+### No obs droplet in the QA env (retired 2026-09-29, ADR-010)
 
-`compute` mode deliberately **does not** destroy `digitalocean_droplet.obs`
-(**grove-qa-l3-obs**), its firewall, or the `oo.qa` / `keep.qa` DNS records.
-Until the CEO ratifies ADR-010 (`docs/ADR/010-observability-droplet-home.md`,
-which lands with PR #698), the exemption is enforced in code rather than in an
-operator's memory:
+The QA-only **grove-qa-l3-obs** droplet and its firewall and `oo.qa` / `keep.qa`
+records were retired when the CEO accepted ADR-010
+(`docs/ADR/010-observability-droplet-home.md`, GOL-2333). The teardown
+exemption (`QA_L3_TEARDOWN_OBS`, pre-flight tripwire, post-destroy state check)
+went with it. There is nothing obs-shaped left in `qa-app-platform/` for
+`train-up` to create or `train-teardown` to destroy.
 
-- The `-target` list omits the obs droplet unless `QA_L3_TEARDOWN_OBS=1`.
-- A **pre-flight tripwire** aborts with exit 3 if the obs droplet ever appears
-  in the targets without that opt-in — so a bad merge or rebase costs a re-run,
-  not a droplet.
-- A **post-destroy check** re-reads `terraform state list` and exits non-zero
-  unless the obs droplet, its firewall and both DNS records are still there.
-  `-target` also destroys *dependents*, so absence from the target list is not
-  by itself proof of survival; the check is the proof. A clean run prints
-  `==> Exemption OK: obs droplet + firewall + oo/keep DNS records still in state.`
-
-To include the obs droplet on purpose (after ratification, or to retire it):
-
-```bash
-QA_L3_TEARDOWN_OBS=1 make train-teardown
-```
-
-> **Not the same box.** This exemption is about **grove-qa-l3-obs**, the QA-only
-> Phase-1.5 stack. The canonical observability plane — **grove-obs**, in
-> `infra/terraform/environments/observability/` — has its own Terraform state
+> The canonical observability plane, **grove-obs** in
+> `infra/terraform/environments/observability/`, has its own Terraform state
 > and is never reachable by this script under any flag.
 
 **Never run the DNS script as part of a teardown.** The qa zone and the
@@ -99,6 +103,124 @@ Let's Encrypt issuance budget (ADR-005).
   resolves them into `TF_VAR_*` / `AWS_*` for the wrapped terraform. Values
   never touch shell history.
 - `terraform ~> 1.10`.
+
+---
+
+## The Wednesday promote leg
+
+`train-up` and `train-teardown` each have a Makefile target; **promote does
+not**, and that is deliberate — it is two independent legs against production
+with a human approval between them. Train #1 ran this leg ad hoc, which is how
+both footguns in "Retired caveats" below were found live on a revenue box. It
+is written down here so Train #2 onward runs it the same way twice.
+
+**Who runs it: Josh, from his own shell.** Not an agent, and not CI. The prod
+droplet's DO firewall does not admit the agent plane on port 22 — a TCP connect
+to the reserved IP hangs to timeout (GOL-2282; re-confirmed 2026-09-30). Leg A
+also stops at the `production` GitHub Environment gate, which only a configured
+reviewer can release.
+
+### Pin the bundle first
+
+Pin **explicit 40-char SHAs** for both repos before anything runs — one
+`grove-odoo-modules` SHA and one `grove-sites` SHA — and put them in the train
+issue. Never promote "main at promote time": main moves under you, and an
+out-of-train hotfix during the window will ride along unreviewed (it did during
+the 2026-09-29/30 GOL-2677 hotfix). Pinning is also what releases any PRs held
+back for the next train.
+
+### Order of operations
+
+| # | Step | Command |
+|---|------|---------|
+| 1 | **Gate on QA, at the pinned modules SHA.** `EXPECT_REF` makes the script refuse a QA box that is not actually on the bundle SHA. | `EXPECT_REF=<modules-sha> scripts/qa-module-upgrade.sh grove_headless` |
+| 2 | **e2e LAST.** Dispatch `e2e-nursery.yml` only after step 1 and after the final merge. Read the skip list — a spec that skipped is not a spec that passed. | — |
+| 3 | **Leg B pre-flight** (writes nothing; reports the recorded version and whether the tax migration is due). | `TARGET_REF=<modules-sha> scripts/prod-modules-promote.sh` |
+| 4 | **Leg B promote.** Rewrites `CUSTOM_MODULES_REF` in the droplet's `/etc/grove/.env`, waits for git-sync, runs the migrations, then **proves** the WV tax bound for every company. | `TARGET_REF=<modules-sha> CONFIRM=PROMOTE scripts/prod-modules-promote.sh` |
+| 5 | **Reconcile the committed pin** onto what is now live, or the next droplet rebuild rolls prod back. Drift-only; never touches prod. Merge the PR it opens. | `gh workflow run reconcile-modules-pin.yml -f modules_sha=<modules-sha>` |
+| 6 | **Leg A storefronts.** Then approve the `production` Environment gate, and merge the reconcile PR it opens. | `gh workflow run promote-storefronts.yml -f target_sha=<sites-sha> -f confirm=PROMOTE` |
+| 7 | **Named flag step — only if this train carries a per-tenant env flag.** See "Flag flips are conditional" below. Skipping it is a valid outcome. | see `RUNBOOK-module-upgrade.md` |
+
+Steps 3–5 are Leg B (modules) and step 6 is Leg A (storefronts); the script
+header explains why they cannot be one workflow.
+
+> **Always pass `target_sha` explicitly at step 6**, as the table does. If you
+> ever leave it **blank**, it does **not** mean "grove-sites `main` HEAD": since
+> #821 (merged 2026-10-01) a blank input resolves to the newest `main` commit with
+> a **green `docker.yml`** run, and all four
+> `ghcr.io/goldberry-playground/grove-*:<sha>` tags are verified **before** the
+> gate. That replaced the failure mode where blank resolved to a CI-only `main`
+> HEAD that `docker.yml`'s path filter never built, so the gate was approved
+> against images that did not exist. Blank is the safe default now, but an
+> explicit pinned SHA is still what the bundle contract requires. **Order matters when a
+storefront change depends on a backend change** — promote modules first, so the
+frontend never goes live against an API that does not have its field yet.
+
+### Retired caveats — do NOT carry these forward
+
+Both workarounds that Train #1 needed were fixed on 2026-09-30 and are now
+wrong advice:
+
+- **`PROD_HOST` needs no override.** It defaults to prod's reserved IP, and the
+  script now refuses a Cloudflare-proxied hostname up front instead of hanging
+  on a connect that can never complete (#787).
+- **The first attempt no longer exits 6.** Bulk-sourcing `.env` used to export
+  the *old* `CUSTOM_MODULES_REF` into the payload shell, where compose
+  interpolation prefers it over `--env-file`, so git-sync was recreated on the
+  stale ref and the 300s wait timed out (#783, GOL-2657).
+
+**So run the promote once. A failure now is a real failure** — stop and
+diagnose it. Do not re-run on the assumption that the second attempt sticks;
+that assumption is exactly what hid GOL-2657 for a full train.
+
+### Flag flips are conditional — ship inert, flip only if the gates passed
+
+Any **per-tenant env flag** a train activates on prod — e.g. the Stripe Tax
+cutover `GROVE_STRIPE_TAX_{TENANT}` (GOL-2568) — is step 7, a *separate named
+step*, never a side effect of steps 3–6. prod's `user_data` is in
+`ignore_changes`, so no `terraform apply` injects it into the running droplet;
+the procedure is in
+[`RUNBOOK-module-upgrade.md`](RUNBOOK-module-upgrade.md) → "Flipping the Stripe
+Tax cutover flag on prod".
+
+**The rule (ruled 2026-10-02, GOL-2584):** the flag **ships OFF** regardless of
+what merged, and is flipped at the Wednesday promote **only if its QA gates
+passed** during the Mon–Wed window.
+
+- Gates green → flip, verify, record it in the train issue.
+- Any gate unmet, inconclusive, or not run → **do not flip.** The flip rides the
+  next train. **This is a planned outcome, not an incident, and needs no
+  escalation.**
+- **Rollback = flag off**, which is byte-identical to the pre-flag path.
+
+Note the flip is a *value* change on a key the committed compose already renders,
+so it never needs a compose edit — and a container's env is fixed at create time,
+so it needs `up -d --force-recreate --no-deps odoo`, never a plain restart.
+
+### Rollback
+
+Leg A rolls back by re-running `promote-storefronts.yml` at the previous pin.
+
+Leg B does not. The script backs `/etc/grove/.env` up before it writes and
+prints the exact restore commands on both the failure and success paths, but
+**Odoo does not down-migrate**: once the upgrade pass has run, reverting the pin
+returns the *code* and not the *schema*. Treat a Leg B rollback as an incident,
+not a routine undo — which is why step 3's pre-flight tells you whether a
+migration is due before you commit to step 4.
+
+### Verification
+
+- **Step 4 is self-verifying, and its success condition is not "exit 0".**
+  `setup_wv_sales_tax` swallows per-company failures at WARNING, so a partial
+  bind exits 0 and looks fine while some companies mis-charge tax. The script
+  asserts the `WV 6% state sales tax bound for N of N companies` line *and*
+  re-reads the tax from the live DB.
+- **Read the live pin, not the PR badge.** `/etc/grove/.env`'s
+  `CUSTOM_MODULES_REF` is the truth for Leg B; the storefront build fingerprint
+  is the truth for Leg A. A merged reconcile PR only means committed HCL now
+  agrees with what was already live.
+- `scripts/test_prod_modules_promote.py` (27 tests, hermetic — no droplet) is
+  the regression suite for this leg, including the two retired caveats above.
 
 ---
 
@@ -176,8 +298,79 @@ GOL-2326.
 - **train-teardown dry-run:** run `scripts/qa-l3-teardown.sh compute` and enter
   anything other than `destroy-qa-l3-compute` at the prompt — it aborts without
   calling terraform. That typed-confirm IS the safe dry-run.
-- **teardown obs exemption:** `python3 scripts/test_qa_l3_teardown_guard.py`
-  runs the real script against stubbed `op`/`terraform` and asserts the obs
-  droplet is not in the destroy targets. No network, no spend.
 - **reminder:** `gh workflow run release-train-reminder.yml -f leg=up` (or
   `down`) posts a test embed to the ops Discord channel immediately.
+
+---
+
+## Gate: shop-departments backward compatibility (Train #2, GOL-2584 / GOL-2744)
+
+grove-odoo-modules **#299** restructures `product.public.category` in place —
+backfills `grove_slug`, renames one category, reparents the orchard categories
+under a new "Orchard & food forest" department root and creates coming-soon
+children. The **storefront shipping in Train #2 predates all of that**: it
+browses with five hardcoded slugs in
+`grove-sites/apps/nursery/data/categories.ts` and matches them against
+`product.categories[].slug`. So the backend can silently unhook every pill on
+`/shop` while every check stays green. The storefront half (GOL-2745, #892)
+rides Train #3.
+
+`scripts/verify-shop-departments-compat.py` turns that into a before/after gate
+against the **public** API — no Odoo login, no 1Password, no SSH, so it runs in
+CI, on the agent plane, or from a laptop mid-window.
+
+```bash
+# 1. BEFORE `scripts/qa-module-upgrade.sh grove_headless`
+python3 scripts/verify-shop-departments-compat.py snapshot \
+  --base-url https://odoo.qa.gatheringatthegrove.com \
+  --out /tmp/qa-cats-before.json
+
+# 2. run the upgrade as usual (RUNBOOK-qa-module-upgrade.md)
+
+# 3. AFTER. The Guilds rename is the ONE intentional slug change; declare it.
+python3 scripts/verify-shop-departments-compat.py verify \
+  --base-url https://odoo.qa.gatheringatthegrove.com \
+  --baseline /tmp/qa-cats-before.json \
+  --allow-slug-change food-forest-packages=guilds
+```
+
+Exit `0` = compatible, `2` = regression (each problem printed), `1` =
+transport/usage. It asserts: no pre-upgrade category disappears; every slug
+still resolves to the same category unless declared; each category holds the
+same product ids; each of the five hardcoded pills returns the same count
+through the server-side `?cat=` filter; and one PDP per category still answers
+200 with its own id.
+
+**Hold rule.** A non-zero exit means #299 comes OUT of the bundle — pin
+`custom_modules_ref` to the commit before it (`dd8bf32`, the #298 merge) rather
+than debugging inside the window.
+
+### What is already known, without QA (verified against live prod 2026-09-30)
+
+Prod carries exactly seven public categories, ids 1-7, and their names slugify
+to exactly the five slugs the storefront hardcodes:
+
+| id | name | slugify(name) | published | after #299 |
+|----|------|---------------|-----------|------------|
+| 1 | Fruit Trees | `fruit-trees` | 10 | unchanged slug, reparented |
+| 2 | Native | `native` | 5 | unchanged slug, reparented |
+| 3 | Nut Trees | `nut-trees` | 1 | unchanged slug, reparented |
+| 4 | Berry & Nut Shrubs | `berry-nut-shrubs` | 1 | unchanged slug, reparented |
+| 5 | Fruiting Vines | `fruiting-vines` | 0 | unchanged slug, reparented |
+| 6 | Food Forest Packages | `food-forest-packages` | 5 | **renamed Guilds, re-slugged `guilds`** |
+| 7 | Mycoforestry | `mycoforestry` | 0 | unchanged slug, becomes a coming-soon department |
+
+Reparenting is invisible to the storefront because `?cat=` resolves an **exact**
+slug (non-recursive) and the pills count client-side off `product.categories`,
+which the migration never touches. No category is ever unlinked, so all seven
+ids survive.
+
+**The one real break is category 6.** `_backfill_public_slugs` preserves its
+URL as `food-forest-packages`, then step 2 immediately overwrites it with
+`guilds`. `/shop?cat=food-forest-packages` serves 5 products on prod today and
+will serve 0 after promote. Nothing in grove-sites links it (the pills are the
+other five), so the blast radius is bookmarks and anything indexed — accepted
+as an intentional, declared change, not a defect. If Josh wants it preserved,
+the cheap fixes are (a) leave `grove_slug = food-forest-packages` and resolve
+the Guilds collection by `grove_node_kind` instead of slug, or (b) a Cloudflare
+redirect rule on the query string.

@@ -349,6 +349,29 @@ resource "digitalocean_app" "tenant" {
         scope = "RUN_AND_BUILD_TIME"
       }
 
+      # grove_support live chat (GOL-3302 / GOL-2023), NURSERY ONLY -- the
+      # Train #3 QA gate surface. Runtime reads by the storefront root layout
+      # (grove-sites #1058); omitted entirely (widget dark) when the channel id
+      # var is empty. RUN_TIME, not BUILD_TIME: the image is prebuilt on GHCR,
+      # so no build-scope env can reach it (see production/variables.tf doc).
+      dynamic "env" {
+        for_each = each.key == "nursery" && var.nursery_livechat_channel_id != "" ? [1] : []
+        content {
+          key   = "LIVECHAT_CHANNEL_ID"
+          value = var.nursery_livechat_channel_id
+          scope = "RUN_TIME"
+        }
+      }
+
+      dynamic "env" {
+        for_each = each.key == "nursery" && var.nursery_livechat_channel_id != "" ? [1] : []
+        content {
+          key   = "LIVECHAT_ODOO_URL"
+          value = "https://odoo.${local.qa_zone}"
+          scope = "RUN_TIME"
+        }
+      }
+
       env {
         key   = "NEXT_TELEMETRY_DISABLED"
         value = "1"

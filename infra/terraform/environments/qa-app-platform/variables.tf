@@ -15,7 +15,7 @@ variable "cloudflare_api_token" {
 # === Operator inputs ===
 
 variable "admin_ip_cidrs" {
-  description = "Operator IPv4 CIDRs for the SSH allowlist (Odoo + obs droplets) and the Managed PG trusted-source rule. A LIST so more than one operator address can be authorised at once (GOL-1842) — an ISP-rotated IP no longer locks every operator out. Each entry is a `curl -4 ifconfig.me`/32. Codify a new address by appending it here, never as a hand-added DO rule (removed by the next apply)."
+  description = "Operator IPv4 CIDRs for the SSH allowlist (Odoo droplet) and the Managed PG trusted-source rule. A LIST so more than one operator address can be authorised at once (GOL-1842) — an ISP-rotated IP no longer locks every operator out. Each entry is a `curl -4 ifconfig.me`/32. Codify a new address by appending it here, never as a hand-added DO rule (removed by the next apply)."
   type        = list(string)
   # 173.84.140.152/32 = Josh's ISP-rotated operator address, kept in step with
   # production so the same machine reaches QA droplets too (GOL-1842).
@@ -55,9 +55,9 @@ variable "region" {
 # === Odoo droplet ===
 
 variable "odoo_droplet_size" {
-  description = "Tiny droplet for Odoo only (no frontends, no Postgres). s-1vcpu-2gb is the smallest size that comfortably runs Odoo 19 + workers; cost ~$12/mo while running. The full QA monolith uses s-2vcpu-4gb because it also runs PG + 4 frontends — Level 3 offloads those, so this can drop to half the size."
+  description = "Tiny droplet for Odoo only (no frontends, no Postgres). 1 vCPU / 2 GB is the smallest shape that comfortably runs Odoo 19 + workers. Pinned to the -intel slug (~$14/mo while running) because nyc3 refused the generic s-1vcpu-2gb at Train #2 QA-up even though /v2/sizes still lists it (GOL-2735); override with TF_VAR_odoo_droplet_size if that changes. The full QA monolith uses s-2vcpu-4gb because it also runs PG + 4 frontends — Level 3 offloads those, so this can drop to half the size."
   type        = string
-  default     = "s-1vcpu-2gb"
+  default     = "s-1vcpu-2gb-intel"
 }
 
 variable "droplet_image" {
@@ -122,25 +122,8 @@ variable "custom_modules_ref" {
   }
 }
 
-# === Observability droplet (Phase 1.5) ===
-
-variable "obs_droplet_size" {
-  description = "DigitalOcean droplet size for the observability droplet (OpenObserve + Keep + inline MinIO). s-1vcpu-2gb fits comfortably in QA per ADR-007 addendum. Cost ~$12/mo while running."
-  type        = string
-  default     = "s-1vcpu-2gb"
-}
-
-variable "openobserve_tag" {
-  description = "OpenObserve image tag (public.ecr.aws/zinclabs/openobserve:<tag>). DIGEST-PINNED since 2026-07-04: upstream prunes old tags from public ECR (v0.17.2 vanished and every fresh obs droplet failed the pull; the old droplet had only survived on its local image cache). Tag-only pins on this registry are time bombs -- keep the @sha256 suffix on updates. Update docker-compose.monitoring.yml (local) in the same commit."
-  type        = string
-  default     = "v0.91.1@sha256:e1ff0445fab3e748ac4cf630308cc8493579e50d19ad255bb3a3b8c1b710aaf7"
-}
-
-variable "keep_tag" {
-  description = "Keep (alert routing) image tag for both keep-api and keep-ui. Match docker-compose.monitoring.yml."
-  type        = string
-  default     = "latest"
-}
+# Observability droplet vars removed 2026-09-29: grove-qa-l3-obs retired per
+# ADR-010 (GOL-2333). The canonical obs plane is environments/observability/.
 
 # === ACME endpoint (Caddy / Let's Encrypt) ===
 
@@ -460,6 +443,18 @@ variable "discord_orders_webhook_url" {
   default     = ""
 }
 
+# --- Stripe Tax per-tenant cutover flag (GOL-2568 / Train #2 GOL-2584) -------
+variable "grove_stripe_tax_tenants" {
+  description = "Storefront tenant slugs whose headless checkout hands sales tax to Stripe Tax instead of Odoo's computed WV line (GOL-2568). grove_headless controllers/main.py `_stripe_tax_enabled(order)` reads the per-tenant env flag GROVE_STRIPE_TAX_{TENANT} from os.environ and treats unset/empty/anything-but-a-truthy-value as OFF; OFF is byte-identical to the pre-GOL-2568 checkout and IS the documented rollback (docs/stripe-tax-cutover.md). Declared as ONE set of slugs rather than three booleans so the cutover state is a single reviewable line and no tenant can be half-flipped: cloud-init renders all three GROVE_STRIPE_TAX_* keys unconditionally, ON for the listed slugs and OFF for the rest. Empty default = every tenant on Odoo tax, i.e. today's behaviour; turning a tenant ON is the separate named step at promote, after the QA e2e gate asserts amounts for a WV and a non-WV address. Feeds cloud-init user_data - changing it REPLACES the QA odoo droplet (which is what train-up does anyway)."
+  type        = set(string)
+  default     = []
+
+  validation {
+    condition     = length(setsubtract(var.grove_stripe_tax_tenants, ["goldberry", "ggg", "nursery"])) == 0
+    error_message = "grove_stripe_tax_tenants may only contain the storefront tenant slugs goldberry, ggg, nursery (the values website_id.grove_tenant_slug() returns). A typo here would silently leave the intended tenant on Odoo tax."
+  }
+}
+
 variable "shippo_api_key" {
   description = "Shippo TEST API key for QA label purchase + rate quotes. grove_headless (models/sale_order.py) reads os.environ SHIPPO_API_KEY — raises UserError if unset, so the empty default keeps plan/apply working and label purchase inert until wired. 1P: op://Grove QA/Shippo Key/password (via TF_VAR_shippo_api_key in .env.op). Feeds cloud-init user_data — changing it REPLACES the QA odoo droplet."
   type        = string
@@ -472,6 +467,67 @@ variable "grove_shippo_webhook_token" {
   type        = string
   sensitive   = true
   default     = ""
+}
+
+# --- Printify print-on-demand merch (GOL-3316, Train #3; spec grove-odoo-modules#340)
+# grove_headless reads all four UPPERCASE names from os.environ
+# (models/printify_client.py / product_template.py / sale_order.py / the
+# /grove/api/v1/printify/webhook route). The odoo process env comes ONLY from the
+# compose `environment:` block, so each key is declared here, rendered into
+# /etc/grove/.env by cloud-init AND listed in docker-compose.qa.yml -- the same
+# three-point chain as SHIPPO_API_KEY (and the GOL-3209 / PERENUAL_API_KEY trap
+# when any point is missing). Empty token/shop => the sync action and push cron
+# raise a clear error and no Printify call is made; empty webhook secret =>
+# verify_signature fails closed (401). Printify has no test mode: QA uses the
+# REAL token with PRINTIFY_DRY_RUN=1 so orders are created but never sent to
+# production. All four feed cloud-init user_data => changing any REPLACES the QA
+# odoo droplet (which is what train-up does anyway). Values are written UNQUOTED
+# into the bash-sourced /etc/grove/.env, hence the charset validation.
+variable "printify_api_token" {
+  description = "Printify personal access token (JWT) for the farm shop. grove_headless printify_client reads os.environ PRINTIFY_API_TOKEN; empty => sync/push raise a clear error, no API call. QA uses the same token as prod (Printify has no test mode) guarded by PRINTIFY_DRY_RUN=1. 1P: op://Grove QA/Printify Key/api_token (via TF_VAR_printify_api_token in .env.op, commented until the item exists). Feeds user_data => REPLACES the QA odoo droplet."
+  type        = string
+  sensitive   = true
+  default     = ""
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9._~+/=:-]*$", var.printify_api_token))
+    error_message = "printify_api_token must contain no whitespace or shell metacharacters (A-Za-z0-9 . _ ~ + / = : - only): cloud-init writes it unquoted into the bash-sourced /etc/grove/.env, so a bad value breaks the droplet's boot, not the apply."
+  }
+}
+
+variable "printify_shop_id" {
+  description = "Numeric id of the farm's Printify shop (the API / custom-integration sales channel). grove_headless reads os.environ PRINTIFY_SHOP_ID; empty => sync/push raise a clear error. 1P: op://Grove QA/Printify Key/shop_id (commented in .env.op until the item exists). Feeds user_data => REPLACES the QA odoo droplet."
+  type        = string
+  sensitive   = true
+  default     = ""
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9._~+/=:-]*$", var.printify_shop_id))
+    error_message = "printify_shop_id must contain no whitespace or shell metacharacters (A-Za-z0-9 . _ ~ + / = : - only): it is written unquoted into the bash-sourced /etc/grove/.env."
+  }
+}
+
+variable "printify_webhook_secret" {
+  description = "Shared secret Printify signs webhook bodies with (HMAC-SHA256); grove_headless /grove/api/v1/printify/webhook reads os.environ PRINTIFY_WEBHOOK_SECRET and verify_signature fails CLOSED when it is empty (every webhook => 401). The same value is registered with Printify by scripts/printify_register_webhooks.py (grove-odoo-modules). DISTINCT from prod so revoking one stage never breaks the other. 1P: op://Grove QA/Printify Key/webhook_secret (commented in .env.op until the item exists). Feeds user_data => REPLACES the QA odoo droplet."
+  type        = string
+  sensitive   = true
+  default     = ""
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9._~+/=:-]*$", var.printify_webhook_secret))
+    error_message = "printify_webhook_secret must contain no whitespace or shell metacharacters (A-Za-z0-9 . _ ~ + / = : - only): it is written unquoted into the bash-sourced /etc/grove/.env."
+  }
+}
+
+variable "printify_dry_run" {
+  description = "Printify dry-run flag. grove_headless sale_order push does `(os.environ.get(\"PRINTIFY_DRY_RUN\") or \"\").strip().lower() in (\"1\",\"true\",\"yes\",\"on\")`: truthy => Printify orders are CREATED but never sent to production; anything else (including empty) => live. QA defaults to \"1\" because QA runs the REAL Printify token (no test mode exists). Restricted to the tokens the module recognises so a typo cannot silently go live. Not secret. Feeds user_data => REPLACES the QA odoo droplet."
+  type        = string
+  default     = "1"
+
+  validation {
+    condition     = contains(["", "1", "true", "yes", "on", "0", "false", "no", "off"], lower(var.printify_dry_run))
+    error_message = "printify_dry_run must be one of 1/true/yes/on (dry run: create orders, never send to production), 0/false/no/off or empty (LIVE). grove_headless treats any other string as live WITHOUT COMPLAINING, so a typo here would send real print orders from QA."
+  }
 }
 
 # --- Carrier tracking poll — UPS Track + USPS Tracking v3 (GOL-2296) ---------
@@ -553,5 +609,41 @@ variable "perenual_api_key" {
   validation {
     condition     = var.perenual_api_key == "" || can(regex("^[A-Za-z0-9._~+/=:-]{8,200}$", var.perenual_api_key))
     error_message = "perenual_api_key must be empty or a plain API token with NO whitespace or shell metacharacters (A-Z a-z 0-9 and . _ ~ + / = : - only, 8-200 chars) — cloud-init writes it UNQUOTED into the bash-sourced /etc/grove/.env, so a space, quote or $ would break set -euo pipefail at boot."
+  }
+}
+
+# --- grove_support live chat switch-on (GOL-3302 / GOL-2023, Train #3 gate) --
+#
+# Same shape as production/variables.tf nursery_livechat_channel_id (read that
+# doc for the why-RUN_TIME-not-NEXT_PUBLIC story). QA channel 2 is the nursery
+# livechat channel on the QA Odoo (verified 2026-09-21 while building the embed,
+# grove-sites #794); it lives in the Managed PG that survives train-teardown, so
+# the id is stable across train-ups.
+variable "nursery_livechat_channel_id" {
+  description = "Integer id of the im_livechat.channel record on the QA Odoo that the nursery QA storefront's support widget loads. Empty string = widget OFF (env omitted). Default 2 = the QA nursery channel (survives teardown in the Managed PG). PUBLIC value, not a secret. Nursery only; RUN_TIME scope; see apps.tf."
+  type        = string
+  default     = "2"
+
+  validation {
+    condition     = can(regex("^[0-9]*$", var.nursery_livechat_channel_id))
+    error_message = "nursery_livechat_channel_id must be empty (widget off) or the integer id of the im_livechat.channel record on the QA Odoo."
+  }
+}
+
+# grove_support's chat-start Discord ping (grove_support/models/discord.py)
+# reads ONLY os.environ DISCORD_OPS_WEBHOOK_URL -- it does not fall back to
+# DISCORD_ORDERS_WEBHOOK_URL the way grove_headless _notify_discord() does.
+# QA plumbed neither ops webhook until now, so the Train #3 live-chat gate
+# ("Discord ops ping on chat start") was untestable on QA. Mirrors prod's
+# odoo.tf discord_ops_webhook_url = var.discord_webhook_url chain.
+variable "discord_ops_webhook_url" {
+  description = "Discord webhook grove_support posts the chat-start ping to on QA (os.environ DISCORD_OPS_WEBHOOK_URL; grove_headless _notify_discord() also falls back to it when DISCORD_ORDERS_WEBHOOK_URL is empty). Empty default = ping is a silent no-op in QA. QA chats pinging the REAL #grove-ops channel is intentional for the Train #3 gate, same precedent as discord_orders_webhook_url; point it at a QA-only webhook later if the noise bothers staff. 1P: op://Goldberry Grove - Admin/Grove Infra/discord_webhook_url (via .env.op). BARE url, no /slack suffix. Feeds user_data -- changing it REPLACES the QA odoo droplet (which is what train-up does anyway)."
+  type        = string
+  sensitive   = true
+  default     = ""
+
+  validation {
+    condition     = var.discord_ops_webhook_url == "" || can(regex("^https://discord(app)?\\.com/api/webhooks/[0-9]+/[A-Za-z0-9_-]+$", var.discord_ops_webhook_url))
+    error_message = "discord_ops_webhook_url must be empty or a bare Discord webhook URL (https://discord.com/api/webhooks/<id>/<token>) with NO /slack suffix and no whitespace -- cloud-init writes it UNQUOTED into the bash-sourced /etc/grove/.env."
   }
 }

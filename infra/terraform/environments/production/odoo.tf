@@ -180,11 +180,31 @@ resource "digitalocean_droplet" "odoo" {
     stripe_webhook_secret_ggg       = var.stripe_webhook_secret_ggg
     stripe_webhook_secret_goldberry = var.stripe_webhook_secret_goldberry
 
+    # Stripe Tax per-tenant cutover flag (GOL-2568). Rendered for all three
+    # tenants so the compose environment: keys always exist on the box; "1"
+    # only for the slugs in var.grove_stripe_tax_tenants, "" (= OFF = Odoo's
+    # WV tax line) otherwise. Empty set default => no behaviour change, and
+    # because user_data is in ignore_changes a plain apply never activates it
+    # (GOL-1772: activation is an env-file upsert or a droplet REPLACE).
+    grove_stripe_tax_goldberry = contains(var.grove_stripe_tax_tenants, "goldberry") ? "1" : ""
+    grove_stripe_tax_ggg       = contains(var.grove_stripe_tax_tenants, "ggg") ? "1" : ""
+    grove_stripe_tax_nursery   = contains(var.grove_stripe_tax_tenants, "nursery") ? "1" : ""
+
     # Shippo fulfillment (GOL-988). Default-empty => label purchase raises
     # UserError and the tracking webhook fails closed. Activation rides the
     # board-gated GOL-484 rebuild (user_data input).
     shippo_api_key             = var.shippo_api_key
     grove_shippo_webhook_token = var.grove_shippo_webhook_token
+
+    # Printify merch (GOL-3316, Train #3). Token/shop default-empty => sync and
+    # push raise a clear error; webhook secret empty => fails closed; dry-run
+    # default EMPTY = live once the secrets land. user_data input (in
+    # ignore_changes below): the RUNNING box gets the compose passthrough from
+    # Leg B (prod-modules-promote.sh PRINTIFY_PASSTHROUGH=1), values from Josh.
+    printify_api_token      = var.printify_api_token
+    printify_shop_id        = var.printify_shop_id
+    printify_webhook_secret = var.printify_webhook_secret
+    printify_dry_run        = var.printify_dry_run
 
     # Carrier tracking poll (GOL-2296 Pirate Ship C, grove-odoo-modules#232).
     # Default-empty => each carrier client is not built and the
@@ -229,7 +249,8 @@ resource "digitalocean_droplet" "odoo" {
     # => jobs stay queued (never faked done) and the cron is a no-op.
     # user_data is in ignore_changes (below), so landing this does NOT touch
     # the running droplet; activation rides Josh's -target'ed rebuild.
-    perenual_api_key = var.perenual_api_key
+    perenual_api_key        = var.perenual_api_key
+    grove_revalidate_secret = var.grove_revalidate_secret
     # Mailgun SMTP for Odoo transactional email (GOL-988). odoorc.sh substitutes
     # these into the SMTP group of /etc/odoo/odoo.conf. Empty smtp_password =>
     # SMTP auth inert (no send), so this scaffold is a safe no-op until the
