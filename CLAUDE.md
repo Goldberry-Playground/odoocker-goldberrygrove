@@ -71,6 +71,16 @@ Update the dev profile password: `odoo-mcp edit-profile --name dev --password <y
 - `docs/DEVELOPMENT.md` — Local development guide
 - `docs/ADR/` — Architecture Decision Records
 
+## Cannot push / open a PR?
+
+Run `scripts/agent-git/github-push-doctor.sh` **before** filing an outage issue.
+`git push origin HEAD:<branch>` is the designed path (GitHub App credential
+helper). Two recurring false alarms: broker `owner_not_allowed` means you passed
+`?repo=<owner>/<repo>` instead of `?owner=<owner>&repo=<repo>`, and
+`gh auth status` reporting the `hosts.yml` token invalid is expected and harmless
+(`gh` uses `GH_TOKEN` from the env). Full detail:
+[`docs/RUNBOOK-agent-github-push.md`](docs/RUNBOOK-agent-github-push.md).
+
 ## Pull requests: Draft vs. Ready
 
 Open WIP as a **Draft** PR; only mark it **Ready** when the change is
