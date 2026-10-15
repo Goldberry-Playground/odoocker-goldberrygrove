@@ -332,8 +332,15 @@ def oo_bootstrap() -> dict:
     tmpl = cfg["template"]
     dest = dict(cfg["destination"])
     # Substitute the live secret + resolved Keep URL into the destination.
+    # The token is only REQUIRED when there is a destination to attach it to:
+    # oo_upsert_destination() already SKIPs when KEEP_EVENT_URL is unset, and on
+    # the app plane (MONITORING_PLANE=app, prod Odoo droplet) Keep is neither
+    # reachable nor configured, so demanding KEEP_WEBHOOK_TOKEN here used to
+    # sys.exit(1) in Step 3 -- after the plane switch skipped Step 2 -- and the
+    # alerts + dashboards upserts never ran (GOL-2325 go-live, GOL-3308 review).
     dest["url"] = keep_event_url()
-    dest.setdefault("headers", {})["X-API-KEY"] = require_env("KEEP_WEBHOOK_TOKEN")
+    if dest["url"]:
+        dest.setdefault("headers", {})["X-API-KEY"] = require_env("KEEP_WEBHOOK_TOKEN")
     _log("  upserting OO alert template + Keep-webhook destination...")
     oo_upsert_template(tmpl)
     oo_upsert_destination(dest)

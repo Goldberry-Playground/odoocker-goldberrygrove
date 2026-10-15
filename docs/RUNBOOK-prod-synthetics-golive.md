@@ -27,7 +27,13 @@ until it clears.**
 | **(a)** CEO OK to seed a `$0 SYNTHETIC-CANARY` product + test partner into **prod** Odoo | CEO | checkout-canary journey only | `SYNTHETIC_CANARY_ENABLED=true` + `monitoring-setup` seeding prod |
 | **(b)** Least-privilege canary Odoo user + API key minted in 1Password | Josh | checkout-canary journey only | the two commented `ODOO_LOGIN` / `SYNTHETIC_ODOO_API_KEY` refs |
 
-### Gate (c) — verified live 2026-09-29, currently FAILING
+**Status 2026-10-14:** (c) **DONE** — GOL-2600 applied; the live `:5080` rule
+carries `source_tags=[role-odoo]` and grove-prod-odoo (601081550) carries that
+tag (read back from the DO API 2026-10-14). (a) **APPROVED** by the CEO.
+(b) **OPEN** — no `Odoo - Synthetic Canary Prod` item in `Grove Prod` yet.
+The section below describing (c) as failing is kept as the historical record.
+
+### Gate (c) — verified FAILING 2026-09-29; APPLIED + verified 2026-10-14 (historical)
 
 `grove-obs-fw`'s inbound :5080 rule admits exactly three `/32`s and **no
 `source_tags`**:
@@ -95,10 +101,16 @@ password. Scope it as tight as the money path allows:
    No accounting, no payments, no admin/settings.
 3. Generate an **API key** for that user (Preferences → Account Security → New
    API Key). This is the secret; the login is not.
-4. Store both in 1Password (vault `Grove Prod`), then update the two
-   `REPLACE_ITEM_ID` refs in `scripts/prod-monitoring.env.op`:
-   - `synthetic_canary_odoo_login`
-   - `synthetic_canary_odoo_api_key`
+4. Store both in 1Password, vault `Grove Prod`, as ONE item titled exactly
+   **`Odoo - Synthetic Canary Prod`** (an API Credential / Login item is fine)
+   with these two field labels:
+   - `username` → the canary login (e.g. `synthetic-canary@grove.internal`)
+   - `credential` → the API key from step 3
+   The two commented refs in `scripts/prod-monitoring.env.op` already point at
+   that title + those labels, so no item id needs copying. Then, in that file,
+   uncomment `ODOO_LOGIN` + `SYNTHETIC_ODOO_API_KEY` and set
+   `SYNTHETIC_CANARY_ENABLED="true"`. Sanity check before rendering:
+   `op read "op://Grove Prod/Odoo - Synthetic Canary Prod/credential" >/dev/null && echo ok`
 5. ~~Also store the three per-tenant Ghost read-only Content API keys.~~
    **Not needed** — they are already in the vault as the
    `Grove Infra/ghost_content_keys_tf_json` bundle, which `run.py` reads
