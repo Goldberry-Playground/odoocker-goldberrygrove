@@ -1,6 +1,6 @@
 # ADR 011: Terraform state locking must move off DO Spaces — choosing the replacement backend
 
-**Status:** Proposed. Needs a board decision (this is a one-way-ish door: the migration rewrites production state). Recorded 2026-09-30 by DevOps - Terra under GOL-2755.
+**Status:** Proposed — **board ruling recorded 2026-10-14** (see Decision); flips to **Accepted** in the PR that records the GOL-2760 probe results, per that ruling. This is a one-way-ish door: the migration rewrites production state. Recorded 2026-09-30 by DevOps - Terra under GOL-2755.
 **Date:** 2026-09-30
 **Deciders:** CEO (choose option), Josh Dunbar (apply the migration), DevOps - Terra (implement + verify)
 **Relates to:** GOL-2755 (this decision), GOL-2584 (Train #2 prerequisite check that found it), PR #790 (the advisory stop-gap), [ADR-009 grove asset storage](./009-grove-asset-storage.md), EPIC GOL-2324 (release train) — **must not land inside the Train #2 window (2026-10-05 … 10-08)**
@@ -74,7 +74,7 @@ Confirmed by probe: TCP `:25060` to both clusters **times out** from the agent p
 
 Option 5 is the only candidate that fixes the actual defect without adding a database, a firewall hole, an AWS account, or a third-party custodian for our secrets. We already run Cloudflare for every zone, so it adds no new vendor. The config delta is an endpoint and a key pair — `use_lockfile` and the `<env>/<name>.tfstate` key layout are unchanged — and at 13 objects totalling under a megabyte the storage is free in practice. Cloudflare's S3-compatibility matrix lists `If-None-Match` as supported on `PutObject`.
 
-**It must be measured, not believed.** A vendor doc listing the header as "supported" is exactly the evidence that produced the false `use_lockfile` comment we are now unwinding. Adoption is gated on running the GOL-2584 probe against an R2 bucket and seeing a real **412** on the second conditional PUT, plus two concurrent `terraform plan -lock-timeout=0` where the second prints `Error acquiring the state lock`. If R2 answers 200 like Spaces does, option 5 is dead on the spot and we take 1b.
+**It must be measured, not believed.** A vendor doc listing the header as "supported" is exactly the evidence that produced the false `use_lockfile` comment we are now unwinding. Adoption is gated on running the GOL-2584 probe against an R2 bucket and seeing a real **412** on the second conditional PUT, plus a concurrent-run test in which an `apply` **holds** the lock and a second `plan -lock-timeout=0` is refused with `Error acquiring the state lock` (the holder must be an `apply`: a plan of the probe config releases the lock in under a second, so two plans never overlap and the test passes vacuously — runbook Step 2). If R2 answers 200 like Spaces does, option 5 is dead on the spot and we take 1b.
 
 Option 1b, the fallback, is sound but strictly more expensive: a new ~$15/mo cluster, owned by `state-backend` so the cycle in (a) does not reappear, with its own firewall to argue about for CI.
 
@@ -82,12 +82,12 @@ Option 3 alone is not acceptable as an endpoint. It is the correct posture *toda
 
 ## Decision
 
-**Pending.** The board picks on GOL-2755 — pending `ask_user_questions` interaction `ask:GOL-2755:state-lock-backend` (options: probe R2 / go straight to state-only PG / advisory guard only / HCP).
+**Adopted 2026-10-14 by Josh Dunbar (board), answering `ask:GOL-2755:state-lock-backend` on GOL-2755:** the recommendation stands as written. Probe Cloudflare R2 first (GOL-2760); fall back to option 1b — a new state-only PG cluster owned by `state-backend` — if R2 does not return a real 412 / `Error acquiring the state lock`. The R2-scoped token for the probe is Josh's to mint (runbook Step 0). Migrations stay out of any train window; production goes last, behind the `tf-state-inventory.sh --compare` fingerprint gate below. The ruling also asks that **Status flip to Accepted in the same PR as the probe results**, so this revision records the decision and leaves Status at Proposed.
 
 ## Consequences (of the recommended path)
 
 - **Nothing lands inside the Train #2 window (2026-10-05 … 10-08).** PR #790's advisory guard is the control for that window. This ADR's migration is scheduled after teardown at the earliest.
-- **Prerequisite from Josh (blocking the probe):** a Cloudflare **account-scoped** API token with `Workers R2 Storage: Edit`, vaulted as `op://Goldberry Grove - Admin/Grove Infra/r2_*`. The zone-scoped token we hold today cannot create a bucket. The probe itself costs minutes once the token exists.
+- **Prerequisite from Josh (blocking the probe):** an R2 bucket `grove-tf-state-probe` created by hand, plus an R2 API token with **Object Read & Write scoped to that bucket only**, its S3 key pair vaulted as `op://Goldberry Grove - Admin/Grove Infra/r2_access_key_id` / `r2_secret_access_key` ([runbook Step 0](../RUNBOOK-r2-state-lock-probe-GOL-2760.md)). Deliberately narrower than the account-wide `Workers R2 Storage: Edit` first proposed here — bucket-create is never needed from code. The zone-scoped Cloudflare token we hold today answers HTTP 403 on every R2 call; the `r2_*` fields were still absent on 2026-10-14. The probe itself costs minutes once they exist.
 - **Migration shape (option 5), per state, 6 times:** `tf-state-inventory.sh --json > before.json` → server-side copy of the object to R2 → `terraform init -reconfigure -backend-config=backend.hcl` → `terraform plan` must come back **no changes** → `tf-state-inventory.sh --compare before.json` must exit **0**. Production goes last, behind a fresh backup of the Spaces object.
 - **Count parity is not the gate; the fingerprint is.** `--compare` fails (exit 4) on a changed `lineage` — the signature of an `init` that started a *fresh* state instead of migrating one, which count parity cannot see — on a serial that went backwards, on a state key that vanished, and on any change to the sorted set of managed resource addresses (a lost resource offset by a gained one nets to the same count and is otherwise invisible until the next apply proposes a create for something that already exists). All four detections were exercised against the live bucket on 2026-09-30.
 - **Pre-migration baseline, captured 2026-09-30 (`--json`, read-only).** Rollback reference; the migration is only correct if these survive it unchanged:

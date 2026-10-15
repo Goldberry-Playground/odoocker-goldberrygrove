@@ -75,7 +75,14 @@ option 5 on a credential typo.
 Paste the full block — it prints endpoint, bucket, region and UTC timestamp, so
 the result stays auditable instead of becoming another unverifiable comment.
 
-## Step 2 — AC2: two concurrent plans, one lock
+## Step 2 — AC2: two concurrent runs, one lock
+
+The lock **holder must be an `apply`, not a `plan`.** The `sleep 25` below lives
+in a `local-exec` provisioner, and provisioners only run on `apply`. A `plan` of
+this config holds the state lock for well under a second, so two plans started
+seconds apart never overlap and the test passes **vacuously** on a backend that
+enforces nothing — a false negative that would kill option 5 on a backend that
+actually works. (Flagged in review of PR #793 under GOL-3072; corrected here.)
 
 ```bash
 mkdir -p /tmp/r2locktest && cd /tmp/r2locktest
@@ -100,18 +107,30 @@ resource "null_resource" "sleep" {
 TF
 terraform init -backend-config="endpoints={s3=\"https://$ACC.r2.cloudflarestorage.com\"}"
 
-terraform plan -lock-timeout=0 > /tmp/r2locktest/a.log 2>&1 &
-sleep 2
-terraform plan -lock-timeout=0 > /tmp/r2locktest/b.log 2>&1
-wait
-grep -l 'Error acquiring the state lock' /tmp/r2locktest/[ab].log   # expect exactly one
+# A = the lock HOLDER. apply runs the provisioner, so it holds the lock ~25 s.
+terraform apply -auto-approve -lock-timeout=0 > /tmp/r2locktest/a.log 2>&1 &
+A_PID=$!
+sleep 5          # let A acquire the lock and enter the sleep (refresh+plan take ~1-2 s)
+# B = the CONTENDER. It must be refused by the BACKEND, not by an advisory script.
+terraform plan -lock-timeout=0 > /tmp/r2locktest/b.log 2>&1; echo "B exit=$?"
+wait "$A_PID";                                               echo "A exit=$?"
+grep -l 'Error acquiring the state lock' /tmp/r2locktest/[ab].log   # expect exactly: b.log
 grep -c 'Error releasing the state lock' /tmp/r2locktest/[ab].log   # expect 0 in both
 ```
 
-**Pass** = exactly one log says `Error acquiring the state lock`, and *neither*
-says `Error releasing the state lock … StatusCode: 404`. That 404-on-release is
-the 2026-09-29 double-teardown signature: it means both runs "held" the same
-lock and the first one deleted it out from under the second.
+**Pass** = `B exit=1`, `b.log` (and only `b.log`) says `Error acquiring the
+state lock`, `A exit=0`, and *neither* log says `Error releasing the state lock
+… StatusCode: 404`.
+
+**Fail** = `B exit=0` with no acquire error: B planned straight through while A
+held the lock. On a non-enforcing backend A then usually dies on release with the
+404, because B's release deleted the shared lockfile out from under it — that
+404-on-release is the 2026-09-29 double-teardown signature and exactly what
+Spaces produces.
+
+**Inverted ordering** (b.log shows a normal plan *and* a.log shows the acquire
+error) means B got in before A acquired — the 5 s head start was not enough on a
+slow host. That is a re-run, not a verdict.
 
 ## Step 3 — AC3: SigV4 + LIST + GET parity
 
@@ -147,9 +166,11 @@ script; the advisory guard in PR #790 already occupies that ceiling.
 ## Step 5 — tear down (always, either verdict)
 
 ```bash
+cd /tmp/r2locktest && terraform destroy -auto-approve -lock-timeout=0   # drops the null_resource step 2 applied
 cd /tmp && rm -rf /tmp/r2locktest
 ```
-Then Josh: delete the `grove-tf-state-probe` bucket **and revoke the scoped R2
-API token** in the Cloudflare dashboard. If option 5 wins, the migration mints
+Then Josh: **empty** the `grove-tf-state-probe` bucket (R2 refuses to delete a
+bucket that still holds `locktest/terraform.tfstate`), delete it, **and revoke
+the scoped R2 API token** in the Cloudflare dashboard. If option 5 wins, the migration mints
 its own credential on its own ticket — this one is probe-only and should not
 outlive the probe.
