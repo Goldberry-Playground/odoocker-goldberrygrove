@@ -97,6 +97,13 @@ class CompareTests(unittest.TestCase):
         self.assertEqual(len(problems), 1, problems)
         self.assertIn("orchard-fruit-trees", problems[0])
 
+    def test_a_declared_rename_that_never_happened_says_so(self):
+        """Verifying against a NOT-yet-upgraded environment: the promise was not kept."""
+        problems = gate.compare(BEFORE, copy.deepcopy(BEFORE), GUILDS_RENAME)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("is STILL 'food-forest-packages'", problems[0])
+        self.assertIn("the migration did not run", problems[0])
+
     def test_a_vanished_category_is_flagged(self):
         after = after_pr299()
         del after["categories"]["3"]
@@ -132,6 +139,99 @@ class CompareTests(unittest.TestCase):
         after = after_pr299()
         after["categories"]["12"] = _category(12, "truffle-trees", "Truffle trees", [])
         self.assertEqual(gate.compare(BEFORE, after, GUILDS_RENAME), [])
+
+
+# The five slugs prod's /shop actually links, read 2026-09-30. Deliberately
+# does NOT contain food-forest-packages — that is what makes #299's rename
+# declarable instead of a hard break.
+LIVE_PILLS = [
+    "berry-nut-shrubs",
+    "fruit-trees",
+    "fruiting-vines",
+    "native",
+    "nut-trees",
+]
+
+
+def _with_pills(snapshot, pills, source="live"):
+    snapshot = copy.deepcopy(snapshot)
+    snapshot["storefront_slugs"] = list(pills)
+    snapshot["storefront_slugs_source"] = source
+    return snapshot
+
+
+class LiveStorefrontPillTests(unittest.TestCase):
+    """--storefront-url: the pill set is read off the shop, not copied into it."""
+
+    def test_declared_rename_stays_safe_when_the_shop_does_not_link_the_slug(self):
+        before = _with_pills(BEFORE, LIVE_PILLS)
+        after = _with_pills(after_pr299(), LIVE_PILLS)
+        self.assertEqual(gate.compare(before, after, GUILDS_RENAME), [])
+
+    def test_declared_rename_is_a_regression_when_the_shop_links_the_slug(self):
+        """The whole point: a declaration covers bookmarks, never a live pill."""
+        pills = LIVE_PILLS + ["food-forest-packages"]
+        before = _with_pills(BEFORE, pills)
+        after = _with_pills(after_pr299(), pills)
+        problems = gate.compare(before, after, GUILDS_RENAME)
+        self.assertTrue(any("is NOT safe" in p for p in problems), problems)
+        self.assertTrue(any("?cat=food-forest-packages" in p for p in problems), problems)
+
+    def test_a_pill_the_builtin_list_never_knew_about_is_still_checked(self):
+        """A pill added by the storefront after this script was written."""
+        pills = LIVE_PILLS + ["mycoforestry"]
+        before = _with_pills(BEFORE, pills)
+        before["cat_counts"]["mycoforestry"] = 3
+        after = _with_pills(after_pr299(), pills)
+        after["cat_counts"]["mycoforestry"] = 0
+        problems = gate.compare(before, after, GUILDS_RENAME)
+        self.assertTrue(any("storefront pill 'mycoforestry'" in p for p in problems), problems)
+
+    def test_the_shop_changing_underneath_the_window_is_flagged(self):
+        before = _with_pills(BEFORE, LIVE_PILLS)
+        after = _with_pills(after_pr299(), LIVE_PILLS + ["guilds"])
+        after["cat_counts"]["guilds"] = 5
+        problems = gate.compare(before, after, GUILDS_RENAME)
+        self.assertTrue(any("pill set changed mid-run" in p for p in problems), problems)
+
+    def test_drift_is_not_claimed_when_a_snapshot_used_the_builtin_list(self):
+        """A builtin-vs-live mismatch is not evidence the storefront moved."""
+        before = _with_pills(BEFORE, gate.STOREFRONT_SLUGS, source="builtin")
+        after = _with_pills(after_pr299(), LIVE_PILLS)
+        problems = gate.compare(before, after, GUILDS_RENAME)
+        self.assertFalse(any("pill set changed mid-run" in p for p in problems), problems)
+
+
+SHOP_HTML = (
+    '<a href="/shop?cat=fruit-trees">Fruit Trees</a>'
+    '<a href="/shop?cat=native">Native</a>'
+    '<a href="/shop?page=2&cat=nut-trees">Nut Trees</a>'
+    # the same links again, escaped, inside the RSC flight payload
+    '<script>self.__next_f.push([1,"\"/shop?cat=fruit-trees\""])</script>'
+    '<a href="/shop/some-product">a PDP, no cat= at all</a>'
+)
+
+
+class PillHarvesterTests(unittest.TestCase):
+    def test_extracts_and_dedupes_the_linked_slugs(self):
+        original = gate._get_text
+        gate._get_text = lambda url, timeout: SHOP_HTML
+        try:
+            self.assertEqual(
+                gate.fetch_storefront_pill_slugs("https://shop.example.invalid/", 5),
+                ["fruit-trees", "native", "nut-trees"],
+            )
+        finally:
+            gate._get_text = original
+
+    def test_a_page_linking_no_pills_is_a_broken_probe_not_an_empty_pass(self):
+        original = gate._get_text
+        gate._get_text = lambda url, timeout: "<html><body>no pills here</body></html>"
+        try:
+            with self.assertRaises(ValueError):
+                gate.fetch_storefront_pill_slugs("https://shop.example.invalid", 5)
+        finally:
+            gate._get_text = original
 
 
 class ParseAllowedTests(unittest.TestCase):
