@@ -170,7 +170,7 @@ jobs:
       # existing DIGITALOCEAN_TOKEN rather than provisioning a new one -- it
       # already has write scope (used manually for the 2026-08-20 promotion).
       - name: Load secrets from 1Password
-        uses: 1password/load-secrets-action@v2
+        uses: 1password/load-secrets-action@581a835fb51b8e7ec56b71cf2ffddd7e68bb25e0 # v2.0.0
         timeout-minutes: 2
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_CI_SA_TOKEN }}
@@ -310,7 +310,7 @@ jobs:
       # grove-sites docker.yml QA-redeploy step uses; the token is the one the
       # 1Password step loaded above.
       - name: Install doctl
-        uses: digitalocean/action-doctl@v2
+        uses: digitalocean/action-doctl@3cb3953159719656269e044e0e24ca16dd2a690f # v2.5.2
         with:
           token: ${{ env.DIGITALOCEAN_TOKEN }}
 

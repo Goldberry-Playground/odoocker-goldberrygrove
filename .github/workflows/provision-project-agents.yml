@@ -148,7 +148,7 @@ jobs:
       # step below WRITES a secret.
       - name: Install 1Password CLI
         if: ${{ inputs.dry_run == false }}
-        uses: 1password/install-cli-action@v4
+        uses: 1password/install-cli-action@1a3160d5e9de1ae0803eaa08a88746f5ae3daa50 # v4.1.0
         timeout-minutes: 2
 
       # ── Mint each agent's key (live only) and write it to its own 1P item.

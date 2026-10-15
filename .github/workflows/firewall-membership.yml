@@ -76,7 +76,7 @@ jobs:
       # reviewers would hang it every night. Vault is "Grove Prod" (GOL-2413);
       # "Grove Production" does not exist and fails the op load step.
       - name: Load secrets from 1Password
-        uses: 1password/load-secrets-action@v2
+        uses: 1password/load-secrets-action@581a835fb51b8e7ec56b71cf2ffddd7e68bb25e0 # v2.0.0
         timeout-minutes: 2
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_CI_SA_TOKEN }}
