@@ -95,7 +95,7 @@ resource "cloudflare_ruleset" "blog_apex_redirect" {
         from_value {
           status_code = 302
           target_url {
-            value = "https://goldberrygrove.printify.me/"
+            value = "https://goldberry-grove.printify.me/"
           }
           preserve_query_string = true
         }
