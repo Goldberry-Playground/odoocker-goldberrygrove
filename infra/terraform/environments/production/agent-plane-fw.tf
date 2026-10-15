@@ -45,9 +45,12 @@
 #                    token. It has no business being world-reachable.
 #   everything else in that range: closed.
 #
-#   tcp/22000 (Syncthing sync) and tcp/21027 are NOT listening -- sync runs
-#   outbound via relays. So fencing inbound does not stop Syncthing syncing;
-#   see agent_plane_syncthing_sync_public for the one-flag rollback if it does.
+#   tcp/22000 (Syncthing sync) and tcp/21027 were NOT listening on 2026-09-29.
+#   UPDATE 2026-10-14 (`ss`, GOL-3392): Syncthing now LISTENS on *:22000 tcp+udp.
+#   Its only live peer still arrives over Tailscale (100.80.65.84), which the
+#   fence does not carry, so the inbound :22000 fence pushes that peer onto
+#   Syncthing/Tailscale relays rather than breaking it. Leave it closed; see
+#   agent_plane_syncthing_sync_public for the one-flag rollback if sync degrades.
 #
 #   There is NO inbound HTTP listener at all (no :80, :443, :3100). The Paperclip
 #   dashboard's public URL therefore cannot be served by an inbound port -- it is
@@ -182,9 +185,9 @@ resource "digitalocean_firewall" "agent_plane" {
 ###############################################################################
 
 variable "agent_plane_firewall_enabled" {
-  description = "Attach `grove-agent-plane-fw` to the un-codified `agenticos-droplet` snowflake (572389418), fencing its internet-wide :22 and :8384 to var.admin_ip_cidrs. Defaults FALSE so merging this file is not an apply: the box is not Terraform-managed, and this is the host every agent runs on -- fencing it is Josh's deliberate act with his own SSH verified, not a side effect of someone else's plan. Set true in tfvars (or `-var`) when applying; flip back to false to detach."
+  description = "Attach `grove-agent-plane-fw` to the un-codified `agenticos-droplet` snowflake (572389418), fencing its internet-wide :22 and :8384 to var.admin_ip_cidrs. Defaults TRUE since GOL-3392: Josh ruled 2026-10-14 that the fence is permanent and applied it 2026-10-15 (fw ae553fc0, admin SSH + Paperclip verified healthy after), so the box is now fenced DELIBERATELY and a plain apply must converge on it, not detach it. Flipping this back to false DETACHES the firewall (count -> 0 destroys it) -- do that only as the documented rollback in docs/RUNBOOK-agent-plane-firewall-GOL-2569.md, with your own SSH verified first."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "agent_plane_droplet_name" {
@@ -194,7 +197,7 @@ variable "agent_plane_droplet_name" {
 }
 
 variable "agent_plane_syncthing_sync_public" {
-  description = "Open Syncthing's sync transport (tcp+udp 22000) to the world on the agent plane. FALSE by default because it is not listening: verified 2026-09-29 that tcp/22000 is closed from both the docker bridge gateway and the public IP, so peers are reached OUTBOUND via relays and inbound is unnecessary. Set true only if Syncthing sync degrades after the fence goes on. The GUI (:8384) fence is unaffected either way."
+  description = "Open Syncthing's sync transport (tcp+udp 22000) to the world on the agent plane. FALSE by default and KEPT false under the permanent fence (GOL-3392). On 2026-09-29 tcp/22000 was not listening at all; re-verified 2026-10-14 via `ss`: Syncthing now DOES listen on *:22000 tcp+udp, but its only live peer connects over Tailscale (100.80.65.84), so fencing inbound :22000 only pushes that peer onto Syncthing/Tailscale relays -- it does not break sync. Set true only if sync measurably degrades after the fence. Private-VPC listeners on 10.116.16.2 (:5432, :7779, :3100, :1933) had no inbound peers from other hosts at check time; DO cloud firewalls DO filter VPC traffic, so if something off-box ever needs one, add a VPC-CIDR inbound rule rather than widening anything to the world. The GUI (:8384) fence is unaffected either way."
   type        = bool
   default     = false
 }
