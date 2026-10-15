@@ -73,8 +73,11 @@ Expected plan: **1 to add, 0 to change, 0 to destroy** — one
 `digitalocean_firewall.legacy_ghost[0]` with `droplet_ids = [468914087]`. If the
 plan shows anything being changed or destroyed, **stop**.
 
-To make it the standing default instead of a flag, set
-`legacy_ghost_firewall_enabled = true` in the env's tfvars.
+**Since GOL-3392 (applied 2026-10-15, fw `4351b197`) the flag defaults to
+`true`**, so the `-var` above is redundant and a plain `terraform apply` keeps
+the firewall attached; a plain `terraform plan` should show **no changes** for
+`digitalocean_firewall.legacy_ghost`. Flipping the default back to `false` is
+the rollback below, or part of the change that retires the box (GOL-863).
 
 ## Verify
 

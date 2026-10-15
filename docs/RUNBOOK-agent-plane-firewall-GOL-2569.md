@@ -112,10 +112,12 @@ op run --env-file=.env.op -- terraform apply \
   -target=digitalocean_firewall.agent_plane
 ```
 
-Then persist the flag so the next full apply doesn't detach it: set
-`agent_plane_firewall_enabled = true` in the env's tfvars, or carry the `-var`
-in every apply. **A plain `terraform apply` without the var detaches the
-firewall** (`count` → 0 destroys it).
+**Since GOL-3392 (applied 2026-10-15, fw `ae553fc0`) the flag defaults to
+`true`**, so the `-var` above is redundant and a plain `terraform apply` keeps
+the firewall attached. Before GOL-3392 the default was `false` and a plain apply
+without the var would have detached it (`count` → 0 destroys it); that trap is
+closed. A plain `terraform plan` should now show **no changes** for
+`digitalocean_firewall.agent_plane`.
 
 ## Step 4 — keep your session open
 
