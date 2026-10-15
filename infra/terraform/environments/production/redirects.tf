@@ -77,6 +77,31 @@ resource "cloudflare_ruleset" "blog_apex_redirect" {
       }
     }
   }
+
+  # Temporary merch stopgap (Josh 2026-10-15, NPR interview): goldberrygrove.farm/shirts
+  # -> the Printify Pop-Up Store until the native farm shop ships with Train #3
+  # (gom#341 + grove-sites#1064, promote Wed 10-21). Then repoint to /shop or
+  # delete this block. goldberry-only; the hub zone gets no second rule. Rule
+  # order matches the live ruleset (appended after /content/*) so plan is a no-op.
+  dynamic "rules" {
+    for_each = each.key == "goldberry" ? [1] : []
+    content {
+      enabled     = true
+      description = "302 goldberrygrove.farm/shirts -> Printify Pop-Up Store (temporary until the native farm shop ships, Train #3 10-21)"
+      expression  = "(http.host in {\"goldberrygrove.farm\" \"www.goldberrygrove.farm\"} and (http.request.uri.path eq \"/shirts\" or http.request.uri.path eq \"/shirts/\"))"
+      action      = "redirect"
+
+      action_parameters {
+        from_value {
+          status_code = 302
+          target_url {
+            value = "https://goldberrygrove.printify.me/"
+          }
+          preserve_query_string = true
+        }
+      }
+    }
+  }
 }
 
 # -- www.woodworkingeorge.com → apex canonical redirect (GOL-1551 tail) ----------
