@@ -108,7 +108,7 @@ These are categorical scope limits, documented so nobody re-debugs them:
 
 | Operation | Result | Why |
 |---|---|---|
-| `gh workflow run` (workflow_dispatch) | 403 | App token is scoped out of `actions:write` |
+| `gh workflow run` (workflow_dispatch) | 403 | App token is scoped out of `actions:write` — **by ruling, not oversight** (GOL-2479, Josh 2026-10-14): no App `actions:write` (one installation spans all 3 repos; on a public repo it also grants fork-run approval) and no PAT (no-new-credentials rule). `promote-storefronts.yml` dispatch + `production` approval stay with Josh; the agent hands over the copy-paste inputs and watches the run (`actions:read` works). Do not re-request. |
 | Approving an `action_required` run | 403 | GitHub bars App tokens from run approval — needs a human maintainer |
 | `gh secret list` | empty | no secrets scope |
 | `GET /user` | 403 | installation token, not a user token |
