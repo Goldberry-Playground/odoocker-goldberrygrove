@@ -62,19 +62,27 @@ Terraform never owns the droplet — it is resolved via a `data` source, so
 Attaching a DO cloud firewall is an in-place change on the firewall object: the
 droplet is not touched, rebooted or replaced.
 
+> **STATUS 2026-10-15: APPLIED.** Josh ran the targeted apply ~09:03Z
+> (`grove-legacy-ghost-fw` = `4351b197`, attached to `468914087`, 2 added / 0
+> changed / 0 destroyed). **GOL-3392 flipped `legacy_ghost_firewall_enabled` to
+> default `true`**, so the `-var` below is no longer needed on a routine plan or
+> apply, and a plain plan should show **no changes** for
+> `digitalocean_firewall.legacy_ghost`. The commands are kept as the recipe for
+> re-attaching after a rollback.
+
 ```bash
 cd infra/terraform/environments/production
 terraform init -backend-config=backend.hcl
-op run --env-file=.env.op -- terraform plan  -var legacy_ghost_firewall_enabled=true
-op run --env-file=.env.op -- terraform apply -var legacy_ghost_firewall_enabled=true
+op run --env-file=.env.op -- terraform plan   # default is now true; -var only needed to detach
+op run --env-file=.env.op -- terraform apply
 ```
 
 Expected plan: **1 to add, 0 to change, 0 to destroy** — one
 `digitalocean_firewall.legacy_ghost[0]` with `droplet_ids = [468914087]`. If the
 plan shows anything being changed or destroyed, **stop**.
 
-To make it the standing default instead of a flag, set
-`legacy_ghost_firewall_enabled = true` in the env's tfvars.
+It **is** the standing default since GOL-3392 (`legacy_ghost_firewall_enabled`
+defaults to `true`); no tfvars entry is needed.
 
 ## Verify
 

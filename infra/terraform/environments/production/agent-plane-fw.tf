@@ -45,9 +45,12 @@
 #                    token. It has no business being world-reachable.
 #   everything else in that range: closed.
 #
-#   tcp/22000 (Syncthing sync) and tcp/21027 are NOT listening -- sync runs
-#   outbound via relays. So fencing inbound does not stop Syncthing syncing;
-#   see agent_plane_syncthing_sync_public for the one-flag rollback if it does.
+#   tcp/22000 (Syncthing sync) and tcp/21027 were NOT listening on 2026-09-29 --
+#   sync ran outbound via relays. UPDATE 2026-10-14 (`ss` on the box, GOL-3392):
+#   Syncthing now listens on *:22000 tcp+udp, but its only live peer arrives over
+#   Tailscale (100.80.65.84), outside this fence, so fencing inbound :22000 still
+#   does not stop it syncing; see agent_plane_syncthing_sync_public for the
+#   one-flag rollback if it ever does.
 #
 #   There is NO inbound HTTP listener at all (no :80, :443, :3100). The Paperclip
 #   dashboard's public URL therefore cannot be served by an inbound port -- it is
@@ -85,6 +88,12 @@
 #   the runbook's step 1 is "confirm your current egress IP is in that list
 #   BEFORE applying", and step 5 is "prove your own SSH still works before
 #   walking away" (GOL-1842).
+#
+# STATE: APPLIED 2026-10-15 ~09:03Z by Josh (GOL-3392 ruling 2026-10-14):
+#   firewall ae553fc0 attached to 572389418, 2 added / 0 changed / 0 destroyed;
+#   admin SSH, paperclip-server and /api/health verified healthy after. The
+#   `agent_plane_firewall_enabled` default is therefore TRUE -- a routine plan
+#   converges to the fence instead of planning to destroy it.
 #
 # ROLLBACK: set `agent_plane_firewall_enabled = false` and apply, or detach in
 # the DO console (immediate). Host-level rules are untouched either way.
@@ -182,9 +191,9 @@ resource "digitalocean_firewall" "agent_plane" {
 ###############################################################################
 
 variable "agent_plane_firewall_enabled" {
-  description = "Attach `grove-agent-plane-fw` to the un-codified `agenticos-droplet` snowflake (572389418), fencing its internet-wide :22 and :8384 to var.admin_ip_cidrs. Defaults FALSE so merging this file is not an apply: the box is not Terraform-managed, and this is the host every agent runs on -- fencing it is Josh's deliberate act with his own SSH verified, not a side effect of someone else's plan. Set true in tfvars (or `-var`) when applying; flip back to false to detach."
+  description = "Attach `grove-agent-plane-fw` to the un-codified `agenticos-droplet` snowflake (572389418), fencing its internet-wide :22 and :8384 to var.admin_ip_cidrs. Defaults TRUE since GOL-3392: Josh ruled 2026-10-14 to fence the agent plane and APPLIED it 2026-10-15 (firewall ae553fc0, 2 added / 0 changed / 0 destroyed; admin SSH, paperclip-server and /api/health verified after), so the fence is now the deliberate steady state and a routine plan must converge to it rather than plan a DESTROY of a live firewall. (It shipped FALSE under GOL-2569 so merging the file was not itself an apply.) Flip to false -- in tfvars or `-var` -- to detach; that is the rollback, and it takes effect immediately."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "agent_plane_droplet_name" {
@@ -194,7 +203,7 @@ variable "agent_plane_droplet_name" {
 }
 
 variable "agent_plane_syncthing_sync_public" {
-  description = "Open Syncthing's sync transport (tcp+udp 22000) to the world on the agent plane. FALSE by default because it is not listening: verified 2026-09-29 that tcp/22000 is closed from both the docker bridge gateway and the public IP, so peers are reached OUTBOUND via relays and inbound is unnecessary. Set true only if Syncthing sync degrades after the fence goes on. The GUI (:8384) fence is unaffected either way."
+  description = "Open Syncthing's sync transport (tcp+udp 22000) to the world on the agent plane. FALSE by default, and KEEP it so. History: on 2026-09-29 tcp/22000 was not listening at all. Re-verified 2026-10-14 with `ss` on the box (GOL-3392): Syncthing now DOES listen on *:22000 tcp+udp -- but its only live peer comes in over Tailscale (100.80.65.84), which the cloud firewall does not sit in front of, so the fence merely pushes any non-Tailscale Syncthing traffic onto relays. Josh verified :22000 closed publicly after the 2026-10-15 apply with sync intact. Set true only if Syncthing sync measurably degrades; prefer a VPC-CIDR or peer-/32 rule over the world. The GUI (:8384) fence is unaffected either way."
   type        = bool
   default     = false
 }

@@ -676,9 +676,9 @@ variable "perenual_api_key" {
 ###############################################################################
 
 variable "legacy_ghost_firewall_enabled" {
-  description = "Attach `grove-legacy-ghost-fw` to the un-codified `ghostgoldberrygrove-nyc1` snowflake (droplet 468914087), closing its internet-wide :22 (and :80/:443, see legacy_ghost_http_public). Defaults FALSE so merging this file is not an apply -- the box is not Terraform-managed, and a holding action on a snowflake nobody has logged into in months is Josh's call to make deliberately, not a side effect of someone else's plan. Set true in tfvars (or `-var`) when applying. Flip back to false to detach."
+  description = "Attach `grove-legacy-ghost-fw` to the un-codified `ghostgoldberrygrove-nyc1` snowflake (droplet 468914087), closing its internet-wide :22 (and :80/:443, see legacy_ghost_http_public). Defaults TRUE since GOL-3392: Josh ruled 2026-10-14 to fence the box and APPLIED it 2026-10-15 (firewall 4351b197, 2 added / 0 changed / 0 destroyed, admin SSH verified after), so the fence is now the deliberate steady state and a routine plan must converge to it rather than plan a DESTROY of a live firewall. (It shipped FALSE under GOL-2566 so merging the file was not itself an apply.) Flip to false -- in tfvars or `-var` -- to detach; that is the rollback, and it takes effect immediately."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "legacy_ghost_droplet_name" {

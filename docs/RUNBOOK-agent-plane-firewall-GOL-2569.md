@@ -28,6 +28,16 @@ can delete the very firewalls GOL-2565/GOL-2566 are about.
 No inbound `:80`/`:443`/`:3100` at all, so **the Paperclip dashboard is served by
 an outbound tunnel and an inbound fence cannot break it.**
 
+> **STATUS 2026-10-15: APPLIED.** Josh ran the targeted apply ~09:03Z
+> (`grove-agent-plane-fw` = `ae553fc0`, attached to `572389418`, 2 added / 0
+> changed / 0 destroyed) and verified admin SSH, `paperclip-server` and
+> `/api/health` healthy afterwards. **GOL-3392 flipped
+> `agent_plane_firewall_enabled` to default `true`**, so the `-var` below is no
+> longer needed on a routine plan or apply, and a plain plan should show **no
+> changes** for `digitalocean_firewall.agent_plane`. Steps 1-5 are kept as the
+> record of how it was brought up and as the recipe for re-attaching after a
+> rollback.
+
 ## What the change does
 
 Adds `grove-agent-plane-fw`:
@@ -36,7 +46,7 @@ Adds `grove-agent-plane-fw`:
 |---|---|---|
 | inbound | `tcp/22` | `var.admin_ip_cidrs` |
 | inbound | `tcp/8384` | `var.admin_ip_cidrs` |
-| inbound | `tcp+udp/22000` | **off by default** (`agent_plane_syncthing_sync_public`) |
+| inbound | `tcp+udp/22000` | **off by default** (`agent_plane_syncthing_sync_public`). Syncthing DOES listen here since ~2026-10 (`ss`, 2026-10-14) but its only live peer arrives over Tailscale, outside this fence; Josh verified :22000 closed publicly after the apply with sync intact. Keep it off. |
 | outbound | `tcp/1-65535`, `udp/1-65535`, `icmp` | `0.0.0.0/0`, `::/0` |
 
 The droplet is resolved via a `data` source, so **Terraform never owns the
@@ -112,10 +122,10 @@ op run --env-file=.env.op -- terraform apply \
   -target=digitalocean_firewall.agent_plane
 ```
 
-Then persist the flag so the next full apply doesn't detach it: set
-`agent_plane_firewall_enabled = true` in the env's tfvars, or carry the `-var`
-in every apply. **A plain `terraform apply` without the var detaches the
-firewall** (`count` → 0 destroys it).
+Persisting the flag is **done**: GOL-3392 made `agent_plane_firewall_enabled`
+default to `true`, so a plain `terraform apply` now converges to the fence. (Before
+that PR a plain apply without the `-var` would have planned to DESTROY the
+firewall -- `count` → 0 -- which is exactly the trap the default flip closes.)
 
 ## Step 4 — keep your session open
 

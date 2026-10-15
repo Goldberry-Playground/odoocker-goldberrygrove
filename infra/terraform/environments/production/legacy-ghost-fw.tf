@@ -49,6 +49,11 @@
 #   change on the firewall object: it does not touch, reboot or replace the
 #   droplet, and detaching takes effect immediately.
 #
+# STATE: APPLIED 2026-10-15 ~09:03Z by Josh (GOL-3392 ruling 2026-10-14):
+#   firewall 4351b197 attached to 468914087, 2 added / 0 changed / 0 destroyed.
+#   The `legacy_ghost_firewall_enabled` default is therefore TRUE -- a routine
+#   plan converges to the fence instead of planning to destroy it.
+#
 # ROLLBACK: set `legacy_ghost_firewall_enabled = false` and apply, or detach in
 # the DO console. Host-level rules on the box are untouched either way. If some
 # unknown raw-IP consumer turns out to exist, `legacy_ghost_http_public = true`
