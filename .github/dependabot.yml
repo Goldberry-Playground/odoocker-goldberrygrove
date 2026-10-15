@@ -1,0 +1,21 @@
+# Dependabot version updates for GitHub Actions.
+#
+# Keeps SHA-pinned third-party actions (1password/*, digitalocean/action-doctl,
+# pinned by #907 with a `# vX.Y.Z` comment) and floating actions/* tags current.
+# Dependabot rewrites both the SHA and the version comment.
+#
+# Dependabot PRs are authored by dependabot[bot], which auto-approve.yml,
+# ci-autofix.yml and the merge-queue arm script do not match, so they always
+# need a human review and merge. This file is in config-freeze.json `paths`.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: ci
