@@ -5,10 +5,11 @@ name: Promote storefronts to production
 # so promoting no longer requires running terraform/doctl by hand:
 #
 #   1. Bump the pinned image-tag SHA in the working tree (the targeted apply
-#      below reads it) and stage the same edit as a reconcile PR -- NOT a direct
-#      push to main (main-branch-protection rejects the bot push, and the
-#      terraform prod dir is a protected-paths-guard glob needing SHA-bound
-#      human review). The PR is auto-OPENED but human-MERGED through the guard.
+#      below reads it). After the roll, the same edit is rebuilt on the CURRENT
+#      main and opened as a reconcile PR -- NOT a direct push to main
+#      (main-branch-protection rejects the bot push, and the terraform prod dir
+#      is a protected-paths-guard glob needing SHA-bound human review). The PR
+#      is auto-OPENED but human-MERGED through the guard.
 #   2. terraform apply -target=... (updates the four app specs).
 #   3. One doctl create-deployment per app (this is what actually rolls it --
 #      GOL-1607 Lesson 1: a spec update alone deploys nothing on GHCR apps).
@@ -200,49 +201,34 @@ jobs:
       # --- Step 1: bump the pinned SHA in the WORKING TREE (so the targeted
       # apply below reads it, keeping committed HCL as the source of truth for
       # the apply -- not a bare, unreconciled `-var` override, the ADR-009
-      # GITSYNC_REF drift trap) and stage the identical edit on a branch for a
-      # reconcile PR. We do NOT push to main directly: the main-branch-protection
-      # ruleset rejects a github-actions[bot] push (bypass is admin-only), and
-      # infra/terraform/environments/production/** is a protected-paths-guard
-      # glob that requires a SHA-bound *human* review -- a direct push would
-      # either hard-fail or punch the exact governance hole GOL-1478 closes
-      # (GOL-1708 finding 2). The Environment approval gates the DEPLOY; the
-      # reconcile PR (opened only after the roll succeeds, below) brings
-      # committed HCL back in line with what's now live and is reviewed through
-      # the normal guard.
-      - name: Bump the pinned image-tag SHA (working tree + reconcile branch)
+      # GITSYNC_REF drift trap). We do NOT push to main directly: the
+      # main-branch-protection ruleset rejects a github-actions[bot] push
+      # (bypass is admin-only), and infra/terraform/environments/production/**
+      # is a protected-paths-guard glob that requires a SHA-bound *human*
+      # review -- a direct push would either hard-fail or punch the exact
+      # governance hole GOL-1478 closes (GOL-1708 finding 2). The Environment
+      # approval gates the DEPLOY; the reconcile PR (opened only after the roll
+      # succeeds, below) brings committed HCL back in line with what's now live
+      # and is reviewed through the normal guard.
+      #
+      # This step edits the working tree ONLY -- no branch, no commit. The
+      # reconcile branch is built at push time on the CURRENT remote main (see
+      # 'Open reconcile PR'). Cutting it here, from this job's `github.sha`
+      # checkout, is what broke run 38621755196 on 2026-10-15.
+      - name: Bump the pinned image-tag SHA (working tree)
         id: bump
         run: |
-          FILE="$TF_DIR/variables.tf"
-          # Anchor the replace to the hub_image_tag / tenant_image_tag blocks
-          # ONLY. A bare `s/default = "40hex"/.../g` (unanchored) also rewrites
-          # custom_modules_ref -- the grove-odoo-modules git-sync pin, a
-          # DIFFERENT repo -- silently repointing prod's Odoo modules to a
-          # grove-sites SHA that git-sync can't resolve (GOL-1708 finding 1).
-          for v in hub_image_tag tenant_image_tag; do
-            sed -i -E "/^variable \"$v\" \{/,/^\}/ s|^([[:space:]]*default[[:space:]]*=[[:space:]]*\")[0-9a-f]{40}(\")|\1${TARGET_SHA}\2|" "$FILE"
-          done
-          if git diff --quiet -- "$FILE"; then
+          # Anchored to the hub_image_tag / tenant_image_tag blocks ONLY, with
+          # the custom_modules_ref guard (GOL-1708 finding 1) -- see the script.
+          RESULT="$(scripts/ci/bump-storefront-pin.sh "$TF_DIR/variables.tf" "$TARGET_SHA")"
+          if [ "$RESULT" = "nochange" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "Pin already at $TARGET_SHA -- nothing to reconcile."
             exit 0
           fi
-          # Belt-and-suspenders: the anchored sed must never touch
-          # custom_modules_ref. Abort loudly if a changed line mentions it.
-          if git diff -- "$FILE" | grep -E '^[+-]' | grep -q 'custom_modules_ref'; then
-            echo "::error::pin-bump touched custom_modules_ref -- aborting before any deploy (GOL-1708 finding 1 guard)."
-            exit 1
-          fi
           echo "changed=true" >> "$GITHUB_OUTPUT"
-          BRANCH="promote-pin-${TARGET_SHA:0:12}-${GITHUB_RUN_ID}"
-          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
-          # Carry the working-tree edit onto a branch and commit it there. HEAD
-          # moves to the branch but the file stays edited, so the apply below
-          # still reads the new pin. The branch is pushed + PR'd only after the
-          # roll succeeds (see 'Open reconcile PR').
-          git -c user.name="grove-promote-bot" -c user.email="actions@github.com" checkout -b "$BRANCH"
-          git -c user.name="grove-promote-bot" -c user.email="actions@github.com" \
-            commit -am "infra(prod): promote storefronts to ${TARGET_SHA} (promote-storefronts.yml)"
+          echo "branch=promote-pin-${TARGET_SHA:0:12}-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+          git --no-pager diff --stat -- "$TF_DIR/variables.tf"
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
@@ -339,17 +325,48 @@ jobs:
 
       # --- Step 3b: reconcile committed HCL. The roll above has already put
       # live prod on $TARGET_SHA, so committed variables.tf MUST catch up. We
-      # can't push to protected main directly (finding 2), so open a PR from the
-      # branch staged in the bump step. It's reviewed + merged through the normal
-      # SHA-bound protected-paths-guard. Until it merges, main is intentionally
-      # behind live and prod-deploy-drift.yml flags the gap -- that's the nudge.
+      # can't push to protected main directly (finding 2), so push a branch and
+      # open a PR. It's reviewed + merged through the normal SHA-bound
+      # protected-paths-guard. Until it merges, main is intentionally behind
+      # live and prod-deploy-drift.yml flags the gap -- that's the nudge.
+      #
+      # The branch is built by scripts/ci/promote-reconcile-branch.sh on the
+      # CURRENT remote main, in a throwaway worktree -- NOT on this job's
+      # checkout. The checkout is `github.sha`, i.e. main as of DISPATCH, and
+      # the Environment gate can hold the run for hours. On 2026-10-15 (run
+      # 38621755196, parked 16h) #893 changed prod-modules-pin-drift.yml while
+      # the run waited; the branch cut from the stale SHA carried the OLD copy
+      # of that workflow file relative to main, and GitHub refused the push
+      # ("refusing to allow a GitHub App to create or update workflow ...
+      # without `workflows` permission") -- after the roll had succeeded, so
+      # main sat behind live until a human opened the PR. Rebuilding the
+      # two-line edit on main's tip keeps the branch's diff to exactly that
+      # edit, so GITHUB_TOKEN stays at contents + pull-requests write (no
+      # `workflows: write`, no PAT). If main already carries the pin (someone
+      # reconciled by hand while the run waited) there is nothing to open.
       - name: Open reconcile PR (bring committed pin up to what's now live)
         if: steps.bump.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           BRANCH: ${{ steps.bump.outputs.branch }}
         run: |
-          git push origin "HEAD:$BRANCH"
+          RESULT="$(scripts/ci/promote-reconcile-branch.sh "$BRANCH" "$TARGET_SHA")" || {
+            echo "::error::Roll SUCCEEDED (prod is on ${TARGET_SHA}) but pushing the reconcile branch FAILED. Committed HCL is now BEHIND live -- open a PR bumping hub_image_tag + tenant_image_tag in ${TF_DIR}/variables.tf to ${TARGET_SHA} by hand, or main will drift back on the next full apply."
+            exit 1
+          }
+          echo "$RESULT"
+          case "$RESULT" in
+            result=nochange*)
+              echo "main already pins ${TARGET_SHA} -- no reconcile PR needed."
+              echo "RECONCILE_PR_URL=(none -- main already carries ${TARGET_SHA:0:12})" >> "$GITHUB_ENV"
+              exit 0
+              ;;
+            result=pushed*) ;;
+            *)
+              echo "::error::unexpected output from promote-reconcile-branch.sh: $RESULT"
+              exit 1
+              ;;
+          esac
           RUN_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           # Build the body with printf (single-quoted format => backticks are
           # literal, \n produces real newlines) so no raw multi-line string has
@@ -358,7 +375,7 @@ jobs:
           PR_URL="$(gh pr create --base main --head "$BRANCH" \
             --title "infra(prod): reconcile storefront pin to ${TARGET_SHA}" \
             --body "$BODY")" || {
-            echo "::error::Roll SUCCEEDED (prod is on ${TARGET_SHA}) but opening the reconcile PR FAILED. Committed HCL is now BEHIND live -- open a PR bumping hub_image_tag + tenant_image_tag in ${TF_DIR}/variables.tf to ${TARGET_SHA} by hand, or main will drift back on the next full apply."
+            echo "::error::Roll SUCCEEDED (prod is on ${TARGET_SHA}) and branch ${BRANCH} is pushed, but opening the reconcile PR FAILED. Open a PR from that branch by hand (gh pr create --base main --head ${BRANCH}) so main stops drifting behind live."
             exit 1
           }
           echo "RECONCILE_PR_URL=$PR_URL" >> "$GITHUB_ENV"
