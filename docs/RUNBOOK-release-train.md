@@ -135,6 +135,7 @@ back for the next train.
 |---|------|---------|
 | 1 | **Gate on QA, at the pinned modules SHA.** `EXPECT_REF` makes the script refuse a QA box that is not actually on the bundle SHA. | `EXPECT_REF=<modules-sha> scripts/qa-module-upgrade.sh grove_headless` |
 | 2 | **e2e LAST.** Dispatch `e2e-nursery.yml` only after step 1 and after the final merge. Read the skip list — a spec that skipped is not a spec that passed. | — |
+| 2b | **Ship-time settlement on real Stripe TEST.** The gate pays a $10 deposit but never ships the order, so the off-session balance charge (GOL-2053) is otherwise only unit-tested with Stripe mocked. This ships the newest deposit order the gate created (simulated label, no real one bought) and asserts the balance was captured. Dry run first; it refuses any non-test Stripe key. | `scripts/qa-settlement-check.sh` then `APPLY=1 scripts/qa-settlement-check.sh` |
 | 3 | **Leg B pre-flight** (writes nothing; reports the recorded version and whether the tax migration is due). | `TARGET_REF=<modules-sha> scripts/prod-modules-promote.sh` |
 | 4 | **Leg B promote.** Rewrites `CUSTOM_MODULES_REF` in the droplet's `/etc/grove/.env`, waits for git-sync, runs the migrations, then **proves** the WV tax bound for every company. | `TARGET_REF=<modules-sha> CONFIRM=PROMOTE scripts/prod-modules-promote.sh` |
 | 5 | **Reconcile the committed pin** onto what is now live, or the next droplet rebuild rolls prod back. Drift-only; never touches prod. Merge the PR it opens. | `gh workflow run reconcile-modules-pin.yml -f modules_sha=<modules-sha>` |
