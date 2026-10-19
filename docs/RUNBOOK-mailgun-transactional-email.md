@@ -18,7 +18,7 @@ Transactional mail sends from a dedicated Mailgun sending subdomain per brand:
 
 | Tenant    | Brand domain             | Transactional sending subdomain     |
 |-----------|--------------------------|-------------------------------------|
-| hub       | gatheringatthegrove.com  | `mg.gatheringatthegrove.com`        |
+| hub       | gatheringatthegrove.com  | `send.gatheringatthegrove.com` ⚠   |
 | goldberry | goldberrygrove.farm      | `mg.goldberrygrove.farm`            |
 | ggg       | woodworkingeorge.com     | `mg.woodworkingeorge.com`           |
 | nursery   | atthegrovenursery.com    | `mg.atthegrovenursery.com`          |
@@ -26,6 +26,62 @@ Transactional mail sends from a dedicated Mailgun sending subdomain per brand:
 Keeping this stream on `mg.<domain>` isolates it from (a) the bulk-newsletter
 reputation and (b) the human Gmail/Workspace mail on the apex, so a bulk
 reputation dip cannot break magic links or receipts.
+
+⚠ **Hub is `send.`, not `mg.`** `mg.gatheringatthegrove.com` is registered to a
+Mailgun account we do not control and carries live DNS. Never edit or delete the
+`mg.gatheringatthegrove.com` records (see `var.ghost_smtp` in
+`infra/terraform/environments/production/variables.tf`).
+
+## Bulk newsletter sending domains — `news.<domain>` (GOL-3455, 2026-10-19)
+
+Josh ruled on 2026-10-19 that Odoo Email Marketing (`mass_mailing`) sends the
+newsletters (option C, GOL-3454). Bulk mail gets its own Mailgun sending domain
+per brand. Order and transactional mail keep the domains above, so a bulk
+reputation dip cannot hurt receipts or magic links.
+
+| Tenant    | Bulk sending domain            | DKIM selector |
+|-----------|--------------------------------|---------------|
+| hub       | `news.gatheringatthegrove.com` | `pic`         |
+| goldberry | `news.goldberrygrove.farm`     | `mx`          |
+| ggg       | `news.woodworkingeorge.com`    | `mailo`       |
+| nursery   | `news.atthegrovenursery.com`   | `mx`          |
+
+State verified live on 2026-10-19 (same Mailgun account, US region):
+
+- `POST /v4/domains`: 2048-bit DKIM, `spam_action=disabled`, `web_scheme=https`.
+  Mailgun reports all four domains `active`.
+- Cloudflare records are DNS-only (not proxied), TTL 300, and carry the comment
+  `GOL-3455 Mailgun bulk newsletter domain`: the SPF TXT
+  `v=spf1 include:mailgun.org ~all`, the DKIM TXT `<selector>._domainkey.news.<domain>`,
+  and MX `mxa`/`mxb.mailgun.org` (priority 10) so bounces route back to Mailgun.
+  SPF, DKIM and MX are `valid` on all four domains.
+- **Tracking is off** (open, click and unsubscribe) on all four domains, and the
+  tracking CNAME `email.news.<domain>` is not published on purpose. Odoo
+  `mass_mailing` does its own link tracking and unsubscribe handling. Mailgun
+  click rewriting or its unsubscribe footer would duplicate that and could break
+  Odoo's per-recipient unsubscribe links.
+- Apex DMARC covers the subdomain. Mail is DKIM-signed `d=news.<domain>`, which
+  aligns (relaxed) with a `From:` on `news.<domain>`.
+
+**SMTP credentials** use the login `newsletter@news.<domain>`, stored on 1P
+`Goldberry Grove - Admin` → `Mailgun | Goldberry Grove` (item
+`7t2pap33hu37bftpsy7uzmakuy`) as `smtp_login_news_<tenant>` and
+`smtp_password_news_<tenant>`, following the `smtp_login_<tenant>` pattern. The
+ops service account is read-only on that vault, so a human mints and writes these:
+Mailgun dashboard → Sending → Domain settings → SMTP credentials → Add, or
+`POST /v3/domains/news.<domain>/credentials`. `op item edit` can print a
+spurious error even when the write lands, so always re-read the field to verify.
+
+**Odoo wiring (not done yet, waits on GOL-3454).** Add one `ir.mail_server` per
+brand company, host `smtp.mailgun.org:587` STARTTLS, `from_filter=news.<domain>`,
+and point `mass_mailing` at it (`mass_mailing.outgoing_mail_server`). Do this
+through module data or IaC, never by hand on prod. The transactional
+`ir.mail_server` (`from_filter` = `mg.`/`send.` domain) must stay as it is, so
+order mail never falls back to the bulk server.
+
+**Rollback:** `DELETE /v3/domains/news.<domain>` in Mailgun, then delete the
+Cloudflare records carrying the `GOL-3455` comment. Neither touches the
+transactional domains.
 
 ## Prerequisites (blocking — see GOL-248 / GOL-244)
 
