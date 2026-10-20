@@ -189,6 +189,12 @@ jobs:
           # step fails this required check.
           DISCORD_ORDERS_WEBHOOK_URL: op://Grove Prod/odoocker/DISCORD_ORDERS_WEBHOOK_URL
           ODOO_API_KEYS_TF_JSON:    op://Grove Prod/odoocker/ODOO_API_KEYS_TF_JSON
+          # Ghost Content API key bundle {"hub","goldberry","ggg","nursery"}. Until
+          # 2026-10-19 this was never loaded, so TF fell back to the variable's
+          # stub default and every promote shipped an invalid GHOST_CONTENT_KEY
+          # (blog.* Content API 401) to all 4 storefront apps. Field must exist
+          # on the odoocker item BEFORE this merges or the op load step fails.
+          GHOST_CONTENT_KEYS_TF_JSON: op://Grove Prod/odoocker/GHOST_CONTENT_KEYS_TF_JSON
         with:
           export-env: true
 
@@ -238,9 +244,10 @@ jobs:
             # Orders-channel webhook: mapped so the plan matches the applied
             # user_data (empty default would show phantom droplet-replace drift).
             echo "TF_VAR_discord_orders_webhook_url=$DISCORD_ORDERS_WEBHOOK_URL"
-            # map(string) var: 1Password stores the JSON object verbatim. Optional
-            # (has a stub default) but mapping the real value keeps the plan clean.
+            # map(string) vars: 1Password stores the JSON objects verbatim. Both are
+            # REQUIRED (no default since 2026-10-19), so an unmapped one fails the plan.
             echo "TF_VAR_odoo_api_keys=$ODOO_API_KEYS_TF_JSON"
+            echo "TF_VAR_ghost_content_keys=$GHOST_CONTENT_KEYS_TF_JSON"
             # GOL-1122 grove_assets_* : required (no defaults, deliberately -- a bare
             # apply must not ship a placeholder credential to prod). This guard only
             # ever runs `terraform plan` and never applies, and these three feed App

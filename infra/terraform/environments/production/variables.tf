@@ -190,33 +190,30 @@ variable "grove_revalidate_secret" {
 }
 
 variable "odoo_api_keys" {
-  description = "Per-tenant Odoo API keys (bearer auth for authenticated /grove/api/v1 endpoints, e.g. order creation). Global-scope res.users.apikeys records minted on the PROD Odoo -- Odoo 19 bearer auth requires scope NULL keys. GENERAL (not SECRET) scope on the app: DO returns SECRET envs encrypted, so the provider re-diffs them every plan (upstream provider issues #869/#514) and would fire the nightly drift alert forever. The value lives in TF state regardless of type; state stays in the Spaces backend, never in the repo. Keys are revocable in Odoo (Settings -> Users -> API Keys). Read from TF_VAR_odoo_api_keys; stub defaults keep `plan` working before the real keys are minted."
+  description = "Per-tenant Odoo API keys (bearer auth for authenticated /grove/api/v1 endpoints, e.g. order creation). Global-scope res.users.apikeys records minted on the PROD Odoo -- Odoo 19 bearer auth requires scope NULL keys. GENERAL (not SECRET) scope on the app: DO returns SECRET envs encrypted, so the provider re-diffs them every plan (upstream provider issues #869/#514) and would fire the nightly drift alert forever. The value lives in TF state regardless of type; state stays in the Spaces backend, never in the repo. Keys are revocable in Odoo (Settings -> Users -> API Keys). Read from TF_VAR_odoo_api_keys (op://Grove Prod/odoocker/ODOO_API_KEYS_TF_JSON, in CI and in .env.op). REQUIRED, no default: the old prod-stub default meant a run that forgot to map the var shipped a stub instead of failing (2026-10-19)."
   type        = map(string)
   sensitive   = true
-  default = {
-    goldberry = "prod-stub-no-odoo-api-key-yet"
-    ggg       = "prod-stub-no-odoo-api-key-yet"
-    nursery   = "prod-stub-no-odoo-api-key-yet"
-  }
   validation {
     condition     = alltrue([for t in ["goldberry", "ggg", "nursery"] : contains(keys(var.odoo_api_keys), t)])
     error_message = "odoo_api_keys must contain keys: goldberry, ggg, nursery."
   }
+  validation {
+    condition     = alltrue([for v in values(var.odoo_api_keys) : trimspace(v) != "" && !startswith(v, "prod-stub")])
+    error_message = "odoo_api_keys has an empty or prod-stub* value. Map TF_VAR_odoo_api_keys from op://Grove Prod/odoocker/ODOO_API_KEYS_TF_JSON."
+  }
 }
 
 variable "ghost_content_keys" {
-  description = "Per-frontend Ghost Content API keys for the live blog.* hosts on the Track-1 blogs droplet. grove-sites' requireEnv() throws on empty in production, so stub defaults keep `plan` working until the four Ghost instances are provisioned and their Content API keys minted (Ghost Admin -> Settings -> Integrations). Read from TF_VAR_ghost_content_keys once real. Content keys are read-only + rotatable in Ghost, so GENERAL scope is fine."
+  description = "Per-frontend Ghost Content API keys for the live blog.* hosts on the Track-1 blogs droplet. Read from TF_VAR_ghost_content_keys (op://Grove Prod/odoocker/GHOST_CONTENT_KEYS_TF_JSON, in CI and in .env.op). REQUIRED, no default: CI never mapped this var, so every promote shipped the old prod-stub default and every blog Content API call 401'd (found 2026-10-19). Content keys are read-only + rotatable in Ghost (Admin -> Settings -> Integrations), so GENERAL scope is fine."
   type        = map(string)
   sensitive   = true
-  default = {
-    hub       = "prod-stub-no-ghost-key-yet"
-    goldberry = "prod-stub-no-ghost-key-yet"
-    ggg       = "prod-stub-no-ghost-key-yet"
-    nursery   = "prod-stub-no-ghost-key-yet"
-  }
   validation {
     condition     = alltrue([for t in ["hub", "goldberry", "ggg", "nursery"] : contains(keys(var.ghost_content_keys), t)])
     error_message = "ghost_content_keys must contain keys: hub, goldberry, ggg, nursery."
+  }
+  validation {
+    condition     = alltrue([for v in values(var.ghost_content_keys) : trimspace(v) != "" && !startswith(v, "prod-stub")])
+    error_message = "ghost_content_keys has an empty or prod-stub* value. Map TF_VAR_ghost_content_keys from op://Grove Prod/odoocker/GHOST_CONTENT_KEYS_TF_JSON."
   }
 }
 
