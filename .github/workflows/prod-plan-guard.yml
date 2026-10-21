@@ -170,7 +170,7 @@ jobs:
       # the REPO-level OP_CI_SA_TOKEN (grove-ci-prod-ro service account, read-only
       # to Grove Prod). export-env writes each resolved value to $GITHUB_ENV.
       - name: Load secrets from 1Password
-        uses: 1password/load-secrets-action@v2
+        uses: 1password/load-secrets-action@581a835fb51b8e7ec56b71cf2ffddd7e68bb25e0 # v2.0.0
         timeout-minutes: 2
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_CI_SA_TOKEN }}

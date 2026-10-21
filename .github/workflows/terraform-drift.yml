@@ -100,7 +100,7 @@ jobs:
       # a gated `environment:` — gating this scheduled check behind production's
       # required reviewers would hang it every run. A leak is bounded to Grove Prod, read-only.
       - name: Load secrets from 1Password
-        uses: 1password/load-secrets-action@v2
+        uses: 1password/load-secrets-action@581a835fb51b8e7ec56b71cf2ffddd7e68bb25e0 # v2.0.0
         timeout-minutes: 2
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_CI_SA_TOKEN }}

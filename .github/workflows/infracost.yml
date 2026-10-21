@@ -48,7 +48,7 @@ jobs:
       # var stays unset, and the gate below skips the cost diff (job green) —
       # the same graceful-skip contract the old Infisical fetch gave.
       - name: Load secrets from 1Password
-        uses: 1password/load-secrets-action@v2
+        uses: 1password/load-secrets-action@581a835fb51b8e7ec56b71cf2ffddd7e68bb25e0 # v2.0.0
         continue-on-error: true
         timeout-minutes: 2
         env:
