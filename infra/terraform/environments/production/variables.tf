@@ -714,3 +714,22 @@ variable "nursery_livechat_channel_id" {
     error_message = "nursery_livechat_channel_id must be empty (widget off) or the integer id of the im_livechat.channel record on the prod Odoo."
   }
 }
+
+# --- Order builder /plan switch-on (GOL-3383 / GOL-3527 / GOL-3528, Train #4) --
+#
+# Same RUN_TIME-not-NEXT_PUBLIC story as nursery_livechat_channel_id above:
+# grove-sites #1140 turned the planner flag into a per-request read of
+# PLANNER_ENABLED on force-dynamic server routes, so the one GHCR image the
+# train promotes can be ON on QA (qa-app-platform/apps.tf hard-codes "1") and
+# OFF on prod until the board flips it. Empty => env omitted => /plan 404s and
+# the home teaser is hidden (the rollback). Nursery only.
+variable "nursery_planner_enabled" {
+  description = "Order builder (/plan + home teaser) on the prod nursery storefront. Empty string (default) = OFF: the PLANNER_ENABLED env is omitted from the app spec, /plan is a 404 and the teaser is hidden. \"1\" = ON. Flipping it is an app-spec redeploy of the same pinned image via the promote-storefronts targeted apply; no rebuild. PUBLIC value, not a secret. Nursery only; RUN_TIME scope; see apps.tf."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = contains(["", "1"], var.nursery_planner_enabled)
+    error_message = "nursery_planner_enabled must be empty (planner off) or \"1\" (planner on)."
+  }
+}

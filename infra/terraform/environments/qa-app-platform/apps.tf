@@ -414,6 +414,24 @@ resource "digitalocean_app" "tenant" {
         }
       }
 
+      # Order builder /plan (GOL-3383 / GOL-3527 / GOL-3528, Train #4 QA gate
+      # 12), NURSERY ONLY. grove-sites #1140 made the flag a per-request read
+      # (apps/nursery/lib/planner-flag.ts, PLANNER_ENABLED, force-dynamic
+      # routes), so the SAME prebuilt GHCR image shows /plan + the home teaser
+      # on QA and 404s on prod. Hard ON here: QA exists to exercise the gate.
+      # Prod is the var-gated twin (production/variables.tf
+      # nursery_planner_enabled, default off) so Josh's flip is a TF change,
+      # not console drift. RUN_TIME: BUILD_TIME/NEXT_PUBLIC_ can't reach a
+      # prebuilt image (see production/variables.tf nursery_livechat doc).
+      dynamic "env" {
+        for_each = each.key == "nursery" ? [1] : []
+        content {
+          key   = "PLANNER_ENABLED"
+          value = "1"
+          scope = "RUN_TIME"
+        }
+      }
+
       # Capture-outage alert for the tenant newsletter forms (goldberry +
       # nursery; ggg has no newsletter route). Same contract as the hub block.
       dynamic "env" {

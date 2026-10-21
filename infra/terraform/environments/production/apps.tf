@@ -364,6 +364,21 @@ resource "digitalocean_app" "tenant" {
         }
       }
 
+      # Order builder /plan flag (GOL-3383 / GOL-3527 / GOL-3528), NURSERY
+      # ONLY. Default OFF (var empty => env omitted => /plan 404s and the home
+      # teaser is hidden). Flip = set nursery_planner_enabled = "1" and run the
+      # promote-storefronts targeted apply (same pinned image, app-spec
+      # redeploy only, no rebuild). Rollback = empty the var again. Codified
+      # here so a console flip does not become drift the next apply reverts.
+      dynamic "env" {
+        for_each = each.key == "nursery" && var.nursery_planner_enabled != "" ? [1] : []
+        content {
+          key   = "PLANNER_ENABLED"
+          value = var.nursery_planner_enabled
+          scope = "RUN_TIME"
+        }
+      }
+
       # Capture-outage alert for the tenant newsletter forms (goldberry +
       # nursery; ggg has no newsletter route). Same contract as the hub env.
       dynamic "env" {
