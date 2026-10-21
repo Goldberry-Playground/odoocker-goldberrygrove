@@ -192,11 +192,17 @@ resource "digitalocean_app" "hub" {
 # ODOO_URL (not the hub's GROVE_ODOO_URL) and GHOST_URL/GHOST_CONTENT_KEY, per
 # tenant.secrets.ts. All three tenant images listen on port 3001 (ENV PORT=3001
 # in each Dockerfile); only the hub differs (3000).
+#
+# instance_count: nursery is the revenue storefront and runs 2 instances so a
+# platform-side container replacement doesn't take checkout down. On
+# 2026-10-19 ~16:50Z DO replaced the single nursery container (no deploy, no
+# OOM: memory flat at 32%) and atthegrovenursery.com served CF 504s until the
+# new one passed its health check at 16:51:39Z. goldberry/ggg stay at 1.
 locals {
   tenant_apps = {
-    goldberry = { image = "grove-goldberry" }
-    ggg       = { image = "grove-ggg" }
-    nursery   = { image = "grove-nursery" }
+    goldberry = { image = "grove-goldberry", instance_count = 1 }
+    ggg       = { image = "grove-ggg", instance_count = 1 }
+    nursery   = { image = "grove-nursery", instance_count = 2 }
   }
 }
 
@@ -210,7 +216,7 @@ resource "digitalocean_app" "tenant" {
     service {
       name               = each.key
       instance_size_slug = var.app_instance_size_slug
-      instance_count     = 1
+      instance_count     = each.value.instance_count
       http_port          = 3001
 
       image {

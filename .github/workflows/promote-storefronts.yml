@@ -189,6 +189,12 @@ jobs:
           # step fails the promote path.
           DISCORD_ORDERS_WEBHOOK_URL: op://Grove Prod/odoocker/DISCORD_ORDERS_WEBHOOK_URL
           ODOO_API_KEYS_TF_JSON:    op://Grove Prod/odoocker/ODOO_API_KEYS_TF_JSON
+          # Ghost Content API key bundle {"hub","goldberry","ggg","nursery"}. Until
+          # 2026-10-19 this was never loaded, so TF fell back to the variable's
+          # stub default and every promote shipped an invalid GHOST_CONTENT_KEY
+          # (blog.* Content API 401) to all 4 storefront apps. Field must exist
+          # on the odoocker item BEFORE this merges or the op load step fails.
+          GHOST_CONTENT_KEYS_TF_JSON: op://Grove Prod/odoocker/GHOST_CONTENT_KEYS_TF_JSON
         with:
           export-env: true
 
@@ -265,6 +271,7 @@ jobs:
             # Orders-channel webhook rides the same rebuild (odoocker#603).
             echo "TF_VAR_discord_orders_webhook_url=$DISCORD_ORDERS_WEBHOOK_URL"
             echo "TF_VAR_odoo_api_keys=$ODOO_API_KEYS_TF_JSON"
+            echo "TF_VAR_ghost_content_keys=$GHOST_CONTENT_KEYS_TF_JSON"
             # Not app-spec-relevant to the four targeted resources below;
             # placeholders are safe here for the same reason prod-plan-guard.yml
             # uses them (see that workflow for the full rationale).
