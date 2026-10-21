@@ -40,8 +40,26 @@ FROM caddy:2-builder AS builder
 # (dfa7af5, which preserves the record ID so cleanup no longer Atoi's "") and
 # caddy v2.10.0 + libdns/libdns v1.0.0. Pinning here also cache-busts the stale
 # xcaddy layer, forcing a fresh module resolution to the fixed code.
+#
+# GOL-3514: force golang.org/x/net >= v0.60.0 into the caddy binary to clear
+# HIGH CVE-2026-78669 (net/http2 Denial of Service via excessive HTTP/2 SETTINGS
+# frames). caddy:2-builder's module graph currently resolves x/net to v0.59.0,
+# which the Trivy gate (docker-caddy.yml, ignore-unfixed=true) flags as a FIXABLE
+# HIGH (fixed in 0.60.0) -- so ignore-unfixed does NOT suppress it, and it blocks
+# every grove-caddy rebuild (main included). This one is genuinely runtime-
+# reachable: caddy terminates public TLS and serves HTTP/2, so it must be FIXED,
+# not .trivyignore'd (unlike the build-time-only rtlcss/postcss entries).
+#
+# We pin the `golang.org/x/net/http2` SUB-package, not the `golang.org/x/net`
+# module root: the root has no importable package, so `--with golang.org/x/net@v`
+# would make xcaddy emit `import _ "golang.org/x/net"` and fail to compile. http2
+# is a real importable package (and the exact one carrying the vulnerable code).
+# `--with pkg@ver` raises the module version via MVS as a FLOOR -- a future
+# caddy:2-builder that already requires a higher x/net wins, so this never
+# silently downgrades the base (which a `--replace ...=...@v0.60.0` pin would).
 RUN xcaddy build \
-    --with github.com/caddy-dns/digitalocean@v0.0.0-20250606074528-04bde2867106
+    --with github.com/caddy-dns/digitalocean@v0.0.0-20250606074528-04bde2867106 \
+    --with golang.org/x/net/http2@v0.60.0
 
 FROM caddy:2
 # CI-unblock (incidental to GOL-345, unrelated to the cert logic): the floating
@@ -49,7 +67,14 @@ FROM caddy:2
 # (docker-caddy.yml, ignore-unfixed=true) flags as HIGH CVE-2026-33630 -- fixed
 # upstream in 1.34.8-r0. A fixable HIGH blocks the build, so ANY grove-caddy
 # rebuild fails here until the caddy base catches up. Pull the patched OS
-# package explicitly (`apk upgrade`, not `apk add`, so no exact-pin churn) --
-# the caddy binary itself scans clean (0 gobinary vulns).
+# package explicitly (`apk upgrade`, not `apk add`, so no exact-pin churn).
+#
+# GOL-3514 (2026-10-21): the caddy gobinary is NO LONGER automatically clean --
+# the assumption "the caddy binary scans clean (0 gobinary vulns)" expired when
+# Trivy-DB drift surfaced HIGH CVE-2026-78669 (golang.org/x/net v0.59.0, net/http2
+# SETTINGS-frame DoS, fixed in 0.60.0). The builder-stage
+# `--with golang.org/x/net/http2@v0.60.0` above forces the fixed x/net into the
+# binary; this runtime stage still only patches OS packages (the CVE is in the
+# compiled Go binary, so no apk fix applies here).
 RUN apk upgrade --no-cache c-ares
 COPY --from=builder /usr/bin/caddy /usr/bin/caddy
