@@ -218,10 +218,11 @@ resource "digitalocean_firewall" "agent_plane" {
 # LIFECYCLE. The firewall was first created out of band by AgenticOS's first
 # admit (fence.sh creates it when missing). The `import` block below adopts that
 # live object into state -- id looked up 2026-10-21 with
-# `doctl compute firewall list` -- so the first plan after merge is exactly
-# `1 to import, 0 to add, 0 to change, 0 to destroy` (the one stray TEST-NET
-# rule 192.0.2.1/32 left by the AgenticOS dry run lands in state and is ignored,
-# like every other CI rule). The block is idempotent once the resource is in
+# `doctl compute firewall list` (inbound empty, outbound = the three rules
+# below, status succeeded) -- so the first plan after merge is exactly
+# `1 to import, 0 to add, 0 to change, 0 to destroy`. Any runner /32 present at
+# plan time lands in state and is ignored, like every other CI rule. The block
+# is idempotent once the resource is in
 # state, same as the one in postgres.tf. Import blocks cannot be count-gated,
 # so the documented rollback (agent_plane_firewall_enabled = false) must ALSO
 # delete the import block, or the plan errors on an import target that no longer
