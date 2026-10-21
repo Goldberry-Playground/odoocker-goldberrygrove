@@ -190,7 +190,7 @@ variable "grove_revalidate_secret" {
 }
 
 variable "odoo_api_keys" {
-  description = "Per-tenant Odoo API keys (bearer auth for authenticated /grove/api/v1 endpoints, e.g. order creation). Global-scope res.users.apikeys records minted on the PROD Odoo -- Odoo 19 bearer auth requires scope NULL keys. GENERAL (not SECRET) scope on the app: DO returns SECRET envs encrypted, so the provider re-diffs them every plan (upstream provider issues #869/#514) and would fire the nightly drift alert forever. The value lives in TF state regardless of type; state stays in the Spaces backend, never in the repo. Keys are revocable in Odoo (Settings -> Users -> API Keys). Read from TF_VAR_odoo_api_keys (op://Grove Prod/odoocker/ODOO_API_KEYS_TF_JSON, in CI and in .env.op). REQUIRED, no default: the old prod-stub default meant a run that forgot to map the var shipped a stub instead of failing (2026-10-19)."
+  description = "Per-tenant Odoo API keys (bearer auth for authenticated /grove/api/v1 endpoints, e.g. order creation). Global-scope res.users.apikeys records minted on the PROD Odoo -- Odoo 19 bearer auth requires scope NULL keys. GENERAL (not SECRET) scope on the app: DO returns SECRET envs encrypted, so the provider re-diffs them every plan (upstream provider issues #869/#514) and would fire the nightly drift alert forever. The value lives in TF state regardless of type; state stays in the Spaces backend, never in the repo. Keys are revocable in Odoo (Settings -> Users -> API Keys). Read from TF_VAR_odoo_api_keys (op://Grove Prod/odoocker/ODOO_API_KEYS_TF_JSON, in CI and in .env.op). REQUIRED, no default: the old prod-stub default meant a run that forgot to map the var shipped a stub instead of failing (2026-10-19). OPTIONAL extra key `hub` (GOL-3495): when present it becomes ODOO_API_KEY on grove-hub-prod for the hub newsletter signup; when absent the hub env is omitted and the route answers 503 newsletter_not_configured (the safe gate). Mint on the prod Odoo with `TENANTS=hub scripts/mint_storefront_keys_shell.py` and MERGE into the existing JSON map."
   type        = map(string)
   sensitive   = true
   validation {
@@ -266,7 +266,7 @@ variable "ghost_smtp" {
 # === Observability — platform plane (GOL-381) ===============================
 
 variable "discord_webhook_url" {
-  description = "Discord webhook for #grove-ops paging. observability.tf appends Discord's Slack-compat suffix (`/slack`) so DigitalOcean's Slack-shaped alert payload is accepted — DO has no native Discord target. Secret: never inline it; injected as TF_VAR_discord_webhook_url via `op run` (1P field: discord_webhook_url). Empty string is NOT valid: it would silently produce alerts that page nowhere."
+  description = "Discord webhook for #grove-ops paging. observability.tf appends Discord's Slack-compat suffix (`/slack`) so DigitalOcean's Slack-shaped alert payload is accepted — DO has no native Discord target. Secret: never inline it; injected as TF_VAR_discord_webhook_url via `op run` (1P field: discord_webhook_url). Empty string is NOT valid: it would silently produce alerts that page nowhere. Also shipped BARE as CAPTURE_ALERT_WEBHOOK_URL on grove-hub-prod / grove-goldberry-prod / grove-nursery-prod (GOL-3495): the storefront newsletter capture 5xx alert posts a Discord-native payload to it directly."
   type        = string
   sensitive   = true
 
