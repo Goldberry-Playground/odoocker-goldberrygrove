@@ -177,6 +177,104 @@ resource "digitalocean_firewall" "agent_plane" {
 }
 
 ###############################################################################
+# GOL-3412 - the CI-OWNED sibling firewall on the SAME droplet
+#
+# The fence above did its job and cut off one inbound consumer nobody listed:
+# ten AgenticOS workflows SSH into this box as `deploy@` from GitHub-HOSTED
+# runners, which egress from ~7,000 rotating Azure CIDRs. No static source list
+# can admit them, and an ephemeral rule on `grove-agent-plane-fw` itself would
+# plan as drift on every run and be reverted by any apply that lands mid-deploy.
+# AgenticOS's answer (`.github/actions/agent-plane-fence`, runbook
+# docs/runbooks/ci-ssh-agent-plane-fence.md) is a SECOND cloud firewall,
+# `grove-agent-plane-ci-fw`, attached to the same droplet: each job adds its
+# runner's /32 on tcp/22 to THAT firewall and removes it in an `if: always()`
+# step.
+#
+# UNION SEMANTICS. DigitalOcean evaluates every firewall attached to a droplet
+# and admits a packet if ANY of them does -- membership is additive, never
+# intersecting. So the fence above stays exactly as codified (operator /32s
+# only) and this firewall contributes its transient runner /32s on top. Nothing
+# here widens the fence: with no inbound rules it admits nothing by itself, and
+# a /32 a killed runner leaves behind is confined to a firewall whose name says
+# who owns it (the admit step warns once 5+ stray rules accumulate).
+#
+# WHO OWNS WHAT:
+#   Terraform (this file)  existence, name, droplet membership, outbound rules.
+#                          The nightly membership watcher
+#                          (scripts/check-firewall-membership.py) asserts the
+#                          droplet is behind it like any other codified firewall.
+#   AgenticOS CI           every inbound_rule, all of them transient. Hence
+#                          `ignore_changes = [inbound_rule]`: a plan taken while
+#                          a job is admitted must not show its /32 as drift, and
+#                          an apply must never strip one out from under a running
+#                          deploy. This resource declares NO inbound_rule blocks
+#                          on purpose. Do not add one -- a permanent admission
+#                          belongs on the fence above, where it is reviewed.
+#
+# OUTBOUND is the same three wide-open rules as the fence, for the same reason:
+# a DO firewall with no outbound rules blocks ALL egress, and this one must
+# never be the firewall that takes the agent plane offline.
+#
+# LIFECYCLE. The firewall was first created out of band by AgenticOS's first
+# admit (fence.sh creates it when missing). The `import` block below adopts that
+# live object into state -- id looked up 2026-10-21 with
+# `doctl compute firewall list` (inbound empty, outbound = the three rules
+# below, status succeeded) -- so the first plan after merge is exactly
+# `1 to import, 0 to add, 0 to change, 0 to destroy`. Any runner /32 present at
+# plan time lands in state and is ignored, like every other CI rule. The block
+# is idempotent once the resource is in
+# state, same as the one in postgres.tf. Import blocks cannot be count-gated,
+# so the documented rollback (agent_plane_firewall_enabled = false) must ALSO
+# delete the import block, or the plan errors on an import target that no longer
+# exists in configuration. If CI ever deletes and recreates the firewall (the
+# AgenticOS runbook's rollback), the id changes: look it up again and update it
+# here before the next plan.
+#
+# Gated by the same flag as the fence because the two only make sense together:
+# without the fence there is nothing for CI to be admitted through.
+###############################################################################
+
+import {
+  to = digitalocean_firewall.agent_plane_ci[0]
+  id = "76ef6670-193e-4bbe-892e-6fec084aab9a"
+}
+
+resource "digitalocean_firewall" "agent_plane_ci" {
+  count = var.agent_plane_firewall_enabled ? 1 : 0
+
+  name        = "grove-agent-plane-ci-fw"
+  droplet_ids = [data.digitalocean_droplet.agent_plane[0].id]
+
+  # Deliberately NO inbound_rule blocks. CI adds and removes its own per job;
+  # see the header and the lifecycle block below.
+
+  outbound_rule {
+    protocol              = "tcp"
+    port_range            = "1-65535"
+    destination_addresses = ["0.0.0.0/0", "::/0"]
+  }
+
+  outbound_rule {
+    protocol              = "udp"
+    port_range            = "1-65535"
+    destination_addresses = ["0.0.0.0/0", "::/0"]
+  }
+
+  outbound_rule {
+    protocol              = "icmp"
+    destination_addresses = ["0.0.0.0/0", "::/0"]
+  }
+
+  lifecycle {
+    # The inbound rules are CI's, and they come and go per job. Without this,
+    # every plan taken during a deploy shows a /32 to remove, and an apply at
+    # the wrong moment cuts a running job's SSH. Terraform still owns
+    # everything else on the object.
+    ignore_changes = [inbound_rule]
+  }
+}
+
+###############################################################################
 # Variables for this file live HERE, not in variables.tf, deliberately: this is
 # a self-contained gated snowflake fence (tls.tf sets the same precedent), and
 # the sibling GOL-2566 change is appending its own block to the tail of

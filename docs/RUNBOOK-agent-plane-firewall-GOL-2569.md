@@ -49,6 +49,28 @@ blocks *all* egress, and this box is nothing but egress (Anthropic API, GitHub,
 DO API, ghcr.io, the Cloudflare tunnel, OTLP to `grove-obs:5080`, apt). Trimming
 them takes the company's automation offline in one apply.
 
+### The CI sibling: `grove-agent-plane-ci-fw` (GOL-3412)
+
+The fence cut off the AgenticOS workflows that SSH into this box from
+GitHub-hosted runners (rotating Azure egress, not allow-listable). Their fix
+is a **second** cloud firewall on the same droplet, `grove-agent-plane-ci-fw`,
+which each CI job admits its own runner `/32` to on `tcp/22` and revokes in an
+`if: always()` step (AgenticOS `docs/runbooks/ci-ssh-agent-plane-fence.md`).
+DO **unions** every firewall attached to a droplet, so the fence above is
+untouched and the CI firewall only ever adds transient sources. It is codified
+in the same file as `digitalocean_firewall.agent_plane_ci` under the same
+`agent_plane_firewall_enabled` gate: Terraform owns its existence, droplet
+membership and the three wide-open outbound rules, declares **no** inbound
+rules, and carries `lifecycle { ignore_changes = [inbound_rule] }` so CI's
+`/32`s never plan as drift and an apply never strips one from under a running
+deploy. It was first created out of band by CI's first admit, so an `import`
+block adopts the live object (`76ef6670-…`); the first plan after merge is
+`1 to import, 0 to add, 0 to change, 0 to destroy`, and the nightly membership
+check then asserts it like the fence. The rollback above (flag → `false`) now
+detaches **both** firewalls and must also delete the `import` block; CI
+recreates its firewall empty on the next admit, under a new id that then needs
+re-importing.
+
 ---
 
 ## Step 0 — (optional, 5 s) confirm the exposure from off-host
@@ -202,6 +224,9 @@ Host-level rules on the droplet are untouched by anything in this runbook.
 - **GOL-2566** — legacy Ghost snowflake, same blind spot
   (`production/legacy-ghost-fw.tf`, `docs/RUNBOOK-legacy-ghost-firewall.md`).
 - **GOL-2306** — agent-plane credential exposure (the token half).
+- **GOL-3412** — CI SSH through the fence: the `grove-agent-plane-ci-fw` sibling
+  (`digitalocean_firewall.agent_plane_ci`, same file; AgenticOS
+  `docs/runbooks/ci-ssh-agent-plane-fence.md`).
 - **PR #745** — nightly membership watcher. It asserts *codified* firewalls
   contain their *codified* droplets, so an un-codified droplet is invisible to it
   by construction; GOL-2572 extends it to an account-wide census that is not.
