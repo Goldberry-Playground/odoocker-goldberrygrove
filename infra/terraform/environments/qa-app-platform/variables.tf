@@ -152,7 +152,7 @@ variable "grove_revalidate_secret" {
 }
 
 variable "odoo_api_keys" {
-  description = "Per-tenant Odoo API keys (bearer auth for authenticated /grove/api/v1 endpoints, e.g. order creation). Global-scope res.users.apikeys records minted on the QA Odoo -- Odoo 19 bearer auth requires scope NULL keys. Read from 1Password (ODOO_API_KEYS_TF_JSON) via TF_VAR_odoo_api_keys; defaults keep the pre-key qa-stub behavior so plan still works without the secret."
+  description = "Per-tenant Odoo API keys (bearer auth for authenticated /grove/api/v1 endpoints, e.g. order creation). Global-scope res.users.apikeys records minted on the QA Odoo -- Odoo 19 bearer auth requires scope NULL keys. Read from 1Password (ODOO_API_KEYS_TF_JSON) via TF_VAR_odoo_api_keys; defaults keep the pre-key qa-stub behavior so plan still works without the secret. OPTIONAL extra key `hub` (GOL-3495): when present it becomes ODOO_API_KEY on grove-hub-qa for the hub newsletter signup; when absent the hub env is omitted and the route answers 503 newsletter_not_configured (the safe gate). Mint with `TENANTS=hub scripts/mint_storefront_keys_shell.py` and MERGE into the existing JSON map."
   type        = map(string)
   sensitive   = true
   default = {
@@ -637,7 +637,7 @@ variable "nursery_livechat_channel_id" {
 # ("Discord ops ping on chat start") was untestable on QA. Mirrors prod's
 # odoo.tf discord_ops_webhook_url = var.discord_webhook_url chain.
 variable "discord_ops_webhook_url" {
-  description = "Discord webhook grove_support posts the chat-start ping to on QA (os.environ DISCORD_OPS_WEBHOOK_URL; grove_headless _notify_discord() also falls back to it when DISCORD_ORDERS_WEBHOOK_URL is empty). Empty default = ping is a silent no-op in QA. QA chats pinging the REAL #grove-ops channel is intentional for the Train #3 gate, same precedent as discord_orders_webhook_url; point it at a QA-only webhook later if the noise bothers staff. 1P: op://Goldberry Grove - Admin/Grove Infra/discord_webhook_url (via .env.op). BARE url, no /slack suffix. Feeds user_data -- changing it REPLACES the QA odoo droplet (which is what train-up does anyway)."
+  description = "Discord webhook grove_support posts the chat-start ping to on QA (os.environ DISCORD_OPS_WEBHOOK_URL; grove_headless _notify_discord() also falls back to it when DISCORD_ORDERS_WEBHOOK_URL is empty). Empty default = ping is a silent no-op in QA. QA chats pinging the REAL #grove-ops channel is intentional for the Train #3 gate, same precedent as discord_orders_webhook_url; point it at a QA-only webhook later if the noise bothers staff. 1P: op://Goldberry Grove - Admin/Grove Infra/discord_webhook_url (via .env.op). BARE url, no /slack suffix. Feeds user_data -- changing it REPLACES the QA odoo droplet (which is what train-up does anyway). Also becomes CAPTURE_ALERT_WEBHOOK_URL on grove-hub-qa / grove-goldberry-qa / grove-nursery-qa (GOL-3495): the storefront newsletter capture 5xx alert, omitted when empty."
   type        = string
   sensitive   = true
   default     = ""

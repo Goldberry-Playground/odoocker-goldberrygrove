@@ -121,6 +121,40 @@ resource "digitalocean_app" "hub" {
         scope = "RUN_AND_BUILD_TIME"
       }
 
+      # Hub newsletter signup -> grove_headless POST /grove/api/v1/newsletter/
+      # subscribe (GOL-3456 / GOL-3495, Train #4). The hub never had a capture
+      # form, so it never carried a bearer key. apps/hub's subscribe route reads
+      # GROVE_ODOO_URL (above) + ODOO_API_KEY and answers 503
+      # newsletter_not_configured while the key is absent -- that 503 is the
+      # safe pre-provision gate, so the env is OMITTED (not stubbed) until the
+      # OPTIONAL `hub` entry exists in var.odoo_api_keys. Mint it on the prod
+      # Odoo droplet with `TENANTS=hub scripts/mint_storefront_keys_shell.py`
+      # (owner uid 2, same as the tenant keys) and MERGE the printed
+      # {"hub": "..."} into op://Grove Prod/odoocker/ODOO_API_KEYS_TF_JSON --
+      # never replace the three tenant keys. Rides the promote-storefronts
+      # targeted apply. RUN_TIME: prebuilt GHCR image, per-request read.
+      # GENERAL, not SECRET, same provider re-diff reason as the tenant key.
+      dynamic "env" {
+        for_each = lookup(var.odoo_api_keys, "hub", "") != "" ? [1] : []
+        content {
+          key   = "ODOO_API_KEY"
+          value = var.odoo_api_keys["hub"]
+          scope = "RUN_TIME"
+        }
+      }
+
+      # Capture-outage alert (GOL-3456 / GOL-3495). When a newsletter capture
+      # route 5xx's, @grove/newsletter logs `[grove-capture] ALERT ...` and
+      # POSTs a short message to this Discord webhook (throttled to one post
+      # per app+route per 10 min). Same #grove-ops webhook the platform alerts
+      # page (CI maps it from op://Grove Prod/odoocker/DISCORD_OPS_WEBHOOK_URL).
+      # BARE URL, no /slack suffix -- the package posts a Discord-native payload.
+      env {
+        key   = "CAPTURE_ALERT_WEBHOOK_URL"
+        value = var.discord_webhook_url
+        scope = "RUN_TIME"
+      }
+
       # Signed webhook secret so grove-sites' /api/revalidate can be poked by
       # Odoo / Ghost on content change. GENERAL, not SECRET (see var docs).
       env {
@@ -199,6 +233,10 @@ resource "digitalocean_app" "hub" {
 # OOM: memory flat at 32%) and atthegrovenursery.com served CF 504s until the
 # new one passed its health check at 16:51:39Z. goldberry/ggg stay at 1.
 locals {
+  # Tenants whose storefront ships a newsletter capture route (GOL-3456);
+  # CAPTURE_ALERT_WEBHOOK_URL is only set on these.
+  capture_alert_tenants = ["goldberry", "nursery"]
+
   tenant_apps = {
     goldberry = { image = "grove-goldberry", instance_count = 1 }
     ggg       = { image = "grove-ggg", instance_count = 1 }
@@ -289,6 +327,11 @@ resource "digitalocean_app" "tenant" {
       }
 
       # GOL-1884: newsletter capture instances (see local above).
+      # RETIRE AFTER THE TRAIN #4 PROMOTE (GOL-3495 follow-up): grove-sites
+      # #1130 (GOL-3456) stops reading GHOST_NEWSLETTER_INSTANCES entirely, but
+      # the Train #3 pin (pre-#1130 code) 503s its capture routes without it,
+      # and this file is applied as-is on every promote. Keep it until the
+      # Train #4 image is serving, then drop this env + the local above.
       env {
         key   = "GHOST_NEWSLETTER_INSTANCES"
         value = local.ghost_newsletter_instances
@@ -317,6 +360,17 @@ resource "digitalocean_app" "tenant" {
         content {
           key   = "LIVECHAT_ODOO_URL"
           value = "https://${local.odoo_host}"
+          scope = "RUN_TIME"
+        }
+      }
+
+      # Capture-outage alert for the tenant newsletter forms (goldberry +
+      # nursery; ggg has no newsletter route). Same contract as the hub env.
+      dynamic "env" {
+        for_each = contains(local.capture_alert_tenants, each.key) ? [1] : []
+        content {
+          key   = "CAPTURE_ALERT_WEBHOOK_URL"
+          value = var.discord_webhook_url
           scope = "RUN_TIME"
         }
       }

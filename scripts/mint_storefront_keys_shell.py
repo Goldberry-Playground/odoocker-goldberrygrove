@@ -35,6 +35,10 @@ RUN (on the QA odoo droplet, from /etc/grove)
         < mint_storefront_keys_qa_shell.py
 
 ENV (optional)
+    TENANTS       comma list of keys to mint. Default "goldberry,ggg,nursery".
+                  `TENANTS=hub` mints only the hub newsletter key (GOL-3495);
+                  the printed JSON is then PARTIAL -- merge it into the existing
+                  1Password map, do not replace the field.
     OWNER_LOGIN   res.users login to own the keys. Default "admin" -- the same
                   identity production's LIVE storefront keys sit on (uid 2,
                   keys "grove-storefront-<tenant>" from 2026-08-31).
@@ -45,7 +49,14 @@ import json
 import os
 import sys
 
-TENANTS = ("goldberry", "ggg", "nursery")
+# GOL-3495: TENANTS env (comma list) narrows the mint, e.g. `TENANTS=hub` mints
+# ONLY the hub key (grove-hub-qa / grove-hub-prod newsletter signup, GOL-3456).
+# The printed JSON then holds only the minted keys -- MERGE it into the existing
+# odoo_api_keys_tf_json / ODOO_API_KEYS_TF_JSON map in 1Password, never replace.
+ALL_TENANTS = ("goldberry", "ggg", "nursery", "hub")
+DEFAULT_TENANTS = ("goldberry", "ggg", "nursery")
+_raw = os.environ.get("TENANTS", "").strip()
+TENANTS = tuple(t.strip() for t in _raw.split(",") if t.strip()) if _raw else DEFAULT_TENANTS
 OWNER_LOGIN = os.environ.get("OWNER_LOGIN", "admin").strip() or "admin"
 KEY_PREFIX = os.environ.get("KEY_PREFIX", "grove-storefront").strip() or "grove-storefront"
 SCOPE = None  # NULL scope: what grove_headless `auth="bearer"` endpoints check
@@ -64,6 +75,10 @@ except NameError:
 
 
 def main():
+    bad = [t for t in TENANTS if t not in ALL_TENANTS]
+    if bad:
+        _err(f"ERROR: unknown TENANTS entries {bad}; allowed: {', '.join(ALL_TENANTS)}. Aborting (nothing minted).")
+        return 2
     user = env["res.users"].sudo().search([("login", "=", OWNER_LOGIN)], limit=1)
     if not user:
         _err(f"ERROR: owner user '{OWNER_LOGIN}' not found; aborting (nothing minted).")
@@ -97,6 +112,10 @@ def main():
     _err(f"minted {len(minted)} NULL-scope keys on uid={user.id} login='{OWNER_LOGIN}' "
          f"({', '.join(f'{KEY_PREFIX}-{t}' for t in TENANTS)}). Store the JSON in 1Password "
          "(Grove QA), repoint qa-app-platform/.env.op, re-apply, clear scrollback.")
+    if set(TENANTS) != set(DEFAULT_TENANTS):
+        _err("PARTIAL mint: the JSON above holds ONLY the keys just minted. MERGE those entries "
+             "into the existing odoo_api_keys_tf_json / ODOO_API_KEYS_TF_JSON map in 1Password; "
+             "replacing the field would drop the other tenants' live keys.")
     return 0
 
 
