@@ -98,6 +98,12 @@ jobs:
         with:
           dockerfile: odoo/Dockerfile
           failure-threshold: warning
+          # DL3064 (hadolint >= 2.13 via hadolint-action v3.5.0) flags
+          # ENTERPRISE_ACCESS_TOKEN / GITHUB_ACCESS_TOKEN as "sensitive data in
+          # ARG". They are build-time ARGs consumed by git clone in RUN steps and
+          # never ENV, so nothing persists in the image layers. Ignored rather
+          # than refactored to --mount=type=secret in this dependency bump.
+          ignore: DL3064
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
