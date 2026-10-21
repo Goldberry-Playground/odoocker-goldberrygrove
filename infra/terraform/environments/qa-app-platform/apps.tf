@@ -414,6 +414,19 @@ resource "digitalocean_app" "tenant" {
         }
       }
 
+      # Order builder /plan runtime flag (GOL-3528 / GOL-3547), NURSERY ONLY.
+      # Same contract as the production block: grove-sites #1140 reads
+      # PLANNER_ENABLED per request, so RUN_TIME reaches the prebuilt image.
+      # Omitted (/plan -> 404) when var.nursery_planner_enabled is false.
+      dynamic "env" {
+        for_each = each.key == "nursery" && var.nursery_planner_enabled ? [1] : []
+        content {
+          key   = "PLANNER_ENABLED"
+          value = "1"
+          scope = "RUN_TIME"
+        }
+      }
+
       # Capture-outage alert for the tenant newsletter forms (goldberry +
       # nursery; ggg has no newsletter route). Same contract as the hub block.
       dynamic "env" {
