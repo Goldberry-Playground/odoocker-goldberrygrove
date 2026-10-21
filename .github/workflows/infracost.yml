@@ -48,7 +48,7 @@ jobs:
       # var stays unset, and the gate below skips the cost diff (job green) —
       # the same graceful-skip contract the old Infisical fetch gave.
       - name: Load secrets from 1Password
-        uses: 1password/load-secrets-action@581a835fb51b8e7ec56b71cf2ffddd7e68bb25e0 # v2.0.0
+        uses: 1password/load-secrets-action@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
         continue-on-error: true
         timeout-minutes: 2
         env:
@@ -92,7 +92,7 @@ jobs:
       # Baseline: price the base branch first so the PR can be diffed against it.
       - name: Checkout base branch
         if: steps.gate.outputs.enabled == 'true'
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         timeout-minutes: 2
         with:
           ref: ${{ github.event.pull_request.base.ref }}
@@ -109,7 +109,7 @@ jobs:
       # Switch to the PR HEAD and diff against the baseline.
       - name: Checkout PR branch
         if: steps.gate.outputs.enabled == 'true'
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         timeout-minutes: 2
 
       - name: Infracost diff (PR vs base)
