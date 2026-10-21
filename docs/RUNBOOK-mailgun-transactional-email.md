@@ -67,17 +67,51 @@ State verified live on 2026-10-19 (same Mailgun account, US region):
 `Goldberry Grove - Admin` → `Mailgun | Goldberry Grove` (item
 `7t2pap33hu37bftpsy7uzmakuy`) as `smtp_login_news_<tenant>` and
 `smtp_password_news_<tenant>`, following the `smtp_login_<tenant>` pattern. The
-ops service account is read-only on that vault, so a human mints and writes these:
-Mailgun dashboard → Sending → Domain settings → SMTP credentials → Add, or
-`POST /v3/domains/news.<domain>/credentials`. `op item edit` can print a
-spurious error even when the write lands, so always re-read the field to verify.
+ops service account is read-only on that vault, so a human mints and stores
+them — one command, dry-run first:
 
-**Odoo wiring (not done yet, waits on GOL-3454).** Add one `ir.mail_server` per
-brand company, host `smtp.mailgun.org:587` STARTTLS, `from_filter=news.<domain>`,
-and point `mass_mailing` at it (`mass_mailing.outgoing_mail_server`). Do this
-through module data or IaC, never by hand on prod. The transactional
-`ir.mail_server` (`from_filter` = `mg.`/`send.` domain) must stay as it is, so
-order mail never falls back to the bulk server.
+```bash
+scripts/mailgun-mint-news-smtp-creds.sh            # plan only
+scripts/mailgun-mint-news-smtp-creds.sh --apply    # mint, store on 1P, re-read, SMTP AUTH test
+```
+
+It creates (or, on re-run, resets) each Mailgun login, writes both 1P fields,
+re-reads them (`op item edit` can print a spurious error even when the write
+lands, so the re-read is the source of truth) and AUTHs on
+`smtp.mailgun.org:587` STARTTLS with the stored values. Nothing secret is echoed.
+
+**Odoo wiring (codified, GOL-3455 §4).** One `ir.mail_server` per brand,
+`from_filter=news.<domain>`, host `smtp.mailgun.org:587` STARTTLS, declared in
+`scripts/newsletter-mail-servers.spec.json` and applied with the existing
+idempotent reconfig tool:
+
+```bash
+op run --env-file=scripts/newsletter-mail-servers.env.op -- \
+  python3 scripts/prod-reconfig.py --target qa \
+    --spec scripts/newsletter-mail-servers.spec.json --apply
+```
+
+Why the shape is what it is:
+
+- Odoo 19 picks the outgoing server by matching the From domain against
+  `from_filter`; when nothing matches it falls back to the **lowest-sequence**
+  server and rewrites the From. The transactional row stays at sequence 5 and
+  the `news.` rows sit at 20–23, so an unmatched From (odoobot, a user's own
+  address) still goes out transactional and never through a bulk domain. The
+  spec's assertions fail the run if a bulk row ever sits below 20 or the
+  transactional row goes missing.
+- `ir.mail_server` has no company field in Odoo 19, so "per company" means
+  per From domain: a Farm News mailing is sent From `…@news.goldberrygrove.farm`.
+- `mass_mailing.outgoing_mail_server=True` turns on the per-mailing **Send From**
+  server picker in Email Marketing. There is deliberately no single default
+  `mass_mailing.mail_server_id` — four brands, one list of record.
+- QA and prod share the domains and credentials. A QA→prod DB promotion carries
+  the rows over, so prod needs `--check`, not `--apply`.
+
+Run order on a train: mint creds (above) → `--apply` on QA on the Monday
+bring-up → compose a test mailing per brand From `news.<domain>` and confirm the
+`Received:` chain shows `d=news.<domain>` → `--check` on prod after the Wednesday
+promote. See the matching gate in `RUNBOOK-release-train.md`.
 
 **Rollback:** `DELETE /v3/domains/news.<domain>` in Mailgun, then delete the
 Cloudflare records carrying the `GOL-3455` comment. Neither touches the

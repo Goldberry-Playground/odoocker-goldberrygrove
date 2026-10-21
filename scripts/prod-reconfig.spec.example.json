@@ -7,8 +7,11 @@
     "scratch DB first, then confirm the exact field names below match the live schema",
     "(payment.provider.code / .state, ir.mail_server field names, which crons the freeze",
     "disabled). The values here are the DEFAULTS for the Grove prod launch; adjust only",
-    "with evidence from --report."
+    "with evidence from --report.",
+    "allowed_targets (GOL-3455): this spec rewrites web.base.url to PROD, so it must",
+    "never run against live QA; prod-reconfig.py refuses --target qa for it."
   ],
+  "allowed_targets": ["scratch", "prod"],
 
   "config_parameters": {
     "web.base.url": "${PROD_WEB_BASE_URL}",

@@ -304,6 +304,47 @@ GOL-2326.
 
 ---
 
+## Gate: newsletter bulk mail servers (Train #4, GOL-3455 / GOL-3454)
+
+Train #4 brings `mass_mailing` into `grove_headless` (gom#363): Odoo Email
+Marketing becomes the newsletter list of record. Bulk mail must go out on the
+per-brand Mailgun `news.<domain>` domains, never on the transactional
+`send.gatheringatthegrove.com` server. The four `ir.mail_server` rows that make
+that happen are declared, not clicked:
+
+```bash
+# 0. ONCE, Josh, before the train: mint + store the four SMTP logins on 1P (dry-run first)
+scripts/mailgun-mint-news-smtp-creds.sh
+scripts/mailgun-mint-news-smtp-creds.sh --apply
+
+# 1. Mon, after train-up and the module upgrade (mass_mailing now installed) — idempotent
+op run --env-file=scripts/newsletter-mail-servers.env.op -- \
+  python3 scripts/prod-reconfig.py --target qa \
+    --spec scripts/newsletter-mail-servers.spec.json --apply
+
+# 2. QA gate 10 (manifest): one test mailing per brand From `…@news.<domain>` to a
+#    seed address — headers must show `d=news.<domain>`; an order receipt sent in
+#    the same window must still show `d=send.gatheringatthegrove.com`.
+
+# 3. Wed, after promote — the promoted DB already carries the rows, so verify only
+op run --env-file=scripts/newsletter-mail-servers.env.op -- \
+  env ODOO_XMLRPC_URL=https://odoo.gatheringatthegrove.com ODOO_API_KEY="op://Grove Prod/REPLACE_ITEM_ID/odoo_api_key" \
+  python3 scripts/prod-reconfig.py --target prod \
+    --spec scripts/newsletter-mail-servers.spec.json --check
+```
+
+Exit `0` = post-conditions hold, `2` = an assertion failed (transactional server
+missing/archived, a bulk row below sequence 20, a bulk row without a login),
+`1` = auth/spec/guard error. The spec carries `allowed_targets`; the promotion
+spec `prod-reconfig.spec.example.json` now refuses `--target qa` for the same
+reason in reverse (it rewrites `web.base.url` to prod).
+
+**Hold rule.** If step 1 cannot run because the 1P fields are missing, the
+newsletter line item comes OUT of the Train #4 QA gate list but the train
+itself still rolls — the rows are additive and nothing else depends on them.
+Details and rationale: `RUNBOOK-mailgun-transactional-email.md` → "Bulk
+newsletter sending domains".
+
 ## Gate: shop-departments backward compatibility (Train #2, GOL-2584 / GOL-2744)
 
 grove-odoo-modules **#299** restructures `product.public.category` in place —

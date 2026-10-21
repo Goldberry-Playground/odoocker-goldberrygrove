@@ -1,0 +1,155 @@
+{
+  "_name": "newsletter-mail-servers",
+  "_comment": [
+    "Declarative desired-state for scripts/prod-reconfig.py (GOL-3455, option C / GOL-3454).",
+    "One Odoo ir.mail_server per brand for BULK newsletter mail on the Mailgun",
+    "news.<domain> sending domains, kept apart from the transactional server",
+    "(from_filter send.gatheringatthegrove.com) so a bulk reputation dip cannot",
+    "touch order mail. COMMITTED: holds ${ENV_VAR} references, never secret values.",
+    "Resolve with: op run --env-file=scripts/newsletter-mail-servers.env.op -- \\",
+    "  python3 scripts/prod-reconfig.py --target qa --spec scripts/newsletter-mail-servers.spec.json --apply",
+    "",
+    "Routing (Odoo 19 ir.mail_server._find_mail_server): a mail is sent through the",
+    "ACTIVE server whose from_filter matches the From domain; when nothing matches",
+    "Odoo falls back to the LOWEST-sequence server and rewrites From. The",
+    "transactional row keeps sequence 5 and the news rows sit at 20+, so an",
+    "unmatched From (odoobot@, a user's own address) still lands on the",
+    "transactional server and never on a bulk domain. The assertions lock that in.",
+    "mass_mailing.outgoing_mail_server=True shows the per-mailing 'Send From'",
+    "server picker in Email Marketing so the composer picks the brand's news server",
+    "(one list of record, four brands => no single default mass_mailing.mail_server_id).",
+    "ir.mail_server has no company_id in Odoo 19; brand selection is by From domain.",
+    "QA and prod share the news.<domain> domains and credentials; a QA->prod DB",
+    "promotion carries these rows over, so prod only ever needs --check."
+  ],
+
+  "allowed_targets": ["scratch", "qa", "prod"],
+
+  "config_parameters": {
+    "mass_mailing.outgoing_mail_server": "True"
+  },
+
+  "record_writes": [
+    {
+      "label": "bulk mail server — hub (Grove Digest) news.gatheringatthegrove.com",
+      "model": "ir.mail_server",
+      "domain": [["from_filter", "=", "news.gatheringatthegrove.com"]],
+      "create_if_missing": true,
+      "create_values": {
+        "name": "Mailgun — news.gatheringatthegrove.com (bulk newsletter, GOL-3455)",
+        "from_filter": "news.gatheringatthegrove.com",
+        "sequence": 20,
+        "active": true
+      },
+      "values": {
+        "smtp_host": "${NEWS_SMTP_HOST}",
+        "smtp_port": "${NEWS_SMTP_PORT}",
+        "smtp_authentication": "login",
+        "smtp_user": "${NEWS_SMTP_USER_HUB}",
+        "smtp_pass": "${NEWS_SMTP_PASSWORD_HUB}",
+        "smtp_encryption": "starttls"
+      }
+    },
+    {
+      "label": "bulk mail server — goldberry (Farm News) news.goldberrygrove.farm",
+      "model": "ir.mail_server",
+      "domain": [["from_filter", "=", "news.goldberrygrove.farm"]],
+      "create_if_missing": true,
+      "create_values": {
+        "name": "Mailgun — news.goldberrygrove.farm (bulk newsletter, GOL-3455)",
+        "from_filter": "news.goldberrygrove.farm",
+        "sequence": 21,
+        "active": true
+      },
+      "values": {
+        "smtp_host": "${NEWS_SMTP_HOST}",
+        "smtp_port": "${NEWS_SMTP_PORT}",
+        "smtp_authentication": "login",
+        "smtp_user": "${NEWS_SMTP_USER_GOLDBERRY}",
+        "smtp_pass": "${NEWS_SMTP_PASSWORD_GOLDBERRY}",
+        "smtp_encryption": "starttls"
+      }
+    },
+    {
+      "label": "bulk mail server — nursery (Nursery News) news.atthegrovenursery.com",
+      "model": "ir.mail_server",
+      "domain": [["from_filter", "=", "news.atthegrovenursery.com"]],
+      "create_if_missing": true,
+      "create_values": {
+        "name": "Mailgun — news.atthegrovenursery.com (bulk newsletter, GOL-3455)",
+        "from_filter": "news.atthegrovenursery.com",
+        "sequence": 22,
+        "active": true
+      },
+      "values": {
+        "smtp_host": "${NEWS_SMTP_HOST}",
+        "smtp_port": "${NEWS_SMTP_PORT}",
+        "smtp_authentication": "login",
+        "smtp_user": "${NEWS_SMTP_USER_NURSERY}",
+        "smtp_pass": "${NEWS_SMTP_PASSWORD_NURSERY}",
+        "smtp_encryption": "starttls"
+      }
+    },
+    {
+      "label": "bulk mail server — ggg (rides Grove Digest) news.woodworkingeorge.com",
+      "model": "ir.mail_server",
+      "domain": [["from_filter", "=", "news.woodworkingeorge.com"]],
+      "create_if_missing": true,
+      "create_values": {
+        "name": "Mailgun — news.woodworkingeorge.com (bulk newsletter, GOL-3455)",
+        "from_filter": "news.woodworkingeorge.com",
+        "sequence": 23,
+        "active": true
+      },
+      "values": {
+        "smtp_host": "${NEWS_SMTP_HOST}",
+        "smtp_port": "${NEWS_SMTP_PORT}",
+        "smtp_authentication": "login",
+        "smtp_user": "${NEWS_SMTP_USER_GGG}",
+        "smtp_pass": "${NEWS_SMTP_PASSWORD_GGG}",
+        "smtp_encryption": "starttls"
+      }
+    }
+  ],
+
+  "assertions": [
+    {
+      "label": "transactional server still present and active (never replaced by a bulk row)",
+      "model": "ir.mail_server",
+      "domain": [["from_filter", "=", "send.gatheringatthegrove.com"], ["active", "=", true]],
+      "min_count": 1
+    },
+    {
+      "label": "exactly one active bulk server per brand (4)",
+      "model": "ir.mail_server",
+      "domain": [["from_filter", "=like", "news.%"], ["active", "=", true]],
+      "count_expect": 4
+    },
+    {
+      "label": "no bulk server can win the unmatched-From fallback (all sequence >= 20)",
+      "model": "ir.mail_server",
+      "domain": [["from_filter", "=like", "news.%"], ["sequence", "<", 20]],
+      "count_expect": 0
+    },
+    {
+      "label": "no bulk server left without an SMTP login",
+      "model": "ir.mail_server",
+      "domain": [["from_filter", "=like", "news.%"], ["smtp_user", "=", false]],
+      "count_expect": 0
+    },
+    {
+      "label": "hub bulk server is the Mailgun relay",
+      "model": "ir.mail_server",
+      "domain": [["from_filter", "=", "news.gatheringatthegrove.com"]],
+      "field": "smtp_host",
+      "expect": "${NEWS_SMTP_HOST}"
+    },
+    {
+      "label": "Email Marketing shows the per-mailing 'Send From' server picker",
+      "model": "ir.config_parameter",
+      "domain": [["key", "=", "mass_mailing.outgoing_mail_server"]],
+      "field": "value",
+      "expect": "True"
+    }
+  ]
+}
