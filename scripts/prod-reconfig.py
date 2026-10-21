@@ -57,9 +57,13 @@ TARGET SAFETY
 This writes PROD config values. Pointing it at the live QA DB would rewrite
 QA's base URL to prod and break QA. Guards:
 
-  * --target {scratch|prod} is REQUIRED and only labels/logs intent.
+  * --target {scratch|qa|prod} is REQUIRED and only labels/logs intent.
   * A `prod` target additionally requires PROD_RECONFIG_CONFIRM=yes in the env
     (a deliberate, auditable opt-in — mirrors "never bare-apply prod").
+  * A spec may carry `"allowed_targets": [...]` (GOL-3455). A target outside
+    that list is a hard error BEFORE any connection — so the promotion spec can
+    say `["scratch", "prod"]` and can never be pointed at live QA by accident,
+    while a QA-first spec (newsletter-mail-servers.spec.json) lists all three.
   * The XML-RPC URL is echoed on every run so a mis-set target is obvious in the
     log/evidence.
 
@@ -129,7 +133,9 @@ def resolve_env_refs(value, env: dict) -> object:
     if isinstance(value, list):
         return [resolve_env_refs(v, env) for v in value]
     if isinstance(value, dict):
-        return {k: resolve_env_refs(v, env) for k, v in value.items()}
+        # `_comment`, `_name`, … are documentation, not config: they legitimately
+        # mention `${ENV_VAR}` as prose, so they pass through unresolved (GOL-3455).
+        return {k: (v if k.startswith("_") else resolve_env_refs(v, env)) for k, v in value.items()}
     return value
 
 
@@ -257,7 +263,8 @@ def report_current(client, spec: dict) -> dict:
         rows = client.call(w["model"], "search_read", [w["domain"]],
                            {"fields": list(w["values"].keys()), "limit": 20})
         out["record_targets"].append({"label": w.get("label", w["model"]),
-                                       "model": w["model"], "domain": w["domain"], "rows": rows})
+                                       "model": w["model"], "domain": w["domain"],
+                                       "rows": [redact_row(r) for r in rows]})
     for a in spec.get("assertions", []):
         fields = [a["field"]] if "field" in a else []
         rows = client.call(a["model"], "search_read", [a["domain"]],
@@ -271,6 +278,28 @@ def report_current(client, spec: dict) -> dict:
 
 # ── cli ───────────────────────────────────────────────────────────────────────
 
+_REDACT_KEY = re.compile(r"(pass|secret|token|api_key)", re.IGNORECASE)
+
+
+def redact_row(row: dict) -> dict:
+    """Mask secret-looking fields (smtp_pass, *_secret, *_token, *api_key) in a
+    row destined for a --report/--json dump, so an operator's evidence file never
+    carries a live password. Values are replaced, never dropped, so the shape
+    still shows which rows hold a value (GOL-3455)."""
+    return {k: ("***" if (_REDACT_KEY.search(k) and v) else v) for k, v in row.items()}
+
+
+def target_not_allowed(spec: dict, target: str):
+    """Return an error string when the spec's optional `allowed_targets` list
+    excludes `target`, else None. A missing/empty list allows every target
+    (backwards compatible with specs written before GOL-3455)."""
+    allowed = spec.get("allowed_targets") or []
+    if allowed and target not in allowed:
+        return (f"spec {spec.get('_name') or '(unnamed)'} allows targets {allowed}; "
+                f"refusing --target {target}")
+    return None
+
+
 def load_spec(path: str, env: dict) -> dict:
     with open(path, "r", encoding="utf-8") as fh:
         raw = json.load(fh)
@@ -280,8 +309,9 @@ def load_spec(path: str, env: dict) -> dict:
 def build_arg_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="Idempotent, self-asserting post-restore Odoo reconfig.")
     ap.add_argument("--spec", required=True, help="path to the reconfig JSON spec")
-    ap.add_argument("--target", required=True, choices=("scratch", "prod"),
-                    help="intent label; 'prod' additionally requires PROD_RECONFIG_CONFIRM=yes")
+    ap.add_argument("--target", required=True, choices=("scratch", "qa", "prod"),
+                    help="intent label; 'prod' additionally requires PROD_RECONFIG_CONFIRM=yes; "
+                         "a spec's allowed_targets may further restrict it")
     mode = ap.add_mutually_exclusive_group(required=True)
     mode.add_argument("--report", action="store_true", help="dump current DB values (read-only)")
     mode.add_argument("--apply", action="store_true", help="apply writes, then run all assertions")
@@ -316,6 +346,11 @@ def main(argv: list[str]) -> int:
             spec = load_spec(args.spec, env)
     except (OSError, json.JSONDecodeError, KeyError) as exc:
         _log(f"ERROR: spec load/resolve failed: {exc}")
+        return 1
+
+    err = target_not_allowed(spec, args.target)
+    if err:
+        _log(f"ERROR: {err}")
         return 1
 
     _log(f"== prod-reconfig ==  target={args.target}  db={db}  url={url}")

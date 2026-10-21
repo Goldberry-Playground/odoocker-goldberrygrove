@@ -267,6 +267,110 @@ def test_reconfig_create_if_missing():
           bare.call("ir.mail_server", "search_count", [[]]) == 0)
 
 
+def test_reconfig_allowed_targets():
+    print("prod-reconfig: allowed_targets guard (GOL-3455)")
+    check("no allowed_targets → every target ok",
+          reconfig.target_not_allowed({}, "qa") is None
+          and reconfig.target_not_allowed({"allowed_targets": []}, "prod") is None)
+    promo = {"_name": "promo", "allowed_targets": ["scratch", "prod"]}
+    check("promotion spec refuses qa", reconfig.target_not_allowed(promo, "qa") is not None)
+    check("promotion spec allows prod", reconfig.target_not_allowed(promo, "prod") is None)
+    # the committed example spec must carry the restriction so it can never be
+    # pointed at live QA (it rewrites web.base.url to prod)
+    with open(os.path.join(_HERE, "prod-reconfig.spec.example.json"), encoding="utf-8") as fh:
+        example = __import__("json").load(fh)
+    check("example spec excludes qa", reconfig.target_not_allowed(example, "qa") is not None)
+    red = reconfig.redact_row({"smtp_user": "u@x", "smtp_pass": "hunter2", "smtp_port": 587, "api_key": ""})
+    check("report redacts secret-looking fields only",
+          red == {"smtp_user": "u@x", "smtp_pass": "***", "smtp_port": 587, "api_key": ""}, red)
+
+
+def test_newsletter_mail_servers_spec():
+    print("prod-reconfig: newsletter-mail-servers.spec.json (GOL-3455)")
+    import json
+    path = os.path.join(_HERE, "newsletter-mail-servers.spec.json")
+    with open(path, encoding="utf-8") as fh:
+        raw = json.load(fh)
+
+    # no literal secret: every smtp_pass / smtp_user is an env ref
+    for w in raw["record_writes"]:
+        for k in ("smtp_pass", "smtp_user"):
+            check(f"{w['label']}: {k} is an env ref", str(w["values"][k]).startswith("${"), w["values"][k])
+    check("spec allows qa (QA-first) and prod",
+          reconfig.target_not_allowed(raw, "qa") is None and reconfig.target_not_allowed(raw, "prod") is None)
+
+    news = ["news.gatheringatthegrove.com", "news.goldberrygrove.farm",
+            "news.atthegrovenursery.com", "news.woodworkingeorge.com"]
+    check("one record_write per bulk domain",
+          sorted(w["create_values"]["from_filter"] for w in raw["record_writes"]) == sorted(news))
+    check("every bulk row sits above the transactional fallback (sequence >= 20)",
+          all(w["create_values"]["sequence"] >= 20 for w in raw["record_writes"]))
+
+    env = {"NEWS_SMTP_HOST": "smtp.mailgun.org", "NEWS_SMTP_PORT": "587"}
+    for t in ("HUB", "GOLDBERRY", "NURSERY", "GGG"):
+        env[f"NEWS_SMTP_USER_{t}"] = f"newsletter@{t.lower()}"
+        env[f"NEWS_SMTP_PASSWORD_{t}"] = f"pw-{t}"
+    spec = reconfig.resolve_env_refs(raw, env)
+
+    # QA as it stands today: ONE transactional row (send.*, sequence 5), mass_mailing params unset
+    tx = {"name": "Mailgun — send.gatheringatthegrove.com (GOL-995)",
+          "from_filter": "send.gatheringatthegrove.com", "smtp_host": "smtp.mailgun.org",
+          "smtp_port": 587, "smtp_user": "transactional@send.gatheringatthegrove.com",
+          "smtp_pass": "tx-secret", "smtp_encryption": "starttls",
+          "smtp_authentication": "login", "sequence": 5, "active": True}
+    fake = FakeOdoo({"ir.mail_server": {1: dict(tx)}, "ir.config_parameter": {}})
+
+    reconfig.apply_config_parameters(fake, spec["config_parameters"])
+    r1 = reconfig.apply_record_writes(fake, spec["record_writes"])
+    check("first apply creates exactly the 4 bulk rows", sum(r["created"] for r in r1) == 4
+          and fake.call("ir.mail_server", "search_count", [[]]) == 5)
+    check("transactional row untouched", fake.records["ir.mail_server"][1] == tx)
+    _, fails = reconfig.run_assertions(fake, spec["assertions"])
+    check("all assertions PASS after apply", fails == 0)
+    hub = fake.call("ir.mail_server", "search_read",
+                    [[["from_filter", "=", "news.gatheringatthegrove.com"]]], {})[0]
+    check("hub row carries the resolved login + relay",
+          hub["smtp_user"] == "newsletter@hub" and hub["smtp_pass"] == "pw-HUB"
+          and hub["smtp_host"] == "smtp.mailgun.org" and hub["sequence"] == 20 and hub["active"] is True, hub)
+
+    # re-apply (Monday train-up on a DB that already has the rows) → match, never duplicate
+    env2 = dict(env, NEWS_SMTP_PASSWORD_HUB="rotated")
+    spec2 = reconfig.resolve_env_refs(raw, env2)
+    r2 = reconfig.apply_record_writes(fake, spec2["record_writes"])
+    check("re-apply creates nothing", sum(r["created"] for r in r2) == 0
+          and fake.call("ir.mail_server", "search_count", [[]]) == 5)
+    check("re-apply rotates the password in place",
+          fake.call("ir.mail_server", "search_read",
+                    [[["from_filter", "=", "news.gatheringatthegrove.com"]]], {})[0]["smtp_pass"] == "rotated")
+    _, fails2 = reconfig.run_assertions(fake, spec2["assertions"])
+    check("assertions still PASS after re-apply", fails2 == 0)
+
+    # the guard the spec exists for: a bulk row that could win Odoo's unmatched-From
+    # fallback (sequence below the transactional row) must FAIL the assertion pass
+    fake.records["ir.mail_server"][2]["sequence"] = 1
+    _, bad = reconfig.run_assertions(fake, spec["assertions"])
+    check("bulk row below the fallback threshold fails an assertion", bad >= 1)
+    fake.records["ir.mail_server"][2]["sequence"] = 20
+    # ...and so must a missing/archived transactional server
+    fake.records["ir.mail_server"][1]["active"] = False
+    _, bad2 = reconfig.run_assertions(fake, spec["assertions"])
+    check("archived transactional server fails an assertion", bad2 >= 1)
+
+    # a bare DB (no transactional row) is NOT a target for this spec: apply would
+    # create the bulk rows, then the transactional assertion fails → exit 2
+    bare = FakeOdoo({"ir.mail_server": {}, "ir.config_parameter": {}})
+    reconfig.apply_record_writes(bare, spec["record_writes"])
+    _, bad3 = reconfig.run_assertions(bare, spec["assertions"])
+    check("bare DB without a transactional server fails post-conditions", bad3 >= 1)
+
+    # the committed env-file names every ref the spec uses
+    config_only = {k: v for k, v in raw.items() if not k.startswith("_")}
+    refs = set(reconfig._ENV_REF.findall(json.dumps(config_only)))
+    with open(os.path.join(_HERE, "newsletter-mail-servers.env.op"), encoding="utf-8") as fh:
+        declared = set(re.findall(r"^([A-Z0-9_]+)=", fh.read(), re.M))
+    check("env.op declares every ${ref} in the spec", refs <= declared, sorted(refs - declared))
+
+
 # ── promotion-integrity-gates ─────────────────────────────────────────────────
 
 def test_gates_sequence():
@@ -481,6 +585,7 @@ def test_reseed_guard():
 def main() -> int:
     for fn in (test_reconfig_env_refs, test_reconfig_apply_and_assert,
                test_reconfig_create_if_missing,
+               test_reconfig_allowed_targets, test_newsletter_mail_servers_spec,
                test_gates_sequence, test_gates_wv_tax, test_gates_completeness,
                test_gates_qa_fixture_absence, test_gates_branding_present,
                test_gates_price_parity,
