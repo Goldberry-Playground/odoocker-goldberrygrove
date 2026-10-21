@@ -42,3 +42,16 @@ CVE-2026-73646 exp:2026-11-15
 # odoo:19 base ships nanoid ≥ 3.3.18. Tracked: GOL-934 / GOL-1644.
 CVE-2026-67213 exp:2026-11-15
 CVE-2026-67214 exp:2026-11-15
+
+# source-map-js DoS via malformed indexed source maps (CVE-2026-93749,
+# fixed 1.2.2). source-map-js 1.2.1 is postcss's transitive dependency,
+# bundled in the same upstream `odoo:19` base image at
+#   /usr/local/lib/node_modules/rtlcss/node_modules/source-map-js
+# Same reachability argument as the postcss/nanoid entries above: rtlcss
+# only parses source maps for Odoo's own trusted bundled asset CSS at
+# build/asset-generation time, never on attacker-controlled input, so the
+# malformed-source-map DoS is not reachable in our deployment. Not our
+# dependency — cannot bump without an upstream odoo:19 rebuild that revs
+# rtlcss's source-map-js. Drop once a newer odoo:19 base ships
+# source-map-js ≥ 1.2.2. Tracked: GOL-934 / GOL-1644.
+CVE-2026-93749 exp:2026-11-15
