@@ -118,7 +118,10 @@ for t in "${tenants[@]}"; do
     continue
   fi
 
-  python3 -c 'import secrets,string;print("".join(secrets.choice(string.ascii_letters+string.digits) for _ in range(24)))' >"$TMP/pw.$t"
+  # No trailing newline: this file feeds Mailgun via curl --data-urlencode
+  # (raw bytes), 1Password via $(cat) (newline-stripped) and the SMTP AUTH
+  # self-test. All three must see the same 24 bytes (Ada review, #921).
+  python3 -c 'import secrets,string,sys;sys.stdout.write("".join(secrets.choice(string.ascii_letters+string.digits) for _ in range(24)))' >"$TMP/pw.$t"
   if [ "$exists" = True ]; then
     code="$(mg PUT "/v3/domains/$d/credentials/$login" --data-urlencode "password@$TMP/pw.$t")"
   else
