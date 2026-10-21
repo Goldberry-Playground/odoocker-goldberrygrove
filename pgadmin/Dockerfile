@@ -24,7 +24,7 @@ RUN apk update && apk upgrade --no-cache && \
 # the patched range with --target into the venv site-packages. Trivy reads
 # .dist-info METADATA files, so leftover old metadata = continued findings.
 #
-# Nine packages currently need this. As upstream pgadmin updates these,
+# Ten packages currently need this. As upstream pgadmin updates these,
 # the corresponding block here can shrink (or whole RUN can be deleted).
 #
 #   - urllib3 2.6.3 → 2.8.0+  (floor raised 2026-09-30)
@@ -60,12 +60,23 @@ RUN apk update && apk upgrade --no-cache && \
 #     so it must be pinned alongside. Package dir on disk is `engineio/`,
 #     dist-info is `python_engineio-4.13.1.dist-info`.
 #
-#   - pillow 12.2.0 → 12.3.0+  (added 2026-07-22)
+#   - pillow 12.2.0 → 13.0.0+  (added 2026-07-22, floor raised 2026-10-21)
 #     10 HIGH DoS / heap-corruption CVEs in image/font parsing
 #     (CVE-2026-54058/54059/54060, 55379/55380, 59197/59199/59200/59204/
 #     59205) — all fixed in 12.3.0. Package dir on disk is `PIL/` (plus the
 #     bundled shared libs in `pillow.libs/`), dist-info is
 #     `pillow-12.2.0.dist-info`.
+#     GOL-3563: the `<13.0` cap then pinned the install at 12.3.0, which
+#     CVE-2026-112403 (CRITICAL) + CVE-2026-112397/112400/112404/
+#     112895/112896/112897 (HIGH) hit — all fixed in 13.0.0, so the floor
+#     moves to 13.0.0 and the cap to <14.0. Real install, not an orphan:
+#     12.3.0 was >= the old floor.
+#
+#   - certifi 2026.5.20 → 2026.10.19+  (added 2026-10-21, GOL-3563)
+#     GHSA-6q48-6c7w-9gw2 (CRITICAL, CA bundle), fixed in 2026.10.19.
+#     Package dir on disk is `certifi/`, dist-info is
+#     `certifi-2026.5.20.dist-info`. Calendar-versioned, so floor only — no
+#     cap (a cap would just freeze the bundle until the next advisory).
 #
 #   - pyasn1 0.6.3 → 0.6.4+  (added 2026-07-22)
 #     CVE-2026-59885 + CVE-2026-59886 (both HIGH, DoS via crafted ASN.1
@@ -130,7 +141,9 @@ RUN rm -rf "${PGADMIN_VENV_SITE_PACKAGES}/urllib3" \
            "${PGADMIN_VENV_SITE_PACKAGES}/httplib2" \
            ${PGADMIN_VENV_SITE_PACKAGES}/httplib2-*.dist-info \
            "${PGADMIN_VENV_SITE_PACKAGES}/sqlparse" \
-           ${PGADMIN_VENV_SITE_PACKAGES}/sqlparse-*.dist-info && \
+           ${PGADMIN_VENV_SITE_PACKAGES}/sqlparse-*.dist-info \
+           "${PGADMIN_VENV_SITE_PACKAGES}/certifi" \
+           ${PGADMIN_VENV_SITE_PACKAGES}/certifi-*.dist-info && \
     /usr/local/bin/pip3 install \
         --no-cache-dir \
         --target="${PGADMIN_VENV_SITE_PACKAGES}" \
@@ -140,10 +153,11 @@ RUN rm -rf "${PGADMIN_VENV_SITE_PACKAGES}/urllib3" \
         'PyJWT>=2.14.0,<3.0' \
         'python-socketio>=5.16.2,<6.0' \
         'python-engineio>=4.13.2,<5.0' \
-        'pillow>=12.3.0,<13.0' \
+        'pillow>=13.0.0,<14.0' \
         'pyasn1>=0.6.4,<0.7' \
         'httplib2>=0.32.0,<0.33' \
-        'sqlparse>=0.6.0,<0.7'
+        'sqlparse>=0.6.0,<0.7' \
+        'certifi>=2026.10.19'
 
 # Check if the private key exists, copy it and set permissions if it does
 RUN if [ -f ./pgadmin/private_key ]; then \
