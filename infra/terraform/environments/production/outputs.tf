@@ -85,3 +85,14 @@ output "tenant_default_ingresses" {
   description = "Default *.ondigitalocean.app ingress URLs per tenant, for probing before the deferred apex cutover."
   value       = { for k, app in digitalocean_app.tenant : k => app.live_url }
 }
+
+# ── Consult (GOL-3577, consult.tf) ───────────────────────────────────────────
+output "consult_default_ingress" {
+  description = "grove-consult-prod's *.ondigitalocean.app live URL (null while var.consult_enabled is false). This ingress is PUBLIC and bypasses Cloudflare Access -- the BFF's JWT check is what protects it; never share it as the app URL."
+  value       = var.consult_enabled ? digitalocean_app.consult[0].live_url : null
+}
+
+output "consult_url" {
+  description = "The staff-facing consult dashboard URL (Cloudflare Access in front)."
+  value       = var.consult_enabled ? "https://${local.consult_host}" : null
+}
