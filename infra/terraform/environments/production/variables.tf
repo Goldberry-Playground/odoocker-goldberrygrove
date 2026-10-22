@@ -714,3 +714,34 @@ variable "nursery_livechat_channel_id" {
     error_message = "nursery_livechat_channel_id must be empty (widget off) or the integer id of the im_livechat.channel record on the prod Odoo."
   }
 }
+
+# === Consult phase 2 E (GOL-3577) - grove-consult-prod, consult.tf ==========
+
+variable "consult_enabled" {
+  description = "Gate for digitalocean_app.consult + cloudflare_record.consult (consult.tf). false (default) = no app, no DNS record: the grove-consult GHCR image does not exist until grove-sites' Docker — Frontends matrix gains the consult leg (Iris, GOL-3576), and an App Platform app with an unpullable image sits in ERROR. Flip to true in the Train #6 PR that bumps var.tenant_image_tag to a SHA whose grove-consult image is on GHCR. Flipping back to false is the codified kill switch: destroys the consult app + CNAME only, never the nursery (docs/RUNBOOK-consult-host.md). The Spaces prefix README is NOT gated (it is the settled path, harmless to create early)."
+  type        = bool
+  default     = false
+}
+
+variable "consult_instance_size_slug" {
+  description = "App Platform instance size for grove-consult-prod. BASIC apps-s-1vcpu-0.5gb (~$5/mo): an internal staff tool with a handful of sessions, no checkout, no market-season load -- unlike the four revenue frontends on var.app_instance_size_slug (pro, ~$12/mo). Validate against `doctl apps tier instance-size list` before changing."
+  type        = string
+  default     = "apps-s-1vcpu-0.5gb"
+}
+
+variable "consult_access_team_domain" {
+  description = "Cloudflare Zero Trust team name (the <team> in https://<team>.cloudflareaccess.com), the issuer the consult BFF verifies Access JWTs against. Same value AgenticOS' var.cloudflare_access_team_domain carries for the dashboard. Public, not a secret."
+  type        = string
+  default     = "goldberrygrove"
+}
+
+variable "consult_access_aud" {
+  description = "AUD tag of the Cloudflare Access application for consult.gatheringatthegrove.com -- `terraform output -raw consult_access_aud` in AgenticOS infra/terraform after the Access app is applied there. Wired to the consult app as CF_ACCESS_AUD so the BFF can verify the Cf-Access-Jwt-Assertion header (the app's *.ondigitalocean.app default ingress bypasses Access, so the app must check the JWT itself). Empty default = env omitted; the app must then fail closed. Not a secret (the AUD is in every Access JWT), so a committed default is fine once known."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.consult_access_aud == "" || can(regex("^[0-9a-f]{64}$", var.consult_access_aud))
+    error_message = "consult_access_aud must be empty or the 64-char hex AUD tag from the Cloudflare Access application."
+  }
+}

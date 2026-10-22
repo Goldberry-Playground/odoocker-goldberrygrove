@@ -283,14 +283,21 @@ jobs:
       # --- Step 2: apply, scoped to ONLY the four storefront apps. Never a
       # bare `terraform apply` here -- see prod-plan-guard.yml for why an
       # untargeted prod apply is dangerous on this state file.
-      - name: Terraform apply (targeted to the four storefront apps)
+      #
+      # GOL-3577: digitalocean_app.consult (consult.tf, the internal consult
+      # dashboard) rides the same shared pin, so it is targeted here too. It
+      # is `count`-gated on var.consult_enabled -- while that is false the
+      # target matches zero instances and is a no-op; once true, the consult
+      # app's spec pin moves in lockstep with the four storefronts.
+      - name: Terraform apply (targeted to the storefront apps + consult)
         timeout-minutes: 10
         run: |
           terraform -chdir="$TF_DIR" apply -auto-approve -input=false \
             -target='digitalocean_app.hub' \
             -target='digitalocean_app.tenant["goldberry"]' \
             -target='digitalocean_app.tenant["ggg"]' \
-            -target='digitalocean_app.tenant["nursery"]'
+            -target='digitalocean_app.tenant["nursery"]' \
+            -target='digitalocean_app.consult'
 
       # --- Step 3: the actual roll. One deployment per app, single-fire,
       # via the shared primitive (GOL-1607 Lessons 1 + 2 live here).
@@ -307,12 +314,21 @@ jobs:
         with:
           token: ${{ env.DIGITALOCEAN_TOKEN }}
 
-      - name: Redeploy all four storefronts
+      - name: Redeploy all four storefronts (+ consult when it exists)
         env:
           DIGITALOCEAN_ACCESS_TOKEN: ${{ env.DIGITALOCEAN_TOKEN }}
         run: |
           source grove-sites-scripts/scripts/lib/do-app-redeploy.sh
-          for app in grove-hub-prod grove-goldberry-prod grove-ggg-prod grove-nursery-prod; do
+          # GOL-3577: grove-consult-prod exists only while var.consult_enabled
+          # is true (consult.tf). do_app_redeploy hard-fails (rc=1) on an
+          # unknown app, which would abort the whole roll, so append it to the
+          # loop only when App Platform actually has it. Last in the order on
+          # purpose: a consult rollout problem never precedes the revenue apps.
+          apps="grove-hub-prod grove-goldberry-prod grove-ggg-prod grove-nursery-prod"
+          if doctl apps list -o json | jq -e '.[] | select(.spec.name == "grove-consult-prod")' >/dev/null; then
+            apps="$apps grove-consult-prod"
+          fi
+          for app in $apps; do
             echo "::group::Redeploying $app"
             # Sourcing do-app-redeploy.sh left `set -e` active, so a bare
             # `do_app_redeploy "$app"` returning non-zero would abort the step
