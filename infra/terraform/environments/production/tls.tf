@@ -73,5 +73,14 @@ resource "cloudflare_zone_settings_override" "brand_tls" {
 
   settings {
     ssl = var.zone_ssl_mode[each.key]
+
+    # GOL-3587 (2026-10-22 edge audit): every zone was still at the CF default
+    # min_tls_version 1.0, and ggg alone had always_use_https off (the other
+    # three were flipped on by hand -> now codified). Both are edge-only and
+    # reversible in seconds (set back to "1.0" / "off"). TLS 1.2 is the floor
+    # for every browser + the App Platform / Shopify / Mailgun clients we know
+    # of; TLS 1.0/1.1 clients get a handshake failure at the CF edge.
+    min_tls_version  = "1.2"
+    always_use_https = "on"
   }
 }

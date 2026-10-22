@@ -18,19 +18,45 @@ if [ -x /odoorc.sh ] && [ -f /.env ]; then
     cd / && /odoorc.sh
 fi
 
-# Set HOST/PORT/USER/PASSWORD defaults that wait-for-psql.py expects below.
-# This script's wait-for-psql.py invocations later interpolate ${HOST} etc.,
-# which would be empty (and argparse fails with "expected one argument") if
-# we don't set them. Cascade matches the upstream odoo:19 entrypoint's
-# defaults but uses our canonical compose-env names (DB_HOST/DB_PORT/DB_USER
-# /DB_PASSWORD set via docker-compose `environment:` block) on top of the
-# legacy docker-link names (DB_PORT_5432_TCP_*) the upstream image relied on.
+# Set HOST/PORT/USER/PASSWORD defaults that wait_for_psql (below) expects.
+# wait_for_psql later reads ${HOST} etc., which would be empty (and libpq
+# would silently fall back to the local socket) if we don't set them.
+# Cascade matches the upstream odoo:19 entrypoint's defaults but uses our
+# canonical compose-env names (DB_HOST/DB_PORT/DB_USER/DB_PASSWORD set via
+# docker-compose `environment:` block) on top of the legacy docker-link names
+# (DB_PORT_5432_TCP_*) the upstream image relied on.
 # The :=' syntax means "set HOST if unset OR empty"; the resolved value
 # becomes the bash env var that the rest of this script references.
 : ${HOST:=${DB_HOST:=${DB_PORT_5432_TCP_ADDR:='db'}}}
 : ${PORT:=${DB_PORT:=${DB_PORT_5432_TCP_PORT:=5432}}}
 : ${USER:=${DB_USER:=${DB_ENV_POSTGRES_USER:=${POSTGRES_USER:='odoo'}}}}
 : ${PASSWORD:=${DB_PASSWORD:=${DB_ENV_POSTGRES_PASSWORD:=${POSTGRES_PASSWORD:='odoo'}}}}
+
+# GOL-3587: wait for Postgres WITHOUT the password on argv. Upstream's
+# wait-for-psql.py requires `--db_password`, which puts the DB password in
+# /proc/<pid>/cmdline (readable by any process in the container, and in
+# `ps`/crash dumps). Same 1s-retry loop, but libpq reads PGPASSWORD from the
+# environment of this one child only.
+wait_for_psql() {
+    PGHOST="${HOST}" PGPORT="${PORT}" PGUSER="${USER}" PGPASSWORD="${PASSWORD}" \
+        python3 - "${1:-30}" <<'PY'
+import sys, time
+import psycopg2
+
+timeout = int(sys.argv[1])
+start = time.time()
+error = ""
+while time.time() - start < timeout:
+    try:
+        psycopg2.connect(dbname="postgres").close()
+        sys.exit(0)
+    except psycopg2.OperationalError as e:
+        error = e
+    time.sleep(1)
+print("Database connection failure: %s" % error, file=sys.stderr)
+sys.exit(1)
+PY
+}
 
 # Hash the admin_passwd in odoo.conf so Odoo 19 accepts it.
 # The .env → odoorc.sh pipeline writes plaintext, but Odoo 19 requires
@@ -192,7 +218,7 @@ case "$1" in
             # Creates new module.
             exec odoo "$@"
         else
-            wait-for-psql.py --db_host ${HOST} --db_port ${PORT} --db_user ${USER} --db_password ${PASSWORD} --timeout=30
+            wait_for_psql 30
 
             # GOL-1009: revision-gated custom-module upgrade at boot.
             #
@@ -336,7 +362,7 @@ case "$1" in
         ;;
     -*)
 
-        wait-for-psql.py --db_host ${HOST} --db_port ${PORT} --db_user ${USER} --db_password ${PASSWORD} --timeout=30
+        wait_for_psql 30
         echo odoo --config ${ODOO_RC}
         exec odoo --config ${ODOO_RC}
         ;;
