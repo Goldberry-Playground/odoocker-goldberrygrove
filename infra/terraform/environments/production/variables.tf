@@ -715,6 +715,28 @@ variable "nursery_livechat_channel_id" {
   }
 }
 
+# --- Order builder /plan public winter beta (GOL-3547 / planner beta F) ------
+#
+# Josh's ruling 2026-10-21: the nursery storefront's /plan page (grove-sites
+# #1138, GOL-3383) ships as a standalone PUBLIC winter beta at the Train #4
+# promote (Wed 2026-11-04) so experts and buyers can train it over the winter.
+# The storefront reads PLANNER_ENABLED at RUNTIME on force-dynamic server
+# routes (grove-sites #1140, GOL-3527): same prebuilt GHCR image, no rebuild;
+# flipping it is an app-spec update + redeploy of the pinned image, exactly
+# like the livechat vars above. Pre-#1138 images (the Train #3 pin) have no
+# /plan route and ignore the env, so carrying it before the promote is inert.
+#
+# Nursery ONLY. false => the env is omitted from the app spec and /plan is a
+# 404 again after the redeploy; that is the documented rollback (flip to
+# false, re-run promote-storefronts.yml on the same SHA).
+# The home-page planner section is a separate storefront gate and stays off
+# for the beta regardless of this var.
+variable "nursery_planner_enabled" {
+  description = "true = emit PLANNER_ENABLED=1 (RUN_TIME) on the prod nursery app so /plan serves the public winter beta (GOL-3547). false = env omitted, /plan 404s -- the rollback. Nursery only; needs the Train #4 (post grove-sites #1140) image to have any effect."
+  type        = bool
+  default     = true
+}
+
 # === Consult phase 2 E (GOL-3577) - grove-consult-prod, consult.tf ==========
 
 variable "consult_enabled" {

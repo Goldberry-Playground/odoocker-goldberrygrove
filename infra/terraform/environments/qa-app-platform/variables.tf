@@ -630,6 +630,19 @@ variable "nursery_livechat_channel_id" {
   }
 }
 
+# --- Order builder /plan runtime flag (GOL-3528 / GOL-3547) ------------------
+#
+# Same shape as production/variables.tf nursery_planner_enabled (read that doc
+# for the why). QA pulls the same prebuilt GHCR image as prod, so the old
+# build-time NEXT_PUBLIC_PLANNER could never be turned on here (GOL-3527);
+# grove-sites #1140 made it a RUN_TIME read. Default true so the Mon 11-02
+# QA bring-up serves nursery.qa/plan for Train #4 gate 12.
+variable "nursery_planner_enabled" {
+  description = "true = emit PLANNER_ENABLED=1 (RUN_TIME) on the QA nursery app so /plan renders for QA gate 12. false = env omitted, /plan 404s. Nursery only."
+  type        = bool
+  default     = true
+}
+
 # grove_support's chat-start Discord ping (grove_support/models/discord.py)
 # reads ONLY os.environ DISCORD_OPS_WEBHOOK_URL -- it does not fall back to
 # DISCORD_ORDERS_WEBHOOK_URL the way grove_headless _notify_discord() does.

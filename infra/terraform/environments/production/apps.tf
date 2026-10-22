@@ -364,6 +364,21 @@ resource "digitalocean_app" "tenant" {
         }
       }
 
+      # Order builder /plan public winter beta (GOL-3547 / planner beta F),
+      # NURSERY ONLY. grove-sites #1140 reads PLANNER_ENABLED per request on
+      # the force-dynamic /plan route and the home teaser, so RUN_TIME on the
+      # prebuilt image is enough and a flip is a same-image redeploy. Omitted
+      # entirely when var.nursery_planner_enabled is false (/plan -> 404):
+      # that is the rollback. Rides the promote-storefronts targeted apply.
+      dynamic "env" {
+        for_each = each.key == "nursery" && var.nursery_planner_enabled ? [1] : []
+        content {
+          key   = "PLANNER_ENABLED"
+          value = "1"
+          scope = "RUN_TIME"
+        }
+      }
+
       # Capture-outage alert for the tenant newsletter forms (goldberry +
       # nursery; ggg has no newsletter route). Same contract as the hub env.
       dynamic "env" {
