@@ -12,7 +12,12 @@
 # never checks out or runs PR code.
 #
 # Logic lives once in the shared action; this file only wires the schedule.
-#   Shared action: Goldberry-Playground/grove-sites/.github/actions/ci-failure-router@main
+#   Shared action: Goldberry-Playground/grove-sites/.github/actions/ci-failure-router
+#   PINNED to a grove-sites commit SHA (GOL-3587): this job holds
+#   issues:write + pull-requests:write here, so a mutable cross-repo @main
+#   would let any grove-sites push run with odoocker write scope. To take a
+#   router fix: bump every `ci-failure-router@<sha>` below to the grove-sites
+#   commit that last touched .github/actions/ci-failure-router/.
 # It reads the declared required contexts from .github/required-checks.json,
 # reads check-runs AND commit statuses on each open non-draft PR's head SHA
 # (some repos post a required context as a commit status, not a check-run), and
@@ -86,7 +91,7 @@ jobs:
           permission-contents: read
           permission-pull-requests: write
 
-      - uses: Goldberry-Playground/grove-sites/.github/actions/ci-failure-router@main
+      - uses: Goldberry-Playground/grove-sites/.github/actions/ci-failure-router@a80a81da24cb0db090933363ad6e6cd702e5ae49 # main 2026-10-08 (gs#975)
         with:
           mode: missing-checks
           github-token: ${{ github.token }}
