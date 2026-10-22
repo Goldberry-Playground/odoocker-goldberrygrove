@@ -75,19 +75,63 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
 
+      # GOL-3414: grove-prod-odoo's public :22 is fenced to admin_ip_cidrs
+      # (grove-prod-odoo-fw, GOL-2565), and GitHub-hosted runners egress from
+      # ~7,000 rotating Azure CIDRs, so a prod dispatch died in the keyscan
+      # below before this step existed. Same mechanism as the agent plane
+      # (GOL-3412): a SECOND, CI-owned firewall on the same droplet
+      # (`grove-prod-odoo-ci-fw`, infra/terraform/environments/production/
+      # prod-odoo-ci-fw.tf, ignore_changes on inbound_rule) gets one transient
+      # tcp/22 rule for this runner's /32; DO unions firewalls, so the
+      # Terraform-managed fence is never touched. The action is AgenticOS's,
+      # pinned by SHA and parameterised by droplet/firewall name. Token:
+      # secrets.DO_FIREWALL_TOKEN (scoped droplet:read + firewall:*) when set,
+      # else the account DO token via the same 1Password service account every
+      # other prod workflow here already uses. Paired with the always() revoke
+      # step at the end of the job. docs/RUNBOOK-prod-odoo-ci-fence-GOL-3414.md
+      - name: Admit this runner through the prod Odoo fence (GOL-3414)
+        uses: Goldberry-Playground/AgenticOS/.github/actions/agent-plane-fence@de4cc450b059043bc1dc1b7aa8c1e49f1de869e1 # GOL-3412 (#899)
+        timeout-minutes: 3
+        with:
+          mode: admit
+          do-token: ${{ secrets.DO_FIREWALL_TOKEN }}
+          op-service-account-token: ${{ secrets.OP_CI_SA_TOKEN }}
+          do-token-ref: op://Grove Prod/odoocker/DIGITALOCEAN_TOKEN
+          droplet-name: grove-prod-odoo
+          firewall-name: grove-prod-odoo-ci-fw
+          host: ${{ secrets.PROD_HOST }}
+
       - name: Add droplet to known hosts
-        timeout-minutes: 1
+        timeout-minutes: 4
         env:
           HOST: ${{ secrets.PROD_HOST }}
+          TARGET: prod
         run: |
           set -euo pipefail
           if [ -z "${HOST:-}" ]; then
-            echo "::error::PROD_HOST not set — cannot reach the prod droplet."
+            echo "::error::PROD_HOST is not set -- cannot reach the droplet. Seed it as a repo secret first (docs/RUNBOOK-prod-odoo-ci-fence-GOL-3414.md, 'One-time setup')."
             exit 1
           fi
           mkdir -p ~/.ssh
-          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
-          chmod 600 ~/.ssh/known_hosts
+          # GOL-3414: the old bare `ssh-keyscan ... 2>/dev/null` hid the only
+          # evidence of the fence (5 silent timeouts) and would also have passed
+          # on an EMPTY successful scan, failing one step later on an
+          # unverifiable host key. Retry with backoff, keep stderr, require a key.
+          scan_out="$(mktemp)"
+          scan_err="$(mktemp)"
+          for attempt in 1 2 3 4 5; do
+            if ssh-keyscan -T 15 -H "$HOST" > "$scan_out" 2> "$scan_err" && [ -s "$scan_out" ]; then
+              cat "$scan_out" >> ~/.ssh/known_hosts
+              chmod 600 ~/.ssh/known_hosts
+              echo "Host key pinned on attempt ${attempt}/5."
+              exit 0
+            fi
+            echo "::warning title=ssh-keyscan retry::Attempt ${attempt}/5 produced no host key. stderr follows."
+            cat "$scan_err" >&2
+            sleep $(( attempt * 5 ))
+          done
+          echo "::error title=ssh-keyscan failed::No host key from ${TARGET} after 5 attempts (~75s). On prod the public :22 is fenced to operator IPs (grove-prod-odoo-fw, GOL-2565): a runner only gets in when the admit step above printed 'Admitting <ip>/32' (docs/RUNBOOK-prod-odoo-ci-fence-GOL-3414.md). If it did and this still fails, the droplet is likely down -- check the DigitalOcean console before re-running."
+          exit 1
 
       - name: Provision CEO login
         id: provision
@@ -114,6 +158,21 @@ jobs:
             | tee provision.out
           echo "----- provision output (no secrets; email delivery on live) -----"
           cat provision.out
+
+      - name: Revoke this runner from the prod Odoo fence (GOL-3414)
+        # Pairs with the admit step above. always(): a failed or cancelled job
+        # must still drop its /32 from grove-prod-odoo-ci-fw. No-op when nothing
+        # was admitted (the job died before admit, or this is the QA leg).
+        if: ${{ always() }}
+        uses: Goldberry-Playground/AgenticOS/.github/actions/agent-plane-fence@de4cc450b059043bc1dc1b7aa8c1e49f1de869e1 # GOL-3412 (#899)
+        timeout-minutes: 3
+        with:
+          mode: revoke
+          do-token: ${{ secrets.DO_FIREWALL_TOKEN }}
+          op-service-account-token: ${{ secrets.OP_CI_SA_TOKEN }}
+          do-token-ref: op://Grove Prod/odoocker/DIGITALOCEAN_TOKEN
+          droplet-name: grove-prod-odoo
+          firewall-name: grove-prod-odoo-ci-fw
 
       - name: Summary
         if: ${{ always() }}
