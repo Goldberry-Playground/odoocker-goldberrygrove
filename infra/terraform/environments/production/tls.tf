@@ -23,13 +23,13 @@
 #     Full(strict) by design; :443 CF-IP-locked so a direct probe fails by
 #     design) · agenticos→App Platform (GTS) · assets→DO Spaces CDN (LE wildcard
 #     *.gatheringatthegrove.com) · discord/paperclip→cfargotunnel (CF-terminated).
-#     email.mg.*→mailgun is proxied but a 3-level host NOT covered by Universal
-#     SSL, so edge TLS fails before origin-pull ⇒ strict is a no-op for it.
+#     email.send.*→mailgun is grey-cloud (DNS-only; Mailgun-issued LE cert,
+#     GOL-3594). The orphan proxied email.mg.* CNAME was deleted 2026-10-22.
 #   goldberry (goldberrygrove.farm) — STRICT
 #     apex→App Platform (GTS) · blog→CF Origin CA · store→Shopify presents a
 #     Google Trust Services cert for CN=store.goldberrygrove.farm (exact host,
 #     trusted CA) ⇒ strict-safe; its 404 is an app-level Shopify response, not
-#     TLS. email.mg proxied — same edge-gap no-op as hub.
+#     TLS. email.mg is grey-cloud since 2026-10-22 (GOL-3594, Mailgun LE cert).
 #   nursery (atthegrovenursery.com) — STRICT
 #     ONLY blog.* is proxied (CF Origin CA). apex/www/email.mg are grey-cloud
 #     (DNS-only) ⇒ SSL mode irrelevant to them.
