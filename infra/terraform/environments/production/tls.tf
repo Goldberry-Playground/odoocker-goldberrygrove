@@ -41,8 +41,8 @@
 #     the http_request_dynamic_redirect phase fires BEFORE origin-pull, so the
 #     parking-page origin is never contacted and its (missing) cert is moot.
 #     Live-flipped + verified 2026-08-18: apex 200, www 301→apex (path+query
-#     preserved), blog 301 — no 526. email.mg proxied — same edge-gap no-op as
-#     the other zones.
+#     preserved), blog 301 — no 526. email.mg is grey-cloud since 2026-10-22
+#     (GOL-3594, Mailgun LE cert) — same as the other zones.
 
 variable "zone_ssl_mode" {
   description = "Per-brand-zone Cloudflare origin-facing SSL/TLS mode. 'strict' = Full(strict) (CF validates the origin cert is trusted); 'full' = Full (encrypted but unvalidated). Set a zone to 'strict' ONLY after confirming EVERY proxied origin in it presents a strict-valid cert (public CA or CF Origin CA) — see the GOL-1551 audit in tls.tf. Reversible in seconds. This committed default is the SOURCE OF TRUTH: prod-plan-guard and every var-less apply plan against it, so it MUST equal the zones' live modes."
