@@ -4,12 +4,19 @@
 #
 #   export:  content JSON (GET /db/) + members CSV (GET /members/export/)
 #            from the old blog, saved under ./blogs-migration/<tenant>/
-#   import:  POST both into the new blog.* instance
+#   import:  POST the content JSON into the new blog.* instance. Members are
+#            NOT imported: option C (2026-10-19) makes Odoo Farm News the
+#            list of record and forbids member writes into any Ghost
+#            (GOL-3454). members.csv is kept as a backup only.
 #   verify:  post/page/tag/member counts old vs new, printed as a table
 #
 # What this CANNOT move: content/images + themes ride the filesystem, not the
 # export JSON. After import, run the rsync printed at the end (needs SSH to
-# the old droplet), then re-run `verify`.
+# both droplets), then re-run `verify`.
+#
+# goldberry: the apex now serves the Next.js storefront, so the legacy Ghost
+# droplet is reached by IP (--resolve) with -k: its Let's Encrypt cert expired
+# 2025-10-07 once DNS moved and renewal failed. New-side calls stay strict.
 #
 # Auth: session cookies both sides.
 #   NEW side: owner creds from 1P (ghost_admin_password_<tenant>, created by
@@ -32,9 +39,18 @@ NEW_OWNER_EMAIL="josh@goldberrygrove.farm"
 T="${1:?usage: blogs-migrate.sh <tenant> <export|import|verify|all>}"
 ACTION="${2:?usage: blogs-migrate.sh <tenant> <export|import|verify|all>}"
 
+BLOGS_DROPLET="159.203.131.236"   # grove-prod-blogs; SSH needs -i ~/.ssh/grove-qa-admin
+
+# Extra curl args for every OLD-side call. Expanded as ${arr[@]+"${arr[@]}"}
+# because macOS /bin/bash 3.2 calls an empty array unbound under set -u.
+OLD_CURL_OPTS=()
+OLD_HOST=""        # ssh target holding the old Ghost's content/
+OLD_CONTENT=""
 case "$T" in
   hub)       OLD_URL="https://gatheringatthegrove.com"; NEW_URL="https://blog.gatheringatthegrove.com" ;;
-  goldberry) OLD_URL="https://goldberrygrove.farm";     NEW_URL="https://blog.goldberrygrove.farm" ;;
+  goldberry) OLD_URL="https://goldberrygrove.farm";     NEW_URL="https://blog.goldberrygrove.farm"
+             OLD_CURL_OPTS=(--resolve goldberrygrove.farm:443:178.128.152.218 -k)
+             OLD_HOST="178.128.152.218"; OLD_CONTENT="/var/www/ghost_restored/content" ;;
   ggg)       OLD_URL="";                                NEW_URL="https://blog.woodworkingeorge.com" ;;
   nursery)   OLD_URL="";                                NEW_URL="https://blog.atthegrovenursery.com" ;;
   *) echo "unknown tenant: $T" >&2; exit 2 ;;
@@ -43,19 +59,20 @@ esac
 DIR="blogs-migration/$T"
 mkdir -p "$DIR"
 
-session() { # session <url> <email> <password> -> cookie jar path
+session() { # session <url> <email> <password> [curl opts...] -> cookie jar path
+  local url="$1" email="$2" pw="$3"; shift 3
   local jar; jar=$(mktemp)
-  curl -fsS --max-time 30 -c "$jar" -X POST "$1/ghost/api/admin/session/" \
-    -H "Content-Type: application/json" -H "Origin: $1" \
-    -d "$(jq -n --arg u "$2" --arg p "$3" '{username:$u,password:$p}')" > /dev/null
+  curl -fsS --max-time 30 "$@" -c "$jar" -X POST "$url/ghost/api/admin/session/" \
+    -H "Content-Type: application/json" -H "Origin: $url" \
+    -d "$(jq -n --arg u "$email" --arg p "$pw" '{username:$u,password:$p}')" > /dev/null
   echo "$jar"
 }
 
-counts() { # counts <url> <jar> -> "posts pages tags members"
-  local url="$1" jar="$2" out=""
+counts() { # counts <url> <jar> [curl opts...] -> "posts pages tags members"
+  local url="$1" jar="$2" out=""; shift 2
   for RES in posts pages tags members; do
     local n
-    n=$(curl -fsS --max-time 30 -b "$jar" -H "Origin: $url" \
+    n=$(curl -fsS --max-time 30 "$@" -b "$jar" -H "Origin: $url" \
       "$url/ghost/api/admin/$RES/?limit=1" | jq -r '.meta.pagination.total') || n="?"
     out="$out $n"
   done
@@ -66,7 +83,7 @@ old_session() {
   local email pw
   email=$(op read "op://$VAULT/$ITEM/ghost_admin_email_${T}_old")
   pw=$(op read "op://$VAULT/$ITEM/ghost_admin_password_${T}_old")
-  session "$OLD_URL" "$email" "$pw"
+  session "$OLD_URL" "$email" "$pw" ${OLD_CURL_OPTS[@]+"${OLD_CURL_OPTS[@]}"}
 }
 
 new_session() {
@@ -79,11 +96,11 @@ do_export() {
   [ -n "$OLD_URL" ] || { echo "tenant $T has no old blog to export from" >&2; exit 2; }
   local jar; jar=$(old_session)
   echo "-- exporting from $OLD_URL"
-  curl -fsS --max-time 300 -b "$jar" -H "Origin: $OLD_URL" \
+  curl -fsS --max-time 300 ${OLD_CURL_OPTS[@]+"${OLD_CURL_OPTS[@]}"} -b "$jar" -H "Origin: $OLD_URL" \
     "$OLD_URL/ghost/api/admin/db/" > "$DIR/export.json"
   jq -e '.db[0].data.posts | length' "$DIR/export.json" > /dev/null \
     || { echo "export.json doesn't look like a Ghost export" >&2; exit 1; }
-  curl -fsS --max-time 300 -b "$jar" -H "Origin: $OLD_URL" \
+  curl -fsS --max-time 300 ${OLD_CURL_OPTS[@]+"${OLD_CURL_OPTS[@]}"} -b "$jar" -H "Origin: $OLD_URL" \
     "$OLD_URL/ghost/api/admin/members/export/" > "$DIR/members.csv"
   echo "   $(jq '.db[0].data.posts | length' "$DIR/export.json") posts, $(($(wc -l < "$DIR/members.csv") - 1)) members -> $DIR/"
   rm -f "$jar"
@@ -96,13 +113,7 @@ do_import() {
   curl -fsS --max-time 600 -b "$jar" -X POST "$NEW_URL/ghost/api/admin/db/" \
     -H "Origin: $NEW_URL" -F "importfile=@$DIR/export.json;type=application/json" \
     | jq -r '.problems // [] | length | "   content import ok (\(.) problems logged)"'
-  if [ -s "$DIR/members.csv" ] && [ "$(wc -l < "$DIR/members.csv")" -gt 1 ]; then
-    curl -fsS --max-time 600 -b "$jar" -X POST "$NEW_URL/ghost/api/admin/members/upload/" \
-      -H "Origin: $NEW_URL" -F "membersfile=@$DIR/members.csv;type=text/csv" \
-      | jq -r '"   members import: \(.meta.stats.imported // "?") imported, \(.meta.stats.invalid // "?") invalid"'
-  else
-    echo "   no members to import"
-  fi
+  echo "   members NOT imported (option C: Odoo Farm News is the list of record, GOL-3454); backup at $DIR/members.csv"
   rm -f "$jar"
 }
 
@@ -112,7 +123,7 @@ do_verify() {
   local oldc="- - - -"
   if [ -n "$OLD_URL" ]; then
     local oldjar; oldjar=$(old_session)
-    oldc=$(counts "$OLD_URL" "$oldjar"); rm -f "$oldjar"
+    oldc=$(counts "$OLD_URL" "$oldjar" ${OLD_CURL_OPTS[@]+"${OLD_CURL_OPTS[@]}"}); rm -f "$oldjar"
   fi
   printf '%-10s %8s %8s %8s %8s\n' "" posts pages tags members
   # shellcheck disable=SC2086  # word splitting of the 4 counts is intentional
@@ -120,9 +131,19 @@ do_verify() {
   # shellcheck disable=SC2086
   printf '%-10s %8s %8s %8s %8s\n' "new" $newc
   echo
-  echo "images/themes do not ride the export - if not yet synced, run (from operator machine):"
-  echo "  rsync -az root@<old-droplet>:/var/www/ghost/content/images/ ->"
-  echo "  root@<blogs-droplet>:/mnt/blogs-data/ghost-$T/images/ (then chown -R 1000:1000 + restart container)"
+  if [ -z "$OLD_HOST" ]; then
+    [ -n "$OLD_URL" ] || return 0
+    echo "images/themes do not ride the export - if not yet synced, run (from operator machine):"
+    echo "  rsync -az root@<old-droplet>:<ghost-root>/content/images/ ->"
+    echo "  root@$BLOGS_DROPLET:/mnt/blogs-data/ghost-$T/images/ (then chown -R 1000:1000 + restart container)"
+    return 0
+  fi
+  echo "images/themes do not ride the export - if not yet synced, relay them through"
+  echo "the operator machine (no SSH trust between droplets; no --delete):"
+  echo "  rsync -az root@$OLD_HOST:$OLD_CONTENT/images/ ./$DIR/images/"
+  echo "  rsync -az -e \"ssh -i ~/.ssh/grove-qa-admin\" ./$DIR/images/ root@$BLOGS_DROPLET:/mnt/blogs-data/ghost-$T/images/"
+  echo "  ssh -i ~/.ssh/grove-qa-admin root@$BLOGS_DROPLET 'chown -R 1000:1000 /mnt/blogs-data/ghost-$T/images'"
+  echo "  then restart the ghost-$T container"
 }
 
 case "$ACTION" in
