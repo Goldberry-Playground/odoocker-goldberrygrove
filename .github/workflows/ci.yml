@@ -307,6 +307,10 @@ jobs:
         run: python3 scripts/test_obs_firewall_check.py
       - name: Run monitoring bootstrap plane tests (GOL-2323 app plane must not wait on Keep)
         run: python3 scripts/test_setup_monitoring_plane.py
+      # Legacy goldberry Ghost migration: old side by IP + pinned key, no member
+      # writes into any Ghost (option C, GOL-3454).
+      - name: Run blogs-migrate tests (legacy Ghost by IP, pinned key, no member import)
+        run: python3 scripts/test_blogs_migrate.py
       # GOL-2963: the odoo-logistics self-service env bootstrap. Guards the
       # sidecar contract, the in-cluster-base/Host-header split, the shallow
       # adapterConfig merge (which would otherwise drop sibling secrets), and
