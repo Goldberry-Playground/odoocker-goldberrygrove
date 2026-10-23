@@ -16,7 +16,16 @@
 #
 # goldberry: the apex now serves the Next.js storefront, so the legacy Ghost
 # droplet is reached by IP (--resolve) with -k: its Let's Encrypt cert expired
-# 2025-10-07 once DNS moved and renewal failed. New-side calls stay strict.
+# 2025-10-07 once DNS moved and renewal failed. -k alone would hand the old
+# owner password to any substitute cert, so the legacy cert's public key is
+# pinned (--pinnedpubkey; curl enforces it even with -k). The pin comes from
+# GOLDBERRY_LEGACY_PIN, derived over SSH so the trust anchor is the droplet's
+# SSH host key, not the network. New-side calls stay strict.
+#
+#   export GOLDBERRY_LEGACY_PIN=$(ssh root@178.128.152.218 \
+#     'openssl s_client -connect 127.0.0.1:443 -servername goldberrygrove.farm </dev/null 2>/dev/null \
+#      | openssl x509 -pubkey -noout | openssl pkey -pubin -outform der \
+#      | openssl dgst -sha256 -binary | base64')
 #
 # Auth: session cookies both sides.
 #   NEW side: owner creds from 1P (ghost_admin_password_<tenant>, created by
@@ -49,8 +58,17 @@ OLD_CONTENT=""
 case "$T" in
   hub)       OLD_URL="https://gatheringatthegrove.com"; NEW_URL="https://blog.gatheringatthegrove.com" ;;
   goldberry) OLD_URL="https://goldberrygrove.farm";     NEW_URL="https://blog.goldberrygrove.farm"
-             OLD_CURL_OPTS=(--resolve goldberrygrove.farm:443:178.128.152.218 -k)
-             OLD_HOST="178.128.152.218"; OLD_CONTENT="/var/www/ghost_restored/content" ;;
+             OLD_HOST="178.128.152.218"; OLD_CONTENT="/var/www/ghost_restored/content"
+             if [ "$ACTION" != "import" ]; then
+               if [ -z "${GOLDBERRY_LEGACY_PIN:-}" ]; then
+                 echo "GOLDBERRY_LEGACY_PIN is not set; refusing to send credentials to the legacy box with -k." >&2
+                 echo "Derive it over SSH (see the header of this script):" >&2
+                 echo "  export GOLDBERRY_LEGACY_PIN=\$(ssh root@$OLD_HOST 'openssl s_client -connect 127.0.0.1:443 -servername goldberrygrove.farm </dev/null 2>/dev/null | openssl x509 -pubkey -noout | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | base64')" >&2
+                 exit 2
+               fi
+               OLD_CURL_OPTS=(--resolve "goldberrygrove.farm:443:$OLD_HOST" -k
+                              --pinnedpubkey "sha256//$GOLDBERRY_LEGACY_PIN")
+             fi ;;
   ggg)       OLD_URL="";                                NEW_URL="https://blog.woodworkingeorge.com" ;;
   nursery)   OLD_URL="";                                NEW_URL="https://blog.atthegrovenursery.com" ;;
   *) echo "unknown tenant: $T" >&2; exit 2 ;;

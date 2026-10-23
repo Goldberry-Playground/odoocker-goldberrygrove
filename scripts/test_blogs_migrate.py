@@ -9,9 +9,14 @@ The properties tested are the ones that broke the 2026-10-22 dry read:
 
   goldberry-old-side-by-ip   goldberrygrove.farm now resolves to the Next.js
                              storefront, so every OLD-side call for goldberry
-                             must pin the legacy droplet with --resolve, and
-                             carry -k (its Let's Encrypt cert expired
-                             2025-10-07 once DNS moved and renewal failed).
+                             (export AND verify) must pin the legacy droplet
+                             with --resolve and carry -k (its Let's Encrypt
+                             cert expired 2025-10-07 once DNS moved), plus
+                             --pinnedpubkey so -k cannot hand the owner
+                             password to a substitute certificate.
+  pin-required-fail-closed   without GOLDBERRY_LEGACY_PIN the script makes no
+                             old-side call at all and says how to derive the
+                             pin over SSH (trust = the SSH host key).
   new-side-stays-strict      calls to blog.* never get -k or --resolve.
   hub-old-side-untouched     the hub tenant's old-side calls are unchanged.
   import-never-uploads-members  option C (2026-10-19): Odoo Farm News is the
@@ -33,12 +38,15 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
+import traceback
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(_HERE, "blogs-migrate.sh")
 
 LEGACY_RESOLVE = "goldberrygrove.farm:443:178.128.152.218"
+TEST_PIN = "dGVzdC1waW4tbm90LWEtcmVhbC1rZXktaGFzaC0wMDA="
 
 # The stub logs each call as one JSON array of argv, then answers by URL.
 STUB_CURL = r"""#!/usr/bin/env python3
@@ -66,7 +74,7 @@ STUB_OP = "#!/bin/sh\necho dummy\n"
 
 
 class Run:
-    def __init__(self, tenant, action, *, members_csv=None, bash="bash"):
+    def __init__(self, tenant, action, *, members_csv=None, bash="bash", pin=TEST_PIN):
         self.tmp = tempfile.mkdtemp(prefix="blogs-migrate-test-")
         bindir = os.path.join(self.tmp, "bin")
         os.mkdir(bindir)
@@ -86,6 +94,9 @@ class Run:
         open(self.log, "w").close()
         env = dict(os.environ, PATH=bindir + os.pathsep + os.environ["PATH"],
                    CURL_LOG=self.log)
+        env.pop("GOLDBERRY_LEGACY_PIN", None)
+        if pin is not None:
+            env["GOLDBERRY_LEGACY_PIN"] = pin
         self.proc = subprocess.run([bash, SCRIPT, tenant, action], cwd=self.tmp,
                                    env=env, capture_output=True, text=True, timeout=60)
         with open(self.log) as f:
@@ -105,16 +116,39 @@ class Run:
 
 def _pins_legacy(call):
     return ("-k" in call and "--resolve" in call
-            and call[call.index("--resolve") + 1] == LEGACY_RESOLVE)
+            and call[call.index("--resolve") + 1] == LEGACY_RESOLVE
+            and "--pinnedpubkey" in call
+            and call[call.index("--pinnedpubkey") + 1] == "sha256//" + TEST_PIN)
 
 
 def test_goldberry_old_side_reaches_legacy_box_by_ip():
-    r = Run("goldberry", "export")
+    # export: session + db + members; verify: session + 4 counts.
+    for action, minimum in (("export", 3), ("verify", 5)):
+        r = Run("goldberry", action)
+        try:
+            assert r.proc.returncode == 0, r.out
+            old = r.calls_to("https://goldberrygrove.farm/")
+            assert len(old) >= minimum, (action, r.calls)
+            assert all(_pins_legacy(c) for c in old), (action, old)
+        finally:
+            r.cleanup()
+
+
+def test_goldberry_without_pin_fails_closed():
+    for action in ("export", "verify", "all"):
+        r = Run("goldberry", action, pin=None)
+        try:
+            assert r.proc.returncode == 2, (action, r.out)
+            assert not r.calls_to("https://goldberrygrove.farm/"), (action, r.calls)
+            assert "GOLDBERRY_LEGACY_PIN" in r.out and "ssh root@178.128.152.218" in r.out, r.out
+        finally:
+            r.cleanup()
+
+
+def test_goldberry_import_needs_no_pin():
+    r = Run("goldberry", "import", members_csv="email\n", pin=None)
     try:
         assert r.proc.returncode == 0, r.out
-        old = r.calls_to("https://goldberrygrove.farm/")
-        assert len(old) >= 3, r.calls  # session, db export, members export
-        assert all(_pins_legacy(c) for c in old), old
     finally:
         r.cleanup()
 
@@ -142,13 +176,13 @@ def test_hub_old_side_untouched():
 
 
 def test_hub_runs_on_macos_bash_32():
-    import pytest
+    # Only bites on a Mac (CI runners have bash 5): returns early elsewhere.
     if not os.path.exists("/bin/bash"):
-        pytest.skip("no /bin/bash")
+        return
     ver = subprocess.run(["/bin/bash", "-c", "echo ${BASH_VERSINFO[0]}"],
                          capture_output=True, text=True).stdout.strip()
     if ver != "3":
-        pytest.skip("/bin/bash is not 3.x")
+        return
     for action in ("export", "verify"):
         r = Run("hub", action, bash="/bin/bash")
         try:
@@ -188,3 +222,27 @@ def test_verify_prints_real_paths():
         assert "/var/www/ghost/content" not in r.out, r.out
     finally:
         r.cleanup()
+
+
+def main():
+    tests = [(n, f) for n, f in sorted(globals().items())
+             if n.startswith("test_") and callable(f)]
+    failures = []
+    for name, fn in tests:
+        try:
+            fn()
+            print(f"ok    {name}")
+        except Exception:  # noqa: BLE001 - report every failure, then exit 1
+            failures.append(name)
+            print(f"FAIL  {name}")
+            traceback.print_exc()
+    print()
+    if failures:
+        print(f"FAILED ({len(failures)}): " + ", ".join(failures))
+        return 1
+    print(f"all {len(tests)} checks passed")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
