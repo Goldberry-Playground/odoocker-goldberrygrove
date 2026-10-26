@@ -24,7 +24,7 @@ RUN apk update && apk upgrade --no-cache && \
 # the patched range with --target into the venv site-packages. Trivy reads
 # .dist-info METADATA files, so leftover old metadata = continued findings.
 #
-# Ten packages currently need this. As upstream pgadmin updates these,
+# Eleven packages currently need this. As upstream pgadmin updates these,
 # the corresponding block here can shrink (or whole RUN can be deleted).
 #
 #   - urllib3 2.6.3 → 2.8.0+  (floor raised 2026-09-30)
@@ -98,6 +98,12 @@ RUN apk update && apk upgrade --no-cache && \
 #     required-check red so we upgrade rather than suppress. Package dir on
 #     disk is `sqlparse/`, dist-info is `sqlparse-0.5.5.dist-info`.
 #
+#   - brotli 1.2.0 → 1.2.1+  (added 2026-10-26, GOL-3627)
+#     GHSA-9v8h-qqgm-4m35 (CRITICAL), fixed in 1.2.1. brotli is a single
+#     module, not a package dir: on disk it is `brotli.py` plus the C
+#     extension `_brotli.cpython-*.so`, dist-info is `brotli-1.2.0.dist-info`
+#     (PyPI project name is `Brotli`, so both case spellings are globbed).
+#
 # The venv was created with --without-pip and --system-site-packages, so
 # we install via the system pip targeting the venv's site-packages
 # directory directly.
@@ -143,7 +149,11 @@ RUN rm -rf "${PGADMIN_VENV_SITE_PACKAGES}/urllib3" \
            "${PGADMIN_VENV_SITE_PACKAGES}/sqlparse" \
            ${PGADMIN_VENV_SITE_PACKAGES}/sqlparse-*.dist-info \
            "${PGADMIN_VENV_SITE_PACKAGES}/certifi" \
-           ${PGADMIN_VENV_SITE_PACKAGES}/certifi-*.dist-info && \
+           ${PGADMIN_VENV_SITE_PACKAGES}/certifi-*.dist-info \
+           "${PGADMIN_VENV_SITE_PACKAGES}/brotli.py" \
+           ${PGADMIN_VENV_SITE_PACKAGES}/_brotli.*.so \
+           ${PGADMIN_VENV_SITE_PACKAGES}/brotli-*.dist-info \
+           ${PGADMIN_VENV_SITE_PACKAGES}/Brotli-*.dist-info && \
     /usr/local/bin/pip3 install \
         --no-cache-dir \
         --target="${PGADMIN_VENV_SITE_PACKAGES}" \
@@ -157,7 +167,8 @@ RUN rm -rf "${PGADMIN_VENV_SITE_PACKAGES}/urllib3" \
         'pyasn1>=0.6.4,<0.7' \
         'httplib2>=0.32.0,<0.33' \
         'sqlparse>=0.6.0,<0.7' \
-        'certifi>=2026.10.19'
+        'certifi>=2026.10.19' \
+        'brotli>=1.2.1,<1.3'
 
 # Check if the private key exists, copy it and set permissions if it does
 RUN if [ -f ./pgadmin/private_key ]; then \
