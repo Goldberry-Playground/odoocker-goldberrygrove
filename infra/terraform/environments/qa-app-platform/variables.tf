@@ -19,7 +19,8 @@ variable "admin_ip_cidrs" {
   type        = list(string)
   # 173.84.140.152/32 = Josh's ISP-rotated operator address, kept in step with
   # production so the same machine reaches QA droplets too (GOL-1842).
-  default = ["74.47.41.38/32", "173.84.140.152/32"]
+  # 173.84.141.217/32 = the 2026-10-23 rotation, appended in step with prod.
+  default = ["74.47.41.38/32", "173.84.140.152/32", "173.84.141.217/32"]
   validation {
     condition     = length(var.admin_ip_cidrs) > 0 && alltrue([for c in var.admin_ip_cidrs : can(regex("^[0-9.]+/[0-9]+$", c))])
     error_message = "admin_ip_cidrs must be a non-empty list of IPv4 CIDRs like [\"74.47.41.38/32\"]."

@@ -31,7 +31,10 @@ variable "admin_ip_cidrs" {
   # codified here so the next apply converges onto -- rather than removes --
   # it (GOL-1842). Append future operator CIDRs; do not replace the existing
   # entries blind -- the recurrence this issue exists to stop.
-  default = ["74.47.41.38/32", "173.84.140.152/32"]
+  # 173.84.141.217/32: Josh's ISP rotated again (seen 2026-10-23, still live
+  # 2026-10-26); appended per docs/RUNBOOK-refresh-admin-ip-cidrs.md. Prune
+  # 173.84.140.152/32 in a follow-up once it is confirmed dead.
+  default = ["74.47.41.38/32", "173.84.140.152/32", "173.84.141.217/32"]
   validation {
     condition     = length(var.admin_ip_cidrs) > 0 && alltrue([for c in var.admin_ip_cidrs : can(regex("^[0-9.]+/[0-9]+$", c))])
     error_message = "admin_ip_cidrs must be a non-empty list of IPv4 CIDRs like [\"74.47.41.38/32\"]."
