@@ -81,7 +81,7 @@
 #   effect immediately.
 #
 # THE ONE REAL HAZARD -- self-inflicted lockout:
-#   :22 is fenced to var.admin_ip_cidrs (173.84.140.152/32, 74.47.41.38/32). If
+#   :22 is fenced to var.admin_ip_cidrs (see variables.tf for the list). If
 #   Josh's ISP has rotated his address since those were codified, the apply takes
 #   his SSH away from the box that runs every agent. It is recoverable (the DO
 #   web Recovery Console is out-of-band and unaffected by cloud firewalls), but
