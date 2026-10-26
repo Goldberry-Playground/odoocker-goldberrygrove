@@ -116,6 +116,12 @@ services:
       GHOST_KEY_GGG: ${GHOST_KEY_GGG:-}
       GHOST_URL_NURSERY: ${GHOST_URL_NURSERY:-}
       GHOST_KEY_NURSERY: ${GHOST_KEY_NURSERY:-}
+      # GOL-2329: prod supplies the keys as ONE JSON bundle (op ref
+      # `Grove Infra/ghost_content_keys_tf_json`, see prod-monitoring.env.op);
+      # run.py picks the tenant out of it. Without this passthrough the bundle
+      # reaches .env.monitoring but never the container, so every ghost-content
+      # journey silently skips on prod.
+      GHOST_CONTENT_KEYS_JSON: ${GHOST_CONTENT_KEYS_JSON:-}
       # GOL-334: per-target endpoint overrides — real qa endpoints. Values come
       # from .env.monitoring (the deploy's --env-file) via interpolation; an
       # explicit passthrough is used because this host's docker-compose build
