@@ -24,7 +24,7 @@ RUN apk update && apk upgrade --no-cache && \
 # the patched range with --target into the venv site-packages. Trivy reads
 # .dist-info METADATA files, so leftover old metadata = continued findings.
 #
-# Eleven packages currently need this. As upstream pgadmin updates these,
+# Fourteen packages currently need this. As upstream pgadmin updates these,
 # the corresponding block here can shrink (or whole RUN can be deleted).
 #
 #   - urllib3 2.6.3 → 2.8.0+  (floor raised 2026-09-30)
@@ -104,6 +104,28 @@ RUN apk update && apk upgrade --no-cache && \
 #     extension `_brotli.cpython-*.so`, dist-info is `brotli-1.2.0.dist-info`
 #     (PyPI project name is `Brotli`, so both case spellings are globbed).
 #
+#   - Authlib 1.7.2 → 1.9.1+  (added 2026-10-28, GOL-3668)
+#     CVE-2026-96760 (CRITICAL, empty JWS JSON signatures accepted) +
+#     CVE-2026-114615 (HIGH, incomplete alg-confusion fix) — fixed 1.9.0 —
+#     and CVE-2026-114616 (HIGH, empty HMAC key accepted) — fixed 1.9.1.
+#     Upstream pgadmin 9.16 pins `Authlib==1.7.*`, but 1.9 keeps the
+#     `authlib.integrations.flask_client` + `authlib.jose` APIs pgAdmin's
+#     OAuth2 login uses. 1.9 newly requires `joserfc`, which pip pulls in.
+#     Package dir is `authlib/`; dist-info is `authlib-*` / `Authlib-*`
+#     (PyPI project name is `Authlib`, so both cases are globbed).
+#
+#   - dnspython 2.8.0 → 2.9.0+  (added 2026-10-28, GOL-3668)
+#     CVE-2026-114605 (HIGH, CPU DoS in dns.name.from_wire_parser), fixed
+#     in 2.9.0. Pulled in via email_validator. Package dir on disk is
+#     `dns/`, dist-info is `dnspython-*.dist-info`.
+#
+#   - oauthlib 3.3.1 → 4.0.0+  (added 2026-10-28, GOL-3668)
+#     CVE-2026-49272 (HIGH, device-flow bearer token retrievable with only a
+#     client ID), fixed in 4.0.0. Pulled in via google-auth-oauthlib →
+#     requests-oauthlib (`oauthlib>=3.0.0`, no cap). 4.0's breaking changes
+#     are OAuth2 *provider*-side (response_mode handling); pgAdmin only uses
+#     the client side. Package dir `oauthlib/`, dist-info `oauthlib-*`.
+#
 # The venv was created with --without-pip and --system-site-packages, so
 # we install via the system pip targeting the venv's site-packages
 # directory directly.
@@ -153,7 +175,14 @@ RUN rm -rf "${PGADMIN_VENV_SITE_PACKAGES}/urllib3" \
            "${PGADMIN_VENV_SITE_PACKAGES}/brotli.py" \
            ${PGADMIN_VENV_SITE_PACKAGES}/_brotli.*.so \
            ${PGADMIN_VENV_SITE_PACKAGES}/brotli-*.dist-info \
-           ${PGADMIN_VENV_SITE_PACKAGES}/Brotli-*.dist-info && \
+           ${PGADMIN_VENV_SITE_PACKAGES}/Brotli-*.dist-info \
+           "${PGADMIN_VENV_SITE_PACKAGES}/authlib" \
+           ${PGADMIN_VENV_SITE_PACKAGES}/authlib-*.dist-info \
+           ${PGADMIN_VENV_SITE_PACKAGES}/Authlib-*.dist-info \
+           "${PGADMIN_VENV_SITE_PACKAGES}/dns" \
+           ${PGADMIN_VENV_SITE_PACKAGES}/dnspython-*.dist-info \
+           "${PGADMIN_VENV_SITE_PACKAGES}/oauthlib" \
+           ${PGADMIN_VENV_SITE_PACKAGES}/oauthlib-*.dist-info && \
     /usr/local/bin/pip3 install \
         --no-cache-dir \
         --target="${PGADMIN_VENV_SITE_PACKAGES}" \
@@ -168,7 +197,10 @@ RUN rm -rf "${PGADMIN_VENV_SITE_PACKAGES}/urllib3" \
         'httplib2>=0.32.0,<0.33' \
         'sqlparse>=0.6.0,<0.7' \
         'certifi>=2026.10.19' \
-        'brotli>=1.2.1,<1.3'
+        'brotli>=1.2.1,<1.3' \
+        'Authlib>=1.9.1,<2.0' \
+        'dnspython>=2.9.0,<3.0' \
+        'oauthlib>=4.0.0,<5.0'
 
 # Check if the private key exists, copy it and set permissions if it does
 RUN if [ -f ./pgadmin/private_key ]; then \
