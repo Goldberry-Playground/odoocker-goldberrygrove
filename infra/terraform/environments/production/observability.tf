@@ -207,6 +207,31 @@ resource "digitalocean_uptime_alert" "down" {
   }
 }
 
+# Latency (GOL-3589). Catches the "up but unusable" failure the down alert
+# cannot: a wedged Odoo worker pool or a storefront stuck on slow upstream
+# fetches still returns 200, just in 10s. 5m period so a single slow probe (a
+# cold App Platform instance, one bad CF POP) is not a page.
+resource "digitalocean_uptime_alert" "latency" {
+  for_each = digitalocean_uptime_check.public
+
+  check_id = each.value.id
+  name     = "prod-${each.key}-latency"
+
+  type       = "latency"
+  comparison = "greater_than"
+  period     = "5m"
+  threshold  = var.uptime_latency_threshold_ms
+
+  notifications {
+    email = local.alert_targets.email
+
+    slack {
+      channel = local.alert_targets.channel
+      url     = local.alert_targets.url
+    }
+  }
+}
+
 # TLS expiry. The brand apexes are Cloudflare-proxied, so this watches the EDGE
 # cert (CF-managed, auto-renewed) — low risk, near-zero cost to watch.
 #

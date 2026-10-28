@@ -300,12 +300,28 @@ variable "alert_discord_channel" {
 }
 
 variable "uptime_check_targets" {
-  description = "Public URLs probed by DO's global uptime network, keyed by a short name used in the check/alert names. Defaults cover ONLY the hosts verified serving HTTP 200 on 2026-07-15; blog.gatheringatthegrove.com + blog.goldberrygrove.farm are deliberately excluded while they return 404, because a permanently-red alert trains responders to ignore the channel. Add them here once they serve."
+  description = "Public URLs probed by DO's global uptime network, keyed by a short name used in the check/alert names. Defaults cover ONLY hosts verified serving HTTP 200 (blogs 2026-07-15; storefront apexes + prod Odoo /health 2026-10-22, GOL-3589); blog.gatheringatthegrove.com + blog.goldberrygrove.farm are deliberately excluded while they return 404, because a permanently-red alert trains responders to ignore the channel. Add them here once they serve."
   type        = map(string)
   default = {
     blog-ggg     = "https://blog.woodworkingeorge.com/"
     blog-nursery = "https://blog.atthegrovenursery.com/"
+
+    # GOL-3589: the revenue surface. Storefront apexes = local.tenants (the same
+    # map apps.tf registers as App Platform PRIMARY domains); Odoo via the
+    # grove_headless health route, which answers {"status":"ok"} without an
+    # X-Grove-Tenant header. All five verified 200 in <1s on 2026-10-22.
+    hub         = "https://gatheringatthegrove.com/"
+    goldberry   = "https://goldberrygrove.farm/"
+    ggg         = "https://woodworkingeorge.com/"
+    nursery     = "https://atthegrovenursery.com/"
+    odoo-health = "https://odoo.gatheringatthegrove.com/grove/api/v1/health"
   }
+}
+
+variable "uptime_latency_threshold_ms" {
+  description = "Response-time ceiling (ms) for the per-check latency alert (observability.tf). 2000ms is ~10x the steady-state edge latency measured 2026-10-22 (100-800ms): it pages on a genuinely degraded origin, not on CF/App Platform jitter. Raise it here (not per-alert) if storefront cold starts prove noisy."
+  type        = number
+  default     = 2000
 }
 
 variable "blog_apex_redirects_enabled" {
