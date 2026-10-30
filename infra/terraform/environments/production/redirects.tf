@@ -77,6 +77,34 @@ resource "cloudflare_ruleset" "blog_apex_redirect" {
       }
     }
   }
+
+  # goldberrygrove.farm/shirts is the vanity link given out for the farm merch
+  # (NPR interview 2026-10-15). It pointed at the Printify Pop-Up Store by a
+  # hand-made rule appended to this ruleset (odoocker#906 was closed rather
+  # than codify a stopgap). The shirts now sell on the farm storefront
+  # (grove-sites#1064 + #1210), so the link is permanent and points at /shop.
+  # Codified so an apply of this ruleset keeps it instead of stripping it.
+  # goldberry-only; the hub zone gets no second rule. Kept after /content/* to
+  # match the live rule order.
+  dynamic "rules" {
+    for_each = each.key == "goldberry" ? [1] : []
+    content {
+      enabled     = true
+      description = "302 goldberrygrove.farm/shirts -> /shop (farm merch vanity link)"
+      expression  = "(http.host in {\"goldberrygrove.farm\" \"www.goldberrygrove.farm\"} and (http.request.uri.path eq \"/shirts\" or http.request.uri.path eq \"/shirts/\"))"
+      action      = "redirect"
+
+      action_parameters {
+        from_value {
+          status_code = 302
+          target_url {
+            value = "https://goldberrygrove.farm/shop"
+          }
+          preserve_query_string = true
+        }
+      }
+    }
+  }
 }
 
 # -- www.woodworkingeorge.com → apex canonical redirect (GOL-1551 tail) ----------
