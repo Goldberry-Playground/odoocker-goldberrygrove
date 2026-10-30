@@ -226,7 +226,8 @@ write_files:
       # neither by default => alerts silent). Bare webhook URL, no /slack.
       DISCORD_ORDERS_WEBHOOK_URL=${discord_orders_webhook_url}
       # #grove-ops webhook (GOL-3302): grove_support's chat-start Discord ping
-      # reads ONLY DISCORD_OPS_WEBHOOK_URL (no ORDERS fallback). Bare URL.
+      # reads DISCORD_SUPPORT_WEBHOOK_URL, then this (gom#384; no ORDERS
+      # fallback). Bare URL.
       DISCORD_OPS_WEBHOOK_URL=${discord_ops_webhook_url}
       # Perenual plant-facts enrichment (GOL-2507, parent GOL-2383).
       # grove_headless services/plant_data/perenual.py reads this from
