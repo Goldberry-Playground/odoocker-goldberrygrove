@@ -320,3 +320,22 @@ variable "otlp_origin_key_pem" {
   sensitive   = true
   default     = ""
 }
+
+# === Platform-plane alerts on grove-obs itself (GOL-3588) ====================
+
+variable "alert_emails" {
+  description = "Email recipients for grove-obs platform-plane (DO-native) alerts. Kept alongside Discord: email does not depend on the webhook being valid."
+  type        = list(string)
+  default     = ["joshua_dunbar@me.com"]
+
+  validation {
+    condition     = length(var.alert_emails) > 0
+    error_message = "alert_emails must not be empty — Discord alone is a single delivery path."
+  }
+}
+
+variable "alert_discord_channel" {
+  description = "Human-readable channel label carried in DO's Slack payload. Inert for delivery (Discord routes by webhook) but the provider requires it."
+  type        = string
+  default     = "discord_webhook_critical (Keep critical channel)"
+}
