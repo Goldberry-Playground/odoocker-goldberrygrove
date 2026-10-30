@@ -191,6 +191,15 @@ services:
       # _notify_discord() prefers this over DISCORD_OPS_WEBHOOK_URL; empty =>
       # order alerts fall back into #grove-ops (visible misroute, never a drop).
       DISCORD_ORDERS_WEBHOOK_URL: ${DISCORD_ORDERS_WEBHOOK_URL:-}
+      # Topic channels (Josh 2026-10-30; grove-odoo-modules#384): sales =
+      # leads, back-in-stock requests, notable paid orders; support = livechat
+      # starts + customer-email failures; shipping = carrier, Printify and
+      # oversell alerts. Each falls back to the ORDERS/OPS webhook above when
+      # empty, so these are inert until /etc/grove/.env sets them. Same
+      # bare-URL / no-/slack rule as DISCORD_OPS.
+      DISCORD_SALES_WEBHOOK_URL: ${DISCORD_SALES_WEBHOOK_URL:-}
+      DISCORD_SUPPORT_WEBHOOK_URL: ${DISCORD_SUPPORT_WEBHOOK_URL:-}
+      DISCORD_SHIPPING_WEBHOOK_URL: ${DISCORD_SHIPPING_WEBHOOK_URL:-}
       # Perenual plant-facts enrichment (GOL-2507, parent GOL-2383).
       # grove_headless services/plant_data/perenual.py reads PERENUAL_API_KEY
       # from os.environ, and the odoo process env comes ONLY from this block
