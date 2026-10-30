@@ -50,6 +50,7 @@
 #   POSTGRES_ENDPOINT            Managed PG host:25060 (ADR-007)
 #   POSTGRES_MONITOR_USER        read-only otel_monitor
 #   POSTGRES_MONITOR_PASSWORD    op://Grove Infra/pg_otel_monitor_password
+#   DOCKER_GID                   host docker group gid: getent group docker | cut -d: -f3
 ###############################################################################
 
 name: grove-apm
@@ -65,7 +66,7 @@ services:
   # receiver (2nd --config, GOL-335) + OTLP-in from Beyla. Adds OpenObserve
   # basicauth once so Beyla can export plain over the internal network.
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:${OTELCOL_TAG:-0.115.0}
+    image: otel/opentelemetry-collector-contrib:${OTELCOL_TAG:-0.115.1}
     restart: unless-stopped
     command:
       - "--config=/etc/otelcol/config.yaml"
@@ -79,8 +80,9 @@ services:
       POSTGRES_MONITOR_USER: ${POSTGRES_MONITOR_USER}
       POSTGRES_MONITOR_PASSWORD: ${POSTGRES_MONITOR_PASSWORD}
     group_add:
-      # docker.sock group on the Odoo droplet (GOL-335 verified value).
-      - "988"
+      # docker.sock group on the host — differs per droplet, so read it from
+      # the host (getent group docker) into the env-file (GOL-2329).
+      - "${DOCKER_GID:?DOCKER_GID unset - render it into the env-file from the host: getent group docker | cut -d: -f3 (GOL-2329)}"
     volumes:
       - /etc/grove/otel/otelcol-config.yaml:/etc/otelcol/config.yaml:ro
       - /etc/grove/otel/otelcol-config.postgres.yaml:/etc/otelcol/config.postgres.yaml:ro

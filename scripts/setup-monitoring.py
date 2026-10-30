@@ -231,7 +231,12 @@ def oo_upsert_template(tmpl: dict) -> None:
 def oo_upsert_destination(dest: dict) -> None:
     name = dest["name"]
     if not dest.get("url"):
-        _log(f"    ⚠ destination {name} SKIPPED — KEEP_EVENT_URL unset (see docstring re SSRF guard)")
+        if monitoring_plane() == "app":
+            # Expected: the obs-plane deploy owns the destination and the alerts
+            # reference it by name, so nothing is lost here (GOL-2329 go-live).
+            _log(f"    · destination {name} not managed on this plane (MONITORING_PLANE=app; the obs-plane deploy owns it)")
+        else:
+            _log(f"    ⚠ destination {name} SKIPPED — KEEP_EVENT_URL unset (see docstring re SSRF guard)")
         return
     code, resp = http_request("POST", f"{oo_api()}/alerts/destinations", body=dest, auth=oo_auth())
     if code in (200, 201):
@@ -263,7 +268,7 @@ def oo_bootstrap_alerts(dest_available: bool) -> None:
     data = json.loads(src.read_text())
     alerts = [a for a in data.get("alerts", []) if not a.get("_comment")]
     _log(f"  uploading {len(alerts)} v2 alert rules...")
-    if not dest_available:
+    if not dest_available and monitoring_plane() != "app":
         _log("  NOTE: KEEP_EVENT_URL unset — alerts still upsert but will fail to notify")
         _log("        until the Keep destination exists. See docstring (SSRF guard).")
     existing = oo_existing_alert_ids()
@@ -537,7 +542,7 @@ def main() -> None:
     _log("=" * 60)
     _log(f"  OpenObserve:  {oo_root()}")
     _log(f"  Keep:         {keep_base() if plane == 'obs' else 'not managed here (MONITORING_PLANE=app)'}")
-    if not dest.get("url"):
+    if not dest.get("url") and plane != "app":
         _log("  ⚠ KEEP_EVENT_URL unset — OO alerts will NOT reach Keep until the")
         _log("    Keep destination is created against an SSRF-allowed URL (see docstring).")
     _log("")

@@ -307,6 +307,8 @@ jobs:
         run: python3 scripts/test_obs_firewall_check.py
       - name: Run monitoring bootstrap plane tests (GOL-2323 app plane must not wait on Keep)
         run: python3 scripts/test_setup_monitoring_plane.py
+      - name: Run app-plane monitoring compose tests (GOL-2329 go-live: otelcol pin, docker gid, monitors.json)
+        run: python3 scripts/test_app_plane_compose.py
       # Legacy goldberry Ghost migration: old side by IP + pinned key, no member
       # writes into any Ghost (option C, GOL-3454).
       - name: Run blogs-migrate tests (legacy Ghost by IP, pinned key, no member import)
