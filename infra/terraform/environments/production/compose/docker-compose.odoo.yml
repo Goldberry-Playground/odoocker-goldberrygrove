@@ -112,6 +112,11 @@ services:
       stripe_webhook_secret_nursery: ${stripe_webhook_secret_nursery:-}
       stripe_webhook_secret_ggg: ${stripe_webhook_secret_ggg:-}
       stripe_webhook_secret_goldberry: ${stripe_webhook_secret_goldberry:-}
+      # Per-tenant Stripe SECRET keys (GOL-1892 Gap B, Josh 2026-10-30). See
+      # cloud-init-odoo.yaml.tpl: all three or none.
+      stripe_secret_key_goldberry: ${stripe_secret_key_goldberry:-}
+      stripe_secret_key_nursery: ${stripe_secret_key_nursery:-}
+      stripe_secret_key_ggg: ${stripe_secret_key_ggg:-}
       # Stripe Tax per-tenant cutover flag (GOL-2568). controllers/main.py
       # _stripe_tax_enabled(order) reads GROVE_STRIPE_TAX_{TENANT} from
       # os.environ, so the key has to be listed HERE or the value in

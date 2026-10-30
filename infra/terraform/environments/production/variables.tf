@@ -438,6 +438,27 @@ variable "stripe_webhook_secret_goldberry" {
   default     = ""
 }
 
+variable "stripe_secret_key_goldberry" {
+  description = "Stripe LIVE restricted secret key (rk_live_...) for the goldberry storefront's checkout, charging into Goldberry Grove LLC (acct_1RbD4BIYoWGe7JHE). From `op://Grove Prod/stripe/goldberry_stripe_key` via TF_VAR_stripe_secret_key_goldberry. Rendered into /etc/grove/.env lowercase; grove_headless _tenant_secret_key() prefers it over the global stripe_test_secret_key. All three per-tenant keys must be set together (a tenant without one 503s once any is set). user_data input => droplet-replace semantics; the running droplet was converged by hand 2026-10-30."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "stripe_secret_key_nursery" {
+  description = "Stripe LIVE restricted secret key (rk_live_...) for the nursery storefront's checkout, charging into At The Grove Nursery (acct_16cKwAEkDEtb2GgD). From `op://Grove Prod/stripe/atthegrovenursery_stripe_key` via TF_VAR_stripe_secret_key_nursery. Rendered into /etc/grove/.env lowercase; grove_headless _tenant_secret_key() prefers it over the global stripe_test_secret_key. All three per-tenant keys must be set together (a tenant without one 503s once any is set). user_data input => droplet-replace semantics; the running droplet was converged by hand 2026-10-30."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "stripe_secret_key_ggg" {
+  description = "Stripe LIVE restricted secret key (rk_live_...) for the ggg storefront's checkout, charging into GGG Woodworking (acct_1Ttsj9IJGb3xPPqT). From `op://Grove Prod/stripe/ggg_stripe_key` via TF_VAR_stripe_secret_key_ggg. Rendered into /etc/grove/.env lowercase; grove_headless _tenant_secret_key() prefers it over the global stripe_test_secret_key. All three per-tenant keys must be set together (a tenant without one 503s once any is set). user_data input => droplet-replace semantics; the running droplet was converged by hand 2026-10-30."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 variable "discord_orders_webhook_url" {
   description = "Discord webhook for the DEDICATED order/pickup-summaries channel (Josh 2026-09-03): new-order and oversell alerts must land separately from the #grove-ops bot-logs/observability channel that var.discord_webhook_url pages. grove_headless _notify_discord() PREFERS os.environ DISCORD_ORDERS_WEBHOOK_URL and falls back to DISCORD_OPS_WEBHOOK_URL, so the empty default keeps plan/apply working and simply misroutes order alerts into #grove-ops (visible, prompting a fix) instead of dropping them. Create the webhook in the orders channel (Discord channel settings -> Integrations -> Webhooks), store it as field discord_orders_webhook_url on op://Grove Prod/odoocker, inject via TF_VAR_discord_orders_webhook_url. BARE url, no /slack suffix. user_data input => same droplet-replace semantics as shippo_api_key."
   type        = string
