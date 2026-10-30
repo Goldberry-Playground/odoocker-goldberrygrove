@@ -22,6 +22,7 @@
 #   COST_ENV                     qa | prod
 #   SYNTHETIC_ODOO_BASE          e.g. http://odoo:8069 (internal DNS)
 #   SYNTHETIC_TENANTS            e.g. goldberry,ggg,nursery
+#   DOCKER_GID                   host docker group gid: getent group docker | cut -d: -f3
 ###############################################################################
 
 name: grove-monitoring
@@ -33,7 +34,7 @@ networks:
 
 services:
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:${OTELCOL_TAG:-latest}
+    image: otel/opentelemetry-collector-contrib:${OTELCOL_TAG:-0.115.1}
     restart: unless-stopped
     # Second --config merges the postgresql receiver into the metrics pipeline
     # (GOL-335). App-plane hosts always have a Managed PG (ADR-007), so the
@@ -52,8 +53,13 @@ services:
       POSTGRES_ENDPOINT: ${POSTGRES_ENDPOINT}
       POSTGRES_MONITOR_USER: ${POSTGRES_MONITOR_USER}
       POSTGRES_MONITOR_PASSWORD: ${POSTGRES_MONITOR_PASSWORD}
+    # docker_stats needs read access to /var/run/docker.sock, and the contrib
+    # image runs non-root, so the container must join the HOST's docker group.
+    # That gid differs per droplet (QA was 988; prod crash-looped with
+    # "permission denied" on the hardcoded value, GOL-2329), so it is read
+    # from the host at env-file render time, never hardcoded here.
     group_add:
-      - "988"
+      - "${DOCKER_GID:?DOCKER_GID unset - render it into the env-file from the host: getent group docker | cut -d: -f3 (GOL-2329)}"
     volumes:
       - /etc/grove/otel/otelcol-config.yaml:/etc/otelcol/config.yaml:ro
       - /etc/grove/otel/otelcol-config.postgres.yaml:/etc/otelcol/config.postgres.yaml:ro
@@ -83,6 +89,11 @@ services:
   synthetic-runner:
     image: grove-synthetic-runner:local
     restart: unless-stopped
+    # probes.py (uptime probes) reads monitors.json; the image's build context
+    # is ./synthetic only, so the file has to be mounted in (same as the obs-plane
+    # compose). Without it probes.emit dies with FileNotFoundError (GOL-2329).
+    volumes:
+      - ./openobserve/monitors.json:/app/monitors.json:ro
     depends_on:
       - otel-collector
     environment:
