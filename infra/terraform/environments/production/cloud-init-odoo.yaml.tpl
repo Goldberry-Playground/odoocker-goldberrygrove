@@ -126,6 +126,12 @@ write_files:
       stripe_webhook_secret_nursery=${stripe_webhook_secret_nursery}
       stripe_webhook_secret_ggg=${stripe_webhook_secret_ggg}
       stripe_webhook_secret_goldberry=${stripe_webhook_secret_goldberry}
+      # Per-tenant Stripe SECRET keys (GOL-1892 Gap B, Josh 2026-10-30): each
+      # storefront charges into its own LLC's account. All three or none:
+      # grove_headless 503s a tenant without its key once any is set.
+      stripe_secret_key_goldberry=${stripe_secret_key_goldberry}
+      stripe_secret_key_nursery=${stripe_secret_key_nursery}
+      stripe_secret_key_ggg=${stripe_secret_key_ggg}
       # Stripe Tax per-tenant cutover flag (GOL-2568, Train #2 GOL-2584).
       # controllers/main.py _stripe_tax_enabled(order) reads
       # GROVE_STRIPE_TAX_{TENANT} from os.environ -- so these MUST also be
