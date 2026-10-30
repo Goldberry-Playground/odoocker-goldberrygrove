@@ -207,8 +207,8 @@ services:
       # order alerts are a no-op in QA (QA plumbs no ops webhook either).
       DISCORD_ORDERS_WEBHOOK_URL: ${DISCORD_ORDERS_WEBHOOK_URL:-}
       # #grove-ops webhook (GOL-3302 Train #3 live-chat gate). grove_support's
-      # chat-start ping (grove_support/models/discord.py) reads ONLY this name
-      # from os.environ -- it has no ORDERS fallback -- and os.environ comes
+      # chat-start ping (grove_support/models/discord.py) reads
+      # DISCORD_SUPPORT_WEBHOOK_URL, then this name (gom#384) -- it has no ORDERS fallback -- and os.environ comes
       # ONLY from this block, so without this line the QA ping is a no-op.
       DISCORD_OPS_WEBHOOK_URL: ${DISCORD_OPS_WEBHOOK_URL:-}
       # Topic channels (Josh 2026-10-30; grove-odoo-modules#384): sales =

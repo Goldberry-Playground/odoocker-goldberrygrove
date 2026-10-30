@@ -536,7 +536,8 @@ resource "digitalocean_droplet" "odoo" {
     discord_orders_webhook_url = var.discord_orders_webhook_url
 
     # #grove-ops webhook for grove_support's chat-start ping (GOL-3302 Train #3
-    # gate) -- grove_support reads ONLY DISCORD_OPS_WEBHOOK_URL. Mirrors prod
+    # gate) -- grove_support reads DISCORD_SUPPORT_WEBHOOK_URL, falling back to
+    # DISCORD_OPS_WEBHOOK_URL (gom#384). Mirrors prod
     # odoo.tf. Empty default = ping silent in QA.
     discord_ops_webhook_url = var.discord_ops_webhook_url
 

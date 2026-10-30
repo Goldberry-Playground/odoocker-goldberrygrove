@@ -300,7 +300,7 @@ Terraform change is a provable no-op on the running box, and a plain (or
 
 | Path | Cost | When |
 |------|------|------|
-| **A — env-file upsert** (GOL-1772 Option B, recommended) | seconds, no outage | promote day. On `grove-prod-odoo`: `sed -i '/^GROVE_STRIPE_TAX_NURSERY=/d' /etc/grove/.env && echo 'GROVE_STRIPE_TAX_NURSERY=1' >> /etc/grove/.env`, confirm `grep 'GROVE_STRIPE_TAX_NURSERY:' /etc/grove/docker-compose.yml` is present (add it to the odoo `environment:` block if the box predates this change), then `cd /etc/grove && docker compose --env-file /etc/grove/.env up -d --force-recreate --no-deps odoo`. **A container's env is fixed at create time — a plain `restart` does nothing.** |
+| **A — promote-script converge** (recommended) | seconds, no outage | promote day, on the Leg B run: `GROVE_STRIPE_TAX_NURSERY=1 TARGET_REF=<40-char sha> CONFIRM=PROMOTE PROD_HOST=grove-prod-odoo scripts/prod-modules-promote.sh`. The script writes the `.env` line, adds the compose passthrough if the box predates it, recreates odoo and verifies the three-way state (`.env` / deployed compose / process env). A falsey value (`0`) is the one-command rollback. Without a pin bump, the same converge is the GOL-1772 Option B hand edit (`.env` line + compose passthrough + `docker compose --env-file /etc/grove/.env up -d --force-recreate --no-deps odoo`); **a plain `restart` does nothing**, a container's env is fixed at create time. |
 | **B — droplet REPLACE** | ~10-20 min Odoo outage | only if a rebuild is already planned; re-triggers the GOL-93 filestore gate |
 
 Verify against the **process**, not the files:
@@ -317,11 +317,6 @@ written back by the `checkout.session.completed` webhook.
 **Rollback:** drop the line (or set it to `0`) and recreate the container the
 same way. No code change, no data migration; in-flight Stripe sessions settle
 normally and new sessions go back to the Odoo WV tax line.
-
-**Follow-up (GOL-2584 child):** teach `scripts/prod-modules-promote.sh` to carry
-`GROVE_STRIPE_TAX_NURSERY` the way it already carries `PERENUAL_API_KEY` above,
-so the pin bump and the flag flip are one converge with process-level
-verification instead of a hand-edited second touch.
 
 ### The money guard -- the real success condition
 
