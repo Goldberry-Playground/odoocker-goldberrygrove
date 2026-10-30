@@ -353,6 +353,12 @@
               "operator": "<",
               "value": "1",
               "ignore_case": false
+            },
+            {
+              "column": "journey",
+              "operator": "=",
+              "value": "health",
+              "ignore_case": false
             }
           ]
         },
@@ -401,6 +407,12 @@
               "operator": "<",
               "value": "1",
               "ignore_case": false
+            },
+            {
+              "column": "journey",
+              "operator": "=",
+              "value": "cart-flow",
+              "ignore_case": false
             }
           ]
         },
@@ -448,6 +460,12 @@
               "column": "value",
               "operator": "<",
               "value": "1",
+              "ignore_case": false
+            },
+            {
+              "column": "journey",
+              "operator": "=",
+              "value": "catalog",
               "ignore_case": false
             }
           ]
@@ -539,11 +557,17 @@
       "query_condition": {
         "type": "custom",
         "conditions": {
-          "or": [
+          "and": [
             {
-              "column": "success",
+              "column": "value",
+              "operator": "<",
+              "value": "1",
+              "ignore_case": false
+            },
+            {
+              "column": "journey",
               "operator": "=",
-              "value": "0",
+              "value": "checkout-canary",
               "ignore_case": false
             }
           ]
@@ -731,11 +755,17 @@
       "query_condition": {
         "type": "custom",
         "conditions": {
-          "or": [
+          "and": [
             {
-              "column": "success",
+              "column": "value",
+              "operator": "<",
+              "value": "1",
+              "ignore_case": false
+            },
+            {
+              "column": "journey",
               "operator": "=",
-              "value": "0",
+              "value": "ghost-content",
               "ignore_case": false
             }
           ]
