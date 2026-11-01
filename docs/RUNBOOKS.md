@@ -1,6 +1,6 @@
 # Grove Runbooks
 
-One entry per alert key emitted by OpenObserve and routed through Keep. Each Discord notification links here via the `runbook_key` field. Keep the table in this file aligned with the `runbook_key` values in `openobserve/alerts.json`.
+One entry per alert key emitted by OpenObserve and routed through Keep. Each Discord notification links here via the `runbook_key` field. Keep the table in this file aligned with the `runbook_key` values in `openobserve/alerts.json`. Procedures that no alert links to are listed under [Operational runbooks](#operational-runbooks) at the end.
 
 | `runbook_key` | Severity | Source alert |
 |---|---|---|
@@ -301,3 +301,63 @@ Recurrent critical on the same container = right-size the limit or the droplet (
 
 ### Escalation
 Critical (>90%) is act-now — free space or grow the volume before Docker/the runtime stalls.
+
+---
+
+## Operational runbooks
+
+Procedures that are not tied to an alert key. Each one is a standalone `docs/RUNBOOK-*.md` file. When you add a new one, list it here.
+
+### Release and deploy
+
+- [RUNBOOK-release-train.md](RUNBOOK-release-train.md): Grove Release Train (biweekly QA window)
+- [RUNBOOK-storefront-release.md](RUNBOOK-storefront-release.md): Production Storefront Release (App Platform) — Option A appendix
+- [RUNBOOK-module-upgrade.md](RUNBOOK-module-upgrade.md): custom-module upgrades on L3 Odoo (QA + production)
+- [RUNBOOK-qa-module-upgrade.md](RUNBOOK-qa-module-upgrade.md): QA Odoo module upgrade (`-u <module>`)
+- [RUNBOOK-db-promotion-cutover.md](RUNBOOK-db-promotion-cutover.md): DB promotion / cutover (move the filestore WITH the DB)
+- [RUNBOOK-apex-launch-cutover.md](RUNBOOK-apex-launch-cutover.md): Brand-apex launch cutover — 4 apexes → App Platform (GOL-287 / GOL-116c)
+- [RUNBOOK-nursery-golive.md](RUNBOOK-nursery-golive.md): Nursery storefront go-live (GOL-484, revenue #1)
+- [RUNBOOK-consult-host.md](RUNBOOK-consult-host.md): Grove Consult host (consult.gatheringatthegrove.com) — GOL-3577
+- [RUNBOOK-merge-queue-enqueue-identity.md](RUNBOOK-merge-queue-enqueue-identity.md): Merge-queue enqueue identity — operations runbook (GOL-2524)
+
+### Odoo data and database
+
+- [RUNBOOK-managed-pg-odoo-bootstrap.md](RUNBOOK-managed-pg-odoo-bootstrap.md): Odoo on DO Managed Postgres: first-boot DB bootstrap
+- [RUNBOOK-odoo-filestore-restore.md](RUNBOOK-odoo-filestore-restore.md): Odoo filestore backup & restore (prod)
+- [RUNBOOK-provision-ceo-odoo-login.md](RUNBOOK-provision-ceo-odoo-login.md): Provision the CEO's prod Odoo login (GOL-1780)
+- [RUNBOOK-qa-test-data-cleanup.md](RUNBOOK-qa-test-data-cleanup.md): QA test-data cleanup (pre-freeze teardown)
+
+### Payments, email and webhooks
+
+- [RUNBOOK-checkout-stripe-guardrails.md](RUNBOOK-checkout-stripe-guardrails.md): Checkout / Stripe / secrets — guardrails & best practices
+- [RUNBOOK-mailgun-transactional-email.md](RUNBOOK-mailgun-transactional-email.md): Mailgun SMTP transactional email (GOL-248)
+- [RUNBOOK-publish-webhook-secrets.md](RUNBOOK-publish-webhook-secrets.md): QA publish-webhook HMAC secrets
+
+### Observability
+
+- [RUNBOOK-prod-synthetics-golive.md](RUNBOOK-prod-synthetics-golive.md): Tier-1 synthetics go-live vs PRODUCTION (GOL-2325)
+- [RUNBOOK-otlp-ingest-GOL-2330.md](RUNBOOK-otlp-ingest-GOL-2330.md): public OTLP ingest endpoint (GOL-2330)
+
+### Network, firewalls and droplets
+
+- [RUNBOOK-agent-plane-firewall-GOL-2569.md](RUNBOOK-agent-plane-firewall-GOL-2569.md): fence the agent plane (`agenticos-droplet`) behind a cloud firewall
+- [RUNBOOK-firewall-census-GOL-2572.md](RUNBOOK-firewall-census-GOL-2572.md): the account-wide firewall census fired (GOL-2572)
+- [RUNBOOK-legacy-ghost-firewall.md](RUNBOOK-legacy-ghost-firewall.md): fence the legacy Ghost snowflake (GOL-2566)
+- [RUNBOOK-prod-odoo-ci-fence-GOL-3414.md](RUNBOOK-prod-odoo-ci-fence-GOL-3414.md): CI SSH through the prod Odoo fence (GOL-3414)
+- [RUNBOOK-reattach-prod-odoo-firewall-GOL-2565.md](RUNBOOK-reattach-prod-odoo-firewall-GOL-2565.md): reattach `grove-prod-odoo-fw` to `grove-prod-odoo` (GOL-2565)
+- [RUNBOOK-refresh-admin-ip-cidrs.md](RUNBOOK-refresh-admin-ip-cidrs.md): refresh the operator SSH allowlist (`admin_ip_cidrs`)
+- [RUNBOOK-blogs-reserved-ip-cutover.md](RUNBOOK-blogs-reserved-ip-cutover.md): blogs droplet reserved IP + the pending replace (GOL-387)
+- [RUNBOOK-blogs-user_data-reproducibility.md](RUNBOOK-blogs-user_data-reproducibility.md): grove-prod-blogs / grove-prod-odoo user_data reproducibility
+
+### Agent plane and secrets
+
+- [RUNBOOK-1password-agent-vault.md](RUNBOOK-1password-agent-vault.md): agent-writable 1Password vault for QA secrets
+- [RUNBOOK-agent-github-push.md](RUNBOOK-agent-github-push.md): agent-plane GitHub push path
+- [RUNBOOK-agent-odoo-keys.md](RUNBOOK-agent-odoo-keys.md): Per-agent Odoo users, API keys & MCP auth hardening
+- [RUNBOOK-agent-plane-cred-hardening-GOL-2306.md](RUNBOOK-agent-plane-cred-hardening-GOL-2306.md): Harden agent-plane prod-credential exposure (GOL-2306)
+- [RUNBOOK-otto-key-writeback.md](RUNBOOK-otto-key-writeback.md): Otto `ODOO_API_KEY` write-back vault (`Grove CI Writeback`)
+- [RUNBOOK-rotate-op-service-account-token.md](RUNBOOK-rotate-op-service-account-token.md): rotate the 1Password service-account token (agent runtime)
+
+### Terraform state
+
+- [RUNBOOK-r2-state-lock-probe-GOL-2760.md](RUNBOOK-r2-state-lock-probe-GOL-2760.md): Measure whether Cloudflare R2 enforces Terraform state locking (GOL-2760)
