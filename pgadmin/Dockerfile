@@ -126,6 +126,14 @@ RUN apk update && apk upgrade --no-cache && \
 #     are OAuth2 *provider*-side (response_mode handling); pgAdmin only uses
 #     the client side. Package dir `oauthlib/`, dist-info `oauthlib-*`.
 #
+#   - joserfc 1.7.1 → 1.7.5+  (added 2026-11-01, GOL-3715)
+#     CVE-2026-119283 (HIGH), fixed in 1.7.5. Pulled in by Authlib 1.9
+#     (`joserfc>=1.6.8`, a floor too low to keep the CVE out), so it is
+#     pinned explicitly and rm'd first like the rest: `pip --target` skips
+#     a package whose dir already exists in the target, so a pre-existing
+#     `joserfc/` would otherwise survive. Package dir `joserfc/`, dist-info
+#     `joserfc-*`.
+#
 # The venv was created with --without-pip and --system-site-packages, so
 # we install via the system pip targeting the venv's site-packages
 # directory directly.
@@ -182,7 +190,9 @@ RUN rm -rf "${PGADMIN_VENV_SITE_PACKAGES}/urllib3" \
            "${PGADMIN_VENV_SITE_PACKAGES}/dns" \
            ${PGADMIN_VENV_SITE_PACKAGES}/dnspython-*.dist-info \
            "${PGADMIN_VENV_SITE_PACKAGES}/oauthlib" \
-           ${PGADMIN_VENV_SITE_PACKAGES}/oauthlib-*.dist-info && \
+           ${PGADMIN_VENV_SITE_PACKAGES}/oauthlib-*.dist-info \
+           "${PGADMIN_VENV_SITE_PACKAGES}/joserfc" \
+           ${PGADMIN_VENV_SITE_PACKAGES}/joserfc-*.dist-info && \
     /usr/local/bin/pip3 install \
         --no-cache-dir \
         --target="${PGADMIN_VENV_SITE_PACKAGES}" \
@@ -200,7 +210,8 @@ RUN rm -rf "${PGADMIN_VENV_SITE_PACKAGES}/urllib3" \
         'brotli>=1.2.1,<1.3' \
         'Authlib>=1.9.1,<2.0' \
         'dnspython>=2.9.0,<3.0' \
-        'oauthlib>=4.0.0,<5.0'
+        'oauthlib>=4.0.0,<5.0' \
+        'joserfc>=1.7.5,<2.0'
 
 # Check if the private key exists, copy it and set permissions if it does
 RUN if [ -f ./pgadmin/private_key ]; then \
