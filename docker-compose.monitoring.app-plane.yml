@@ -52,8 +52,12 @@ services:
       POSTGRES_ENDPOINT: ${POSTGRES_ENDPOINT}
       POSTGRES_MONITOR_USER: ${POSTGRES_MONITOR_USER}
       POSTGRES_MONITOR_PASSWORD: ${POSTGRES_MONITOR_PASSWORD}
+    # docker.sock's group differs per droplet (988 on the QA box, GOL-335; prod
+    # differs, and the docker_stats receiver failing to start takes the whole
+    # collector down). The deploy sets DOCKER_GID from `stat -c %g
+    # /var/run/docker.sock` on the host.
     group_add:
-      - "988"
+      - "${DOCKER_GID:-988}"
     volumes:
       - /etc/grove/otel/otelcol-config.yaml:/etc/otelcol/config.yaml:ro
       - /etc/grove/otel/otelcol-config.postgres.yaml:/etc/otelcol/config.postgres.yaml:ro
@@ -83,6 +87,12 @@ services:
   synthetic-runner:
     image: grove-synthetic-runner:local
     restart: unless-stopped
+    # Same mount as docker-compose.monitoring.yml (GOL-280): the build context is
+    # ./synthetic, so probes.py can't bundle openobserve/monitors.json. Without it
+    # probes.emit raised FileNotFoundError every run and no uptime/ssl metrics
+    # reached OpenObserve.
+    volumes:
+      - ./openobserve/monitors.json:/app/monitors.json:ro
     depends_on:
       - otel-collector
     environment:
