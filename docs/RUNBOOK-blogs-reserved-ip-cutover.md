@@ -223,11 +223,24 @@ DNS does not change, so there is no propagation tail.
 op run --env-file=.env.op -- terraform apply \
   -target=digitalocean_droplet.blogs \
   -target=digitalocean_volume_attachment.blogs_data \
-  -target=digitalocean_reserved_ip_assignment.blogs
+  -target=digitalocean_reserved_ip_assignment.blogs \
+  -target=digitalocean_firewall.blogs
 ```
 
-Terraform destroys the old droplet, creates the replacement, re-attaches the volume, and
-**re-points** the reserved IP at the new droplet. `cloudflare_record.blog[*]` is not in
+Terraform destroys the old droplet, creates the replacement, re-attaches the volume,
+**re-points** the reserved IP at the new droplet, and **re-adds it to
+`grove-prod-blogs-fw`**.
+
+> **The firewall target is mandatory (2026-11-03 incident).** `grove-prod-blogs-fw` pins
+> `droplet_ids = [digitalocean_droplet.blogs.id]`. DO silently drops a destroyed droplet
+> from the firewall, and a `-target` list that omits `digitalocean_firewall.blogs` never
+> adds the new one, so the replacement boots **with no firewall at all**: SSH open to the
+> world (key-only, but still) and Caddy reachable around Cloudflare. That happened on the
+> 11-03 re-run from 17:58 UTC until the firewall-membership alert fired and the droplet was
+> re-added by hand (`doctl compute firewall add-droplets <fw-id> --droplet-ids <new-id>`,
+> the exact state `blogs.tf` declares). Every resource that references
+> `digitalocean_droplet.blogs.id` must be in the target list:
+> `git grep -n "digitalocean_droplet.blogs.id" infra/terraform/environments/production`. `cloudflare_record.blog[*]` is not in
 the plan and must not appear in it — if it does, **stop**: Phase 1d did not land.
 
 ### The volume re-attaches by device path, not by label
@@ -294,7 +307,8 @@ op run --env-file=.env.op -- terraform apply \
   -replace=digitalocean_droplet.blogs \
   -target=digitalocean_droplet.blogs \
   -target=digitalocean_volume_attachment.blogs_data \
-  -target=digitalocean_reserved_ip_assignment.blogs
+  -target=digitalocean_reserved_ip_assignment.blogs \
+  -target=digitalocean_firewall.blogs
 ```
 
 Pre-flight, on top of "Before the window" (snapshot the **current** droplet — look the id
@@ -310,15 +324,19 @@ up as in the header; it changed on 2026-11-03):
   or staff 2FA is silently turned off.
 - **Image tags.** The replace pulls `var.ghost_tag` / `mysql_tag` / `caddy_tag`. If the
   live `.env` tags differ, that is an upgrade riding the window — decide on purpose.
-- `terraform plan` (same flags) shows exactly 1 replace + the attachment/IP churn and
-  nothing else.
+- `terraform plan` (same flags) shows exactly 1 replace + the attachment/IP/firewall
+  churn and nothing else, and `digitalocean_firewall.blogs` **is** in it (update in
+  place: `droplet_ids`).
 - **Host key.** The reserved IP keeps its address but the box behind it is new: run
   `ssh-keygen -R 159.89.243.121` before ssh'ing in afterwards.
 - **`op` approval timeouts.** If 1Password's approval times out mid-plan, `op run` exits
   non-zero with `authorization timeout` and a `-detailed-exitcode` check reads it as
   "not clean". Re-run before treating it as drift.
 
-After: on top of "After", confirm `free -m` shows the 1G swap and that DO memory used
+After: on top of "After", run the firewall checker and require both legs green:
+`DO_TOKEN=... python3 infra/terraform/scripts/check-firewall-membership.py production --census`
+(membership matches `blogs.tf`, and the census shows `grove-prod-blogs` behind a firewall).
+Then confirm `free -m` shows the 1G swap and that DO memory used
 settles well under the 85% `[prod]` alert line.
 
 ---
