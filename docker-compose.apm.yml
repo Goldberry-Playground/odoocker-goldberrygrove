@@ -79,8 +79,9 @@ services:
       POSTGRES_MONITOR_USER: ${POSTGRES_MONITOR_USER}
       POSTGRES_MONITOR_PASSWORD: ${POSTGRES_MONITOR_PASSWORD}
     group_add:
-      # docker.sock group on the Odoo droplet (GOL-335 verified value).
-      - "988"
+      # docker.sock group on the Odoo droplet (988 = GOL-335 verified value on
+      # QA; set DOCKER_GID where the host differs, e.g. prod).
+      - "${DOCKER_GID:-988}"
     volumes:
       - /etc/grove/otel/otelcol-config.yaml:/etc/otelcol/config.yaml:ro
       - /etc/grove/otel/otelcol-config.postgres.yaml:/etc/otelcol/config.postgres.yaml:ro
