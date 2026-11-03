@@ -5,10 +5,14 @@ is DONE too — the droplet was replaced 2026-08-17** in the GOL-1279 apex-cutov
 (new id `593114105`; reserved IP `159.89.243.121` re-bound to it; #516 codified the
 headless-demote the next day). This status line was not updated at the time; corrected
 2026-11-03. The procedure below is now the **re-run** procedure for any later deliberate
-replace — see "Re-running the replace" at the end of Phase 2.
+replace — see "Re-running the replace" at the end of Phase 2. **Re-run once on
+2026-11-03** (#979 memory caps): 17:56–18:05 UTC, ~10 min down, id `593114105` →
+`615536577`.
 **Applies to:** `infra/terraform/environments/production`, `digitalocean_droplet.blogs`
-(`grove-prod-blogs`, id `593114105`, created 2026-08-17) — **LIVE**, serves all four
-brand blogs. Ids `582968733` / `164.90.129.34` below are the pre-Phase-2 droplet.
+(`grove-prod-blogs`) — **LIVE**, serves all four brand blogs. The id changes on every
+replace, so look it up rather than trusting one written here:
+`doctl compute droplet list --tag-name role-blogs --format ID,Name,PublicIPv4`.
+Ids `582968733` / `164.90.129.34` below are the pre-Phase-2 droplet.
 
 ## Phase 1 outcome (2026-07-15)
 
@@ -157,6 +161,12 @@ route to the same box, so there is no cutover moment.
 
 ### 1e. Verify before stopping
 
+> **Superseded check (2026-11-03).** Since the headless demote went live (GOL-1530,
+> #516, 2026-08-18) Caddy 301s `blog.*/` to each brand's storefront, so the `/` probe
+> below now returns **301 on a healthy box** and can never prove readiness. Use the
+> readiness check under "After" instead. The original 1e commands are kept as the
+> 2026-07-15 record.
+
 - All four blogs serve 200 through Cloudflare:
   `for z in gatheringatthegrove.com goldberrygrove.farm woodworkingeorge.com atthegrovenursery.com; do curl -sS -o /dev/null -w "%{http_code} blog.$z\n" https://blog.$z/; done`
 - Origin reachable on the new address:
@@ -241,9 +251,24 @@ the existing data dir.
 
 ### After
 
-- All four blogs 200 (command in 1e). Measure and record the actual window.
+- **Readiness: all four Ghosts answer `/ghost/api/admin/site/` with 200.** This is the
+  path the cloud-init ready-sentinel probes; it is not demoted, so it reflects Ghost
+  itself. Do **not** probe `/` — it 301s to the storefront (see the 1e note).
+  ```
+  for z in gatheringatthegrove.com goldberrygrove.farm woodworkingeorge.com atthegrovenursery.com; do
+    curl -sS -o /dev/null -w "%{http_code} blog.$z\n" "https://blog.$z/ghost/api/admin/site/"
+  done
+  ```
+  Expected boot sequence (2026-11-03 run): **521** (Cloudflare can't reach the origin
+  while cloud-init installs Docker + pulls images) → **502/503** (Caddy up, Ghost not)
+  → **503** from Ghost itself (migrations/boot) → **200**. The two small tenants came up
+  ~20 s before hub + goldberry. Allow ~10 min from droplet create.
+- Content survived: the storefront lists posts, e.g. `https://goldberrygrove.farm/blog/`
+  and `https://gatheringatthegrove.com/journal/` render `<article>` cards. (`/rss/` and
+  `/content/images/` on `blog.*` are demoted too and 404 by design.)
+- Measure and record the actual window (apply start → 4x 200), not a script's wall time.
 - `terraform plan` is clean for `digitalocean_droplet.blogs` — no pending replace.
-- `doctl compute droplet get 582968733` → the new droplet reports `monitoring: true`.
+- The new droplet (look up its id as in the header) reports `monitoring: true`.
 - **Confirm GOL-381's four resource alerts now have a metric source** — the agent is
   installed, so cpu/memory/disk/load5 stop being green-by-default. (The uptime/ssl alerts
   were already working and are unaffected.)
@@ -272,7 +297,8 @@ op run --env-file=.env.op -- terraform apply \
   -target=digitalocean_reserved_ip_assignment.blogs
 ```
 
-Pre-flight, on top of "Before the window" (snapshot the **current** id, `593114105`):
+Pre-flight, on top of "Before the window" (snapshot the **current** droplet — look the id
+up as in the header; it changed on 2026-11-03):
 
 - **`.env` drift.** The replace re-renders `/etc/grove-blogs/.env` from TF inputs only;
   anything hand-edited on the box is lost. Compare key names and non-secret values
@@ -286,6 +312,11 @@ Pre-flight, on top of "Before the window" (snapshot the **current** id, `5931141
   live `.env` tags differ, that is an upgrade riding the window — decide on purpose.
 - `terraform plan` (same flags) shows exactly 1 replace + the attachment/IP churn and
   nothing else.
+- **Host key.** The reserved IP keeps its address but the box behind it is new: run
+  `ssh-keygen -R 159.89.243.121` before ssh'ing in afterwards.
+- **`op` approval timeouts.** If 1Password's approval times out mid-plan, `op run` exits
+  non-zero with `authorization timeout` and a `-detailed-exitcode` check reads it as
+  "not clean". Re-run before treating it as drift.
 
 After: on top of "After", confirm `free -m` shows the 1G swap and that DO memory used
 settles well under the 85% `[prod]` alert line.
