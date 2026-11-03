@@ -33,6 +33,14 @@ step sequence main() actually drives:
                              MONITORING_PLANE="app" and OPENOBSERVE_BASE_URL on
                              grove-obs's private address (10.132.23.199:5080),
                              the two values the prod bring-up depends on.
+  app-plane-dest-skip        app plane: an unset KEEP_EVENT_URL logs "owned by
+                             the obs-plane deploy", not a ⚠ (obs still warns).
+
+AppPlaneDeployTests (prod faults after the 2026-11-03 redeploy, #977):
+  collector-gid              otel-collector group_add is ${DOCKER_GID:-988},
+                             not the QA-only literal 988 (app-plane + apm).
+  runner-monitors-mount      app-plane runner bind-mounts monitors.json.
+  nursery-ghost-skipped      prod env.op leaves GHOST_URL_NURSERY unset.
 
     python3 scripts/test_setup_monitoring_plane.py
 """
@@ -178,6 +186,72 @@ class PlaneTests(unittest.TestCase):
             self.assertTrue(filters, f"{src}: render grep not found")
             for f in filters:
                 self.assertIn("MONITORING", f.split("|"), f"{src}: {f}")
+
+    def _logged(self) -> list[str]:
+        lines: list[str] = []
+        self.mod._log = lambda msg="", *_a, **_k: lines.append(str(msg))
+        return lines
+
+    def test_app_plane_destination_skip_is_not_a_warning(self) -> None:
+        """The obs-plane deploy owns the Keep destination in the shared
+        OpenObserve, so on the app plane an unset KEEP_EVENT_URL is expected:
+        the skip must not read as a fault in the prod bring-up log."""
+        os.environ["MONITORING_PLANE"] = "app"
+        lines = self._logged()
+        self.mod.oo_upsert_destination({"name": "keep"})
+        self.assertTrue(any("owned by the obs-plane deploy" in ln for ln in lines), lines)
+        self.assertFalse(any("⚠" in ln for ln in lines), lines)
+
+    def test_obs_plane_destination_skip_still_warns(self) -> None:
+        lines = self._logged()
+        self.mod.oo_upsert_destination({"name": "keep"})
+        self.assertTrue(any("⚠" in ln and "KEEP_EVENT_URL unset" in ln for ln in lines), lines)
+
+
+REPO = HERE.parent
+APP_PLANE = REPO / "docker-compose.monitoring.app-plane.yml"
+APM = REPO / "docker-compose.apm.yml"
+
+
+def _service_block(compose: str, service: str) -> str:
+    """Text of one top-level service (indent-2 key) in a compose file, enough to
+    assert on without a YAML dependency in CI."""
+    m = re.search(rf"^  {re.escape(service)}:\n(.*?)(?=^  \S|\Z)", compose, re.M | re.S)
+    if not m:
+        raise AssertionError(f"service {service} not found")
+    return m.group(1)
+
+
+class AppPlaneDeployTests(unittest.TestCase):
+    """Prod app-plane faults found after the 2026-11-03 redeploy (#977)."""
+
+    def test_collector_docker_gid_is_parameterized(self) -> None:
+        """988 is the QA droplet's docker.sock group (GOL-335); prod's differs,
+        and a docker_stats receiver that can't open the socket crashloops the
+        whole collector. The gid must come from DOCKER_GID, defaulting to 988."""
+        for path in (APP_PLANE, APM):
+            block = _service_block(path.read_text(), "otel-collector")
+            gids = re.findall(r"group_add:\n((?:\s+(?:#|- ).*\n)+)", block)
+            self.assertTrue(gids, f"{path.name}: no group_add on otel-collector")
+            entries = re.findall(r'^\s+- "?([^"\n]+?)"?$', gids[0], re.M)
+            self.assertEqual(entries, ["${DOCKER_GID:-988}"], f"{path.name}: {entries}")
+
+    def test_app_plane_runner_mounts_monitors_json(self) -> None:
+        """The runner image is built from ./synthetic only, so probes.py finds
+        monitors.json only via the bind mount (as the obs-plane compose does).
+        Without it probes.emit raised FileNotFoundError every run."""
+        block = _service_block(APP_PLANE.read_text(), "synthetic-runner")
+        self.assertIn("./openobserve/monitors.json:/app/monitors.json:ro", block)
+        self.assertTrue((REPO / "openobserve" / "monitors.json").is_file())
+
+    def test_prod_env_skips_nursery_ghost_until_it_has_posts(self) -> None:
+        """The nursery Ghost has no published posts, so ghost-content [nursery]
+        failed `posts count > 0` every minute. run.py skips a tenant with no
+        GHOST_URL_<TENANT>; re-enable it once the blog has a post."""
+        live = [ln for ln in ENV_OP.read_text().splitlines()
+                if ln and not ln.lstrip().startswith("#")]
+        self.assertFalse(any(ln.startswith("GHOST_URL_NURSERY=") for ln in live))
+        self.assertTrue(any(ln.startswith("GHOST_URL_GOLDBERRY=") for ln in live))
 
 
 if __name__ == "__main__":
