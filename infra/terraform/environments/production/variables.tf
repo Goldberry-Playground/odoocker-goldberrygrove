@@ -67,7 +67,7 @@ variable "region" {
 }
 
 variable "blogs_droplet_size" {
-  description = "Blogs droplet size. 4x Ghost (~150MB each) + MySQL (~400MB) + Caddy fits in 2GB with headroom."
+  description = "Blogs droplet size. 4x Ghost 6 + MySQL 8 + Caddy. Measured 2026-11-03: Ghost runs well above the ~150MB first assumed and the box sat at 82-93% used uncapped, so it fits 2GB only with the compose caps (Ghost heap 256MB, MySQL performance_schema off) plus the 1G swapfile from cloud-init."
   type        = string
   default     = "s-2vcpu-2gb"
 }

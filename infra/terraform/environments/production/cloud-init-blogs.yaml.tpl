@@ -157,6 +157,20 @@ runcmd:
     mount -a
   - mkdir -p /mnt/blogs-data/mysql /mnt/blogs-data/mysql-init /mnt/blogs-data/ghost-hub /mnt/blogs-data/ghost-goldberry /mnt/blogs-data/ghost-ggg /mnt/blogs-data/ghost-nursery
 
+  # -- 1GB swapfile on the root disk (2026-11-03). A safety margin so a
+  # transient spike (Ghost import, mysqldump) pages instead of OOM-killing a
+  # tenant; low swappiness keeps the working set in RAM in steady state.
+  - |
+    if [ ! -f /swapfile ]; then
+      fallocate -l 1G /swapfile
+      chmod 600 /swapfile
+      mkswap /swapfile
+    fi
+    swapon /swapfile || true
+    grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+    echo 'vm.swappiness=10' > /etc/sysctl.d/99-grove-swap.conf
+    sysctl -p /etc/sysctl.d/99-grove-swap.conf
+
   # -- Docker install (same approach as qa-l3 droplets)
   - curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
   - sh /tmp/get-docker.sh
