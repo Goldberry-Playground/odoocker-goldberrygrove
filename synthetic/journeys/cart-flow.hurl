@@ -4,8 +4,12 @@
 # preserves the session cookie across entries in this file, so the GET sees the
 # same cart the POST created.
 # Catches: BFF↔Odoo session break, cart proxy / company-scoping regressions.
-# Side effect: creates a draft cart sale.order per run (same as a real shopper
-# abandoning a cart — Odoo expires these; not a confirmed sale).
+# Side effect: a cart POST with no session creates a draft sale.order on the
+# website's Public user, and Odoo does NOT expire it — each one also burns a
+# number from the shared sale.order sequence. So run.py replays a per-tenant,
+# per-UTC-day cookie jar: every run lands in the same session cart (quantity
+# grows by 1 per run) and only one draft per tenant per day is created. Old
+# carts are deleted by grove_headless's abandoned-cart autovacuum (1-day TTL).
 
 GET {{odoo_base}}/grove/api/v1/products
 X-Grove-Tenant: {{tenant}}
@@ -22,6 +26,7 @@ Content-Type: application/json
 }
 HTTP 200
 [Asserts]
+jsonpath "$.id" isInteger
 jsonpath "$.lines" count > 0
 jsonpath "$.lines[0].product_id" exists
 jsonpath "$.lines[0].quantity" >= 1
