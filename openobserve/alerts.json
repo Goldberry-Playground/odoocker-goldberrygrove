@@ -811,9 +811,15 @@
         "conditions": {
           "and": [
             {
+              "column": "state",
+              "operator": "=",
+              "value": "idle",
+              "ignore_case": false
+            },
+            {
               "column": "value",
-              "operator": ">",
-              "value": "0.70",
+              "operator": "<",
+              "value": "0.30",
               "ignore_case": false
             },
             {
@@ -834,7 +840,7 @@
       "trigger_condition": {
         "period": 10,
         "operator": ">=",
-        "threshold": 1,
+        "threshold": 30,
         "frequency": 60,
         "cron": "",
         "frequency_type": "minutes",
@@ -851,7 +857,7 @@
         "tenant": "shared"
       },
       "row_template": "",
-      "description": "USE — droplet CPU >70% for 10m. Identify the hot container via docker_stats. Runbook: docs/RUNBOOKS.md#droplet-cpu  [intent: avg(system_cpu_utilization) > 0.70 over 10m]  [note: USE metric from the OTel Collector (hostmetrics). Utilization is a 0-1 fraction. Stream/field name pending live validation.]  [scope: host_role='odoo-droplet' (GOL-76) so it does not blend with the agenticos box sharing this stream]",
+      "description": "USE — droplet CPU >70% for 10m. Identify the hot container via docker_stats. Runbook: docs/RUNBOOKS.md#droplet-cpu [intent: busy = 1 - idle > 70% sustained over 10m. system_cpu_utilization is per cpu AND per state, so the rule reads state='idle' < 0.30; threshold 30 rows ~ 75% of the 40 per-core 30s samples a 2-vCPU host emits in 10m. A bare value > x matched the idle series (~0.93) and paged permanently, 11-03.]  [note: USE metric from the OTel Collector (hostmetrics). Utilization is a 0-1 fraction. Stream/field name pending live validation.]  [scope: host_role='odoo-droplet' (GOL-76) so it does not blend with the agenticos box sharing this stream]",
       "enabled": true,
       "tz_offset": 0
     },
@@ -865,9 +871,15 @@
         "conditions": {
           "and": [
             {
+              "column": "state",
+              "operator": "=",
+              "value": "idle",
+              "ignore_case": false
+            },
+            {
               "column": "value",
-              "operator": ">",
-              "value": "0.90",
+              "operator": "<",
+              "value": "0.10",
               "ignore_case": false
             },
             {
@@ -888,7 +900,7 @@
       "trigger_condition": {
         "period": 10,
         "operator": ">=",
-        "threshold": 1,
+        "threshold": 30,
         "frequency": 60,
         "cron": "",
         "frequency_type": "minutes",
@@ -905,7 +917,7 @@
         "tenant": "shared"
       },
       "row_template": "",
-      "description": "USE — droplet CPU >90% for 10m. Imminent thrash risk. Restart non-critical containers or scale. Runbook: docs/RUNBOOKS.md#droplet-cpu  [intent: avg(system_cpu_utilization) > 0.90 over 10m]  [scope: host_role='odoo-droplet' (GOL-76) so it does not blend with the agenticos box sharing this stream]",
+      "description": "USE — droplet CPU >90% for 10m. Imminent thrash risk. Restart non-critical containers or scale. Runbook: docs/RUNBOOKS.md#droplet-cpu [intent: busy = 1 - idle > 90% sustained over 10m. system_cpu_utilization is per cpu AND per state, so the rule reads state='idle' < 0.10; threshold 30 rows ~ 75% of the 40 per-core 30s samples a 2-vCPU host emits in 10m. A bare value > x matched the idle series (~0.93) and paged permanently, 11-03.]  [scope: host_role='odoo-droplet' (GOL-76) so it does not blend with the agenticos box sharing this stream]",
       "enabled": true,
       "tz_offset": 0
     },
@@ -1138,9 +1150,15 @@
         "conditions": {
           "and": [
             {
+              "column": "state",
+              "operator": "=",
+              "value": "idle",
+              "ignore_case": false
+            },
+            {
               "column": "value",
-              "operator": ">",
-              "value": "0.70",
+              "operator": "<",
+              "value": "0.30",
               "ignore_case": false
             },
             {
@@ -1161,7 +1179,7 @@
       "trigger_condition": {
         "period": 10,
         "operator": ">=",
-        "threshold": 1,
+        "threshold": 30,
         "frequency": 60,
         "cron": "",
         "frequency_type": "minutes",
@@ -1178,7 +1196,7 @@
         "tenant": "shared"
       },
       "row_template": "",
-      "description": "USE — agenticos CPU >70% for 10m. Identify the hot container via docker_stats (paperclip-server runs agent subprocesses). Runbook: docs/RUNBOOKS.md#agenticos-cpu  [intent: avg(system_cpu_utilization{host_role='agenticos'}) > 0.70 over 10m]  [note: host_role='agenticos' scopes this to the AgenticOS box; consumes the GOL-54 otelcol-agenticos.yaml streams. host_role column name (flat vs nested) PENDING LIVE VALIDATION on first agenticos traffic.]",
+      "description": "USE — agenticos CPU >70% for 10m. Identify the hot container via docker_stats (paperclip-server runs agent subprocesses). Runbook: docs/RUNBOOKS.md#agenticos-cpu [intent: busy = 1 - idle > 70% sustained over 10m. system_cpu_utilization is per cpu AND per state, so the rule reads state='idle' < 0.30; threshold 30 rows ~ 75% of the 40 per-core 30s samples a 2-vCPU host emits in 10m. A bare value > x matched the idle series (~0.93) and paged permanently, 11-03.]  [note: host_role='agenticos' scopes this to the AgenticOS box; consumes the GOL-54 otelcol-agenticos.yaml streams. host_role column name (flat vs nested) PENDING LIVE VALIDATION on first agenticos traffic.]",
       "enabled": true,
       "tz_offset": 0
     },
@@ -1192,9 +1210,15 @@
         "conditions": {
           "and": [
             {
+              "column": "state",
+              "operator": "=",
+              "value": "idle",
+              "ignore_case": false
+            },
+            {
               "column": "value",
-              "operator": ">",
-              "value": "0.90",
+              "operator": "<",
+              "value": "0.10",
               "ignore_case": false
             },
             {
@@ -1215,7 +1239,7 @@
       "trigger_condition": {
         "period": 10,
         "operator": ">=",
-        "threshold": 1,
+        "threshold": 30,
         "frequency": 60,
         "cron": "",
         "frequency_type": "minutes",
@@ -1232,7 +1256,7 @@
         "tenant": "shared"
       },
       "row_template": "",
-      "description": "USE — agenticos CPU >90% for 10m. Imminent thrash risk. Restart non-critical containers or resize (GOL-51). Runbook: docs/RUNBOOKS.md#agenticos-cpu  [intent: avg(system_cpu_utilization{host_role='agenticos'}) > 0.90 over 10m]  [note: host_role='agenticos' scopes this to the AgenticOS box; consumes the GOL-54 otelcol-agenticos.yaml streams. host_role column name (flat vs nested) PENDING LIVE VALIDATION on first agenticos traffic.]",
+      "description": "USE — agenticos CPU >90% for 10m. Imminent thrash risk. Restart non-critical containers or resize (GOL-51). Runbook: docs/RUNBOOKS.md#agenticos-cpu [intent: busy = 1 - idle > 90% sustained over 10m. system_cpu_utilization is per cpu AND per state, so the rule reads state='idle' < 0.10; threshold 30 rows ~ 75% of the 40 per-core 30s samples a 2-vCPU host emits in 10m. A bare value > x matched the idle series (~0.93) and paged permanently, 11-03.]  [note: host_role='agenticos' scopes this to the AgenticOS box; consumes the GOL-54 otelcol-agenticos.yaml streams. host_role column name (flat vs nested) PENDING LIVE VALIDATION on first agenticos traffic.]",
       "enabled": true,
       "tz_offset": 0
     },
@@ -1245,6 +1269,12 @@
         "type": "custom",
         "conditions": {
           "and": [
+            {
+              "column": "state",
+              "operator": "=",
+              "value": "used",
+              "ignore_case": false
+            },
             {
               "column": "value",
               "operator": ">",
@@ -1286,7 +1316,7 @@
         "tenant": "shared"
       },
       "row_template": "",
-      "description": "USE — agenticos host RAM >70% for 10m. The OOM history (103% crash) lives here — watch swap (paging.utilization) and the top container. Runbook: docs/RUNBOOKS.md#agenticos-memory  [intent: avg(system_memory_utilization{host_role='agenticos'}) > 0.70 over 10m]  [note: host_role='agenticos' scopes this to the AgenticOS box; consumes the GOL-54 otelcol-agenticos.yaml streams. host_role column name (flat vs nested) PENDING LIVE VALIDATION on first agenticos traffic.]",
+      "description": "USE — agenticos host RAM >70% for 10m. The OOM history (103% crash) lives here — watch swap (paging.utilization) and the top container. Runbook: docs/RUNBOOKS.md#agenticos-memory  [intent: avg(system_memory_utilization{host_role='agenticos'}) > 0.70 over 10m]  [note: host_role='agenticos' scopes this to the AgenticOS box; consumes the GOL-54 otelcol-agenticos.yaml streams. host_role column name (flat vs nested) PENDING LIVE VALIDATION on first agenticos traffic.]  [state='used': system_memory_utilization is per state (used/free/cached/...); without it cached (~0.56) and free rows match too, 11-03.]",
       "enabled": true,
       "tz_offset": 0
     },
@@ -1299,6 +1329,12 @@
         "type": "custom",
         "conditions": {
           "and": [
+            {
+              "column": "state",
+              "operator": "=",
+              "value": "used",
+              "ignore_case": false
+            },
             {
               "column": "value",
               "operator": ">",
@@ -1340,7 +1376,7 @@
         "tenant": "shared"
       },
       "row_template": "",
-      "description": "USE — agenticos host RAM >90% for 10m — OOM kill imminent (this box crashed the UI at 103%). Swap is the safety net; restart the hot container or resize (GOL-51). Runbook: docs/RUNBOOKS.md#agenticos-memory  [intent: avg(system_memory_utilization{host_role='agenticos'}) > 0.90 over 10m]  [note2: host-level RAM = the AgenticOS box's primary failure mode; DO-native monitor-alerts.tf (P0) is the redundant fast layer.]  [note: host_role='agenticos' scopes this to the AgenticOS box; consumes the GOL-54 otelcol-agenticos.yaml streams. host_role column name (flat vs nested) PENDING LIVE VALIDATION on first agenticos traffic.]",
+      "description": "USE — agenticos host RAM >90% for 10m — OOM kill imminent (this box crashed the UI at 103%). Swap is the safety net; restart the hot container or resize (GOL-51). Runbook: docs/RUNBOOKS.md#agenticos-memory  [intent: avg(system_memory_utilization{host_role='agenticos'}) > 0.90 over 10m]  [note2: host-level RAM = the AgenticOS box's primary failure mode; DO-native monitor-alerts.tf (P0) is the redundant fast layer.]  [note: host_role='agenticos' scopes this to the AgenticOS box; consumes the GOL-54 otelcol-agenticos.yaml streams. host_role column name (flat vs nested) PENDING LIVE VALIDATION on first agenticos traffic.]  [state='used': system_memory_utilization is per state (used/free/cached/...); without it cached (~0.56) and free rows match too, 11-03.]",
       "enabled": true,
       "tz_offset": 0
     },
