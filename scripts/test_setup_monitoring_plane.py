@@ -208,6 +208,49 @@ class PlaneTests(unittest.TestCase):
         self.assertTrue(any("⚠" in ln and "KEEP_EVENT_URL unset" in ln for ln in lines), lines)
 
 
+class AlertUpsertTests(unittest.TestCase):
+    """OO's v2 PUT keeps an alert's stream (11-03: the RED rules moved from
+    _max to _bucket, and the live rules still listed _max after a deploy)."""
+
+    def setUp(self) -> None:
+        self.mod = m = load_module()
+        m._log = lambda *_a, **_k: None
+        m.oo_auth = lambda: ("root@example.invalid", "x")
+        m.oo_existing_alert_ids = lambda: {"r": "id-1"}
+        self.calls: list[tuple[str, str]] = []
+        self.live = {"stream_type": "metrics", "stream_name": "old_stream"}
+
+        def http(method, url, body=None, auth=None):
+            self.calls.append((method, url.rsplit("/", 1)[-1]))
+            if method == "GET":
+                return (200, {"alert": self.live}) if self.live else (500, None)
+            return 200, {}
+        m.http_request = http
+
+    def _upsert(self, stream: str) -> list[tuple[str, str]]:
+        alerts = {"alerts": [{"name": "r", "stream_type": "metrics", "stream_name": stream}]}
+        self.mod.OPENOBSERVE_DIR = Path(self._tmp(alerts))
+        self.mod.oo_bootstrap_alerts(True)
+        return [c for c in self.calls if c[0] != "GET"]
+
+    def _tmp(self, alerts: dict) -> str:
+        import json
+        import tempfile
+        d = tempfile.mkdtemp()
+        (Path(d) / "alerts.json").write_text(json.dumps(alerts))
+        return d
+
+    def test_same_stream_updates_in_place(self) -> None:
+        self.assertEqual(self._upsert("old_stream"), [("PUT", "id-1")])
+
+    def test_stream_change_recreates(self) -> None:
+        self.assertEqual(self._upsert("new_stream"), [("DELETE", "id-1"), ("POST", "alerts")])
+
+    def test_unreadable_live_alert_is_not_deleted(self) -> None:
+        self.live = None
+        self.assertEqual(self._upsert("new_stream"), [("PUT", "id-1")])
+
+
 REPO = HERE.parent
 APP_PLANE = REPO / "docker-compose.monitoring.app-plane.yml"
 APM = REPO / "docker-compose.apm.yml"
