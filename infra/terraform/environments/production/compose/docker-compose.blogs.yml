@@ -13,6 +13,15 @@ services:
   mysql:
     image: mysql:${MYSQL_TAG}
     restart: unless-stopped
+    # Memory budget (2026-11-03): the 2GB box sat at 82-93% used with no
+    # caps anywhere. performance_schema alone holds ~150-200MB and nothing
+    # here reads it; the buffer pool is pinned at the 8.0 default so a
+    # future image default can't silently grow it. 4 tenants x Ghost's
+    # default pool of 10 = 40 connections; 60 leaves room for backups.
+    command:
+      - --performance-schema=OFF
+      - --innodb-buffer-pool-size=128M
+      - --max-connections=60
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
     volumes:
@@ -42,6 +51,10 @@ services:
       database__connection__password: ${MYSQL_GHOST_HUB_PASSWORD}
       database__connection__database: ghost_hub
       NODE_ENV: production
+      # Cap V8's old-space heap. Uncapped, V8 sizes it off host RAM and lets
+      # it creep (~1%/day of the box observed 10-28 -> 11-03); a cap makes GC
+      # run before the heap grows. Same value on all four tenants.
+      NODE_OPTIONS: --max-old-space-size=256
       # Transactional email via Mailgun SMTP (GOL-248). Sends from a distinct
       # mg.<domain> sending subdomain, isolated from the bulk newsletter stream
       # (Ghost's one-Mailgun-*API*-config is bulk-only; SMTP is a separate mail
@@ -81,6 +94,7 @@ services:
       database__connection__password: ${MYSQL_GHOST_GOLDBERRY_PASSWORD}
       database__connection__database: ghost_goldberry
       NODE_ENV: production
+      NODE_OPTIONS: --max-old-space-size=256
       # Transactional email via Mailgun SMTP (GOL-248) - see ghost-hub above.
       mail__transport: SMTP
       mail__from: ${GHOST_GOLDBERRY_MAIL_FROM}
@@ -109,6 +123,7 @@ services:
       database__connection__password: ${MYSQL_GHOST_GGG_PASSWORD}
       database__connection__database: ghost_ggg
       NODE_ENV: production
+      NODE_OPTIONS: --max-old-space-size=256
       # Transactional email via Mailgun SMTP (GOL-248) - see ghost-hub above.
       mail__transport: SMTP
       mail__from: ${GHOST_GGG_MAIL_FROM}
@@ -137,6 +152,7 @@ services:
       database__connection__password: ${MYSQL_GHOST_NURSERY_PASSWORD}
       database__connection__database: ghost_nursery
       NODE_ENV: production
+      NODE_OPTIONS: --max-old-space-size=256
       # Transactional email via Mailgun SMTP (GOL-248) - see ghost-hub above.
       mail__transport: SMTP
       mail__from: ${GHOST_NURSERY_MAIL_FROM}

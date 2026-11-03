@@ -313,6 +313,11 @@ jobs:
       # writes into any Ghost (option C, GOL-3454).
       - name: Run blogs-migrate tests (legacy Ghost by IP, pinned key, no member import)
         run: python3 scripts/test_blogs_migrate.py
+      # grove-prod-blogs memory budget (2026-11-03): MySQL caps, per-Ghost heap
+      # cap, swap before stack-up. user_data is ignore_changes, so a regression
+      # would otherwise surface only at the next deliberate replace.
+      - name: Run blogs memory-budget tests (MySQL + Ghost caps, swap)
+        run: python3 scripts/test_blogs_memory_budget.py
       # GOL-2963: the odoo-logistics self-service env bootstrap. Guards the
       # sidecar contract, the in-cluster-base/Host-header split, the shallow
       # adapterConfig merge (which would otherwise drop sibling secrets), and

@@ -1,11 +1,14 @@
 # Runbook: blogs droplet reserved IP + the pending replace (GOL-387)
 
-**Status:** **Phase 1 is DONE — applied to prod 2026-07-15, zero downtime.** Phase 2 is
-NOT scheduled and still needs an explicitly named window (see "Phase 2 is deliberately
-held" below).
+**Status:** **Phase 1 is DONE — applied to prod 2026-07-15, zero downtime.** **Phase 2
+is DONE too — the droplet was replaced 2026-08-17** in the GOL-1279 apex-cutover window
+(new id `593114105`; reserved IP `159.89.243.121` re-bound to it; #516 codified the
+headless-demote the next day). This status line was not updated at the time; corrected
+2026-11-03. The procedure below is now the **re-run** procedure for any later deliberate
+replace — see "Re-running the replace" at the end of Phase 2.
 **Applies to:** `infra/terraform/environments/production`, `digitalocean_droplet.blogs`
-(`grove-prod-blogs`, id `582968733`, ephemeral `164.90.129.34`) — **LIVE**, serves all
-four brand blogs.
+(`grove-prod-blogs`, id `593114105`, created 2026-08-17) — **LIVE**, serves all four
+brand blogs. Ids `582968733` / `164.90.129.34` below are the pre-Phase-2 droplet.
 
 ## Phase 1 outcome (2026-07-15)
 
@@ -251,6 +254,41 @@ the existing data dir.
 `doctl compute reserved-ip-action assign $RIP <restored-droplet-id>`. Because DNS points at
 the reserved IP, rollback is an IP reassignment — seconds, no DNS change, no propagation.
 That property is the whole reason Phase 1 comes first.
+
+---
+
+## Re-running the replace (any later compose / cloud-init change)
+
+`ignore_changes = [user_data, monitoring]` in `blogs.tf` means a plain or `-target`ed
+apply **never** replaces the droplet, so compose / Caddyfile / cloud-init edits in this
+repo do not reach the live box until a deliberate replace. The apply command above does
+not replace on its own any more; add `-replace`:
+
+```
+op run --env-file=.env.op -- terraform apply \
+  -replace=digitalocean_droplet.blogs \
+  -target=digitalocean_droplet.blogs \
+  -target=digitalocean_volume_attachment.blogs_data \
+  -target=digitalocean_reserved_ip_assignment.blogs
+```
+
+Pre-flight, on top of "Before the window" (snapshot the **current** id, `593114105`):
+
+- **`.env` drift.** The replace re-renders `/etc/grove-blogs/.env` from TF inputs only;
+  anything hand-edited on the box is lost. Compare key names and non-secret values
+  (never print secrets): `ssh root@<blogs> "cut -d= -f1 /etc/grove-blogs/.env"` and
+  `grep -E '^(GHOST_TAG|MYSQL_TAG|CADDY_TAG|GHOST_STAFF_DEVICE_VERIFICATION|GHOST_SMTP_HOST|GHOST_SMTP_PORT)=' /etc/grove-blogs/.env`.
+- **Device verification.** `.env.op` deliberately does not set
+  `TF_VAR_ghost_staff_device_verification`, so the replace writes `false`. If the live
+  box says `true`, prefix the apply with `TF_VAR_ghost_staff_device_verification=true`
+  or staff 2FA is silently turned off.
+- **Image tags.** The replace pulls `var.ghost_tag` / `mysql_tag` / `caddy_tag`. If the
+  live `.env` tags differ, that is an upgrade riding the window — decide on purpose.
+- `terraform plan` (same flags) shows exactly 1 replace + the attachment/IP churn and
+  nothing else.
+
+After: on top of "After", confirm `free -m` shows the 1G swap and that DO memory used
+settles well under the 85% `[prod]` alert line.
 
 ---
 
