@@ -1599,33 +1599,12 @@
     {
       "name": "odoo-orders-latency-warning",
       "stream_type": "metrics",
-      "stream_name": "http_server_request_duration_max",
+      "stream_name": "http_server_request_duration_bucket",
       "is_real_time": false,
       "query_condition": {
-        "type": "custom",
-        "conditions": {
-          "and": [
-            {
-              "column": "service_name",
-              "operator": "=",
-              "value": "odoo",
-              "ignore_case": false
-            },
-            {
-              "column": "http_route",
-              "operator": "=",
-              "value": "/grove/api/v1/orders",
-              "ignore_case": false
-            },
-            {
-              "column": "value",
-              "operator": ">",
-              "value": "3",
-              "ignore_case": false
-            }
-          ]
-        },
-        "sql": null,
+        "type": "sql",
+        "conditions": null,
+        "sql": "SELECT http_route, total, slow FROM (SELECT http_route, sum(CASE WHEN le = 'inf' THEN d ELSE 0 END) AS total, sum(CASE WHEN le = 'inf' THEN d ELSE 0 END) - sum(CASE WHEN le = '2.5' THEN d ELSE 0 END) AS slow FROM (SELECT http_route, le, max(value) - min(value) AS d FROM http_server_request_duration_bucket WHERE service_name = 'odoo' AND http_route = '/grove/api/v1/orders' AND le IN ('2.5', 'inf') GROUP BY http_route, le, service_instance_id, http_request_method, http_response_status_code, start_time) w GROUP BY http_route) t WHERE total >= 20 AND slow > total * 0.05",
         "promql": null,
         "promql_condition": null,
         "aggregation": null,
@@ -1635,7 +1614,7 @@
       "trigger_condition": {
         "period": 5,
         "operator": ">=",
-        "threshold": 5,
+        "threshold": 1,
         "frequency": 5,
         "cron": "",
         "frequency_type": "minutes",
@@ -1652,40 +1631,19 @@
         "tenant": "shared"
       },
       "row_template": "",
-      "description": "RED — Odoo /orders p95 >3s over 5m. Check Postgres connections + slow query log. Runbook: docs/RUNBOOKS.md#odoo-latency  [intent: p95(http_server_request_duration) where service_name='odoo' AND http_route='/grove/api/v1/orders' > 3s over 5m]  [note: RED metric from Beyla eBPF (Odoo). Metric stream/field names (http_server_request_duration, http_route, service_name) pending live validation on first Beyla run.]",
+      "description": "RED — Odoo /orders p95 >3s over 5m. Check Postgres connections + slow query log. Runbook: docs/RUNBOOKS.md#odoo-latency  [intent: p95(http_server_request_duration) where service_name='odoo' AND http_route='/grove/api/v1/orders' > 3s over 5m]  [rule: p95 > 2.5s (nearest bucket bound at or under the 3s target) over 5m] [11-03: Beyla 1.9.4 exports CUMULATIVE histograms (no delta option; cumulativetodelta drops min/max), so the old row rule on _max/_count matched the slowest request / any 5xx since Beyla started and stayed on. SQL now counts requests IN THE WINDOW as per-series max(value) - min(value); start_time in the series key absorbs counter resets; min 20 requests per window. One alert row = condition met.]",
       "enabled": true,
       "tz_offset": 0
     },
     {
       "name": "odoo-orders-latency-critical",
       "stream_type": "metrics",
-      "stream_name": "http_server_request_duration_max",
+      "stream_name": "http_server_request_duration_bucket",
       "is_real_time": false,
       "query_condition": {
-        "type": "custom",
-        "conditions": {
-          "and": [
-            {
-              "column": "service_name",
-              "operator": "=",
-              "value": "odoo",
-              "ignore_case": false
-            },
-            {
-              "column": "http_route",
-              "operator": "=",
-              "value": "/grove/api/v1/orders",
-              "ignore_case": false
-            },
-            {
-              "column": "value",
-              "operator": ">",
-              "value": "8",
-              "ignore_case": false
-            }
-          ]
-        },
-        "sql": null,
+        "type": "sql",
+        "conditions": null,
+        "sql": "SELECT http_route, total, slow FROM (SELECT http_route, sum(CASE WHEN le = 'inf' THEN d ELSE 0 END) AS total, sum(CASE WHEN le = 'inf' THEN d ELSE 0 END) - sum(CASE WHEN le = '7.5' THEN d ELSE 0 END) AS slow FROM (SELECT http_route, le, max(value) - min(value) AS d FROM http_server_request_duration_bucket WHERE service_name = 'odoo' AND http_route = '/grove/api/v1/orders' AND le IN ('7.5', 'inf') GROUP BY http_route, le, service_instance_id, http_request_method, http_response_status_code, start_time) w GROUP BY http_route) t WHERE total >= 20 AND slow > total * 0.05",
         "promql": null,
         "promql_condition": null,
         "aggregation": null,
@@ -1695,7 +1653,7 @@
       "trigger_condition": {
         "period": 5,
         "operator": ">=",
-        "threshold": 3,
+        "threshold": 1,
         "frequency": 5,
         "cron": "",
         "frequency_type": "minutes",
@@ -1712,40 +1670,19 @@
         "tenant": "shared"
       },
       "row_template": "",
-      "description": "RED — Odoo /orders p95 >8s — orders timing out. Check Postgres locks; restart Odoo if no DB cause. Runbook: docs/RUNBOOKS.md#odoo-latency  [intent: p95(http_server_request_duration) where service_name='odoo' AND http_route='/grove/api/v1/orders' > 8s over 5m]",
+      "description": "RED — Odoo /orders p95 >8s — orders timing out. Check Postgres locks; restart Odoo if no DB cause. Runbook: docs/RUNBOOKS.md#odoo-latency  [intent: p95(http_server_request_duration) where service_name='odoo' AND http_route='/grove/api/v1/orders' > 8s over 5m]  [rule: p95 > 7.5s (nearest bucket bound at or under the 8s target) over 5m] [11-03: Beyla 1.9.4 exports CUMULATIVE histograms (no delta option; cumulativetodelta drops min/max), so the old row rule on _max/_count matched the slowest request / any 5xx since Beyla started and stayed on. SQL now counts requests IN THE WINDOW as per-series max(value) - min(value); start_time in the series key absorbs counter resets; min 20 requests per window. One alert row = condition met.]",
       "enabled": true,
       "tz_offset": 0
     },
     {
       "name": "odoo-products-latency-warning",
       "stream_type": "metrics",
-      "stream_name": "http_server_request_duration_max",
+      "stream_name": "http_server_request_duration_bucket",
       "is_real_time": false,
       "query_condition": {
-        "type": "custom",
-        "conditions": {
-          "and": [
-            {
-              "column": "service_name",
-              "operator": "=",
-              "value": "odoo",
-              "ignore_case": false
-            },
-            {
-              "column": "http_route",
-              "operator": "=",
-              "value": "/grove/api/v1/products",
-              "ignore_case": false
-            },
-            {
-              "column": "value",
-              "operator": ">",
-              "value": "1",
-              "ignore_case": false
-            }
-          ]
-        },
-        "sql": null,
+        "type": "sql",
+        "conditions": null,
+        "sql": "SELECT http_route, total, slow FROM (SELECT http_route, sum(CASE WHEN le = 'inf' THEN d ELSE 0 END) AS total, sum(CASE WHEN le = 'inf' THEN d ELSE 0 END) - sum(CASE WHEN le = '1' THEN d ELSE 0 END) AS slow FROM (SELECT http_route, le, max(value) - min(value) AS d FROM http_server_request_duration_bucket WHERE service_name = 'odoo' AND http_route = '/grove/api/v1/products' AND le IN ('1', 'inf') GROUP BY http_route, le, service_instance_id, http_request_method, http_response_status_code, start_time) w GROUP BY http_route) t WHERE total >= 20 AND slow > total * 0.05",
         "promql": null,
         "promql_condition": null,
         "aggregation": null,
@@ -1755,7 +1692,7 @@
       "trigger_condition": {
         "period": 5,
         "operator": ">=",
-        "threshold": 5,
+        "threshold": 1,
         "frequency": 5,
         "cron": "",
         "frequency_type": "minutes",
@@ -1772,7 +1709,7 @@
         "tenant": "shared"
       },
       "row_template": "",
-      "description": "RED — Odoo /products p95 >1s. Cache miss or Postgres scan; check KeyDB hit rate. Runbook: docs/RUNBOOKS.md#odoo-latency  [intent: p95(http_server_request_duration) where service_name='odoo' AND http_route='/grove/api/v1/products' > 1s over 5m]",
+      "description": "RED — Odoo /products p95 >1s. Cache miss or Postgres scan; check KeyDB hit rate. Runbook: docs/RUNBOOKS.md#odoo-latency  [intent: p95(http_server_request_duration) where service_name='odoo' AND http_route='/grove/api/v1/products' > 1s over 5m]  [rule: p95 > 1s (exact bucket bound) over 5m] [11-03: Beyla 1.9.4 exports CUMULATIVE histograms (no delta option; cumulativetodelta drops min/max), so the old row rule on _max/_count matched the slowest request / any 5xx since Beyla started and stayed on. SQL now counts requests IN THE WINDOW as per-series max(value) - min(value); start_time in the series key absorbs counter resets; min 20 requests per window. One alert row = condition met.]",
       "enabled": true,
       "tz_offset": 0
     },
@@ -1782,24 +1719,9 @@
       "stream_name": "http_server_request_duration_count",
       "is_real_time": false,
       "query_condition": {
-        "type": "custom",
-        "conditions": {
-          "and": [
-            {
-              "column": "service_name",
-              "operator": "=",
-              "value": "odoo",
-              "ignore_case": false
-            },
-            {
-              "column": "http_response_status_code",
-              "operator": ">=",
-              "value": "500",
-              "ignore_case": false
-            }
-          ]
-        },
-        "sql": null,
+        "type": "sql",
+        "conditions": null,
+        "sql": "SELECT total, errors FROM (SELECT sum(d) AS total, sum(CASE WHEN http_response_status_code >= '500' THEN d ELSE 0 END) AS errors FROM (SELECT http_response_status_code, max(value) - min(value) AS d FROM http_server_request_duration_count WHERE service_name = 'odoo' GROUP BY http_route, service_instance_id, http_request_method, http_response_status_code, start_time) w) t WHERE total >= 20 AND errors > total * 0.01",
         "promql": null,
         "promql_condition": null,
         "aggregation": null,
@@ -1809,7 +1731,7 @@
       "trigger_condition": {
         "period": 5,
         "operator": ">=",
-        "threshold": 5,
+        "threshold": 1,
         "frequency": 5,
         "cron": "",
         "frequency_type": "minutes",
@@ -1826,7 +1748,7 @@
         "tenant": "shared"
       },
       "row_template": "",
-      "description": "RED — Odoo 5xx rate >1% over 5m. Check Odoo worker logs for Python exceptions. Runbook: docs/RUNBOOKS.md#odoo-error-rate  [intent: count(http.response.status_code>=500) / count(*) on Odoo > 1% over 5m]  [note: Beyla RED. nextjs-* latency/5xx alerts need Next.js instrumentation.ts (grove-sites) — separate PR.]",
+      "description": "RED — Odoo 5xx rate >1% over 5m. Check Odoo worker logs for Python exceptions. Runbook: docs/RUNBOOKS.md#odoo-error-rate  [intent: count(http.response.status_code>=500) / count(*) on Odoo > 1% over 5m]  [rule: 5xx > 1% of requests over 5m] [11-03: Beyla 1.9.4 exports CUMULATIVE histograms (no delta option; cumulativetodelta drops min/max), so the old row rule on _max/_count matched the slowest request / any 5xx since Beyla started and stayed on. SQL now counts requests IN THE WINDOW as per-series max(value) - min(value); start_time in the series key absorbs counter resets; min 20 requests per window. One alert row = condition met.]  [note: nextjs-* latency/5xx alerts need Next.js instrumentation.ts (grove-sites), separate PR.]",
       "enabled": true,
       "tz_offset": 0
     },
