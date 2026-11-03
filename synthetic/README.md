@@ -53,7 +53,7 @@ filters resolve — confirm the exact field names on first real traffic (GOL-280
 |---|---|---|---|
 | `health` | shared | `/health` → 200, `status==ok` | none |
 | `catalog` | per tenant | products list non-empty → detail has a variant price | none (reads) |
-| `cart-flow` | per tenant | add line → cart reflects it | a draft cart sale.order/run (Odoo expires these) |
+| `cart-flow` | per tenant | add line → cart reflects it | one draft cart sale.order per tenant per UTC day: run.py replays a per-tenant daily cookie jar (`SYNTHETIC_STATE_DIR`) so runs reuse the session cart; old carts go via grove_headless's 1-day abandoned-cart autovacuum (Odoo itself never expires them) |
 | `checkout-canary` | per tenant (opt-in) | create $0 order via bearer `/orders` → access_token gate (200 w/ token, 403 w/o) | a draft order/run, swept by XML-RPC cleanup |
 | `ghost-content` | per tenant (opt-in) | Ghost Content API v5 returns ≥1 published post | none (reads) |
 

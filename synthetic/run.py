@@ -21,6 +21,7 @@ Env contract (see .env.monitoring.example):
     SYNTHETIC_ODOO_BASE            default http://odoo:8069
     SYNTHETIC_TENANTS             default goldberry,ggg,nursery
     SYNTHETIC_ENV                 default local   (env label on every metric)
+    SYNTHETIC_STATE_DIR           default /tmp/grove-synthetic (cart-flow cookie jars)
     OPENOBSERVE_OTLP_METRICS_URL  default http://openobserve:5080/api/default/v1/metrics
     OPENOBSERVE_ROOT_EMAIL        basic-auth user for OpenObserve ingest
     OPENOBSERVE_ROOT_PASSWORD     basic-auth pass
@@ -35,6 +36,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib import error as urlerror
 from urllib import request
@@ -52,6 +54,9 @@ SHARED_JOURNEYS = [("health", "health.hurl")]
 
 CONNECT_TIMEOUT_S = "5"
 MAX_TIME_S = "20"
+
+# cart-flow keeps one Odoo session per tenant per UTC day (see cart_cookie_jar).
+CART_JOURNEY = "cart-flow"
 
 
 def _log(*args: object) -> None:
@@ -108,11 +113,45 @@ def ghost_vars_for(tenant: str) -> dict | None:
     return {"ghost_url": url, "ghost_key": key} if url and key else None
 
 
-def run_journey(journey_file: str, *, tenant: str, odoo_base: str, extra_vars: dict | None = None) -> tuple[int, float]:
+def cart_cookie_jar(tenant: str, state_dir: Path, now: datetime) -> Path:
+    """Per-tenant, per-UTC-day Hurl cookie jar for the cart-flow journey.
+
+    Every POST /grove/api/v1/cart with no session cookie makes website_sale
+    create a fresh draft sale.order, and each one burns a number from the
+    shared sale.order sequence (prod jumped S00443 -> S09816 in three days at
+    one cart a minute per tenant). Replaying the jar keeps the same Odoo
+    session, so request.cart resolves to today's existing cart and
+    the POST adds to it instead: one cart (and one order number) per tenant per
+    day. The day rollover bounds the reused cart's quantity to ~1440, and
+    grove_headless's abandoned-cart autovacuum (1-day TTL) deletes old ones.
+
+    Jars are per tenant because every tenant shares one odoo_base host — a
+    shared jar would hand tenant A's session to tenant B, whose cross-company
+    guard would discard it and create a new cart each run. Older jars for the
+    tenant are pruned. Lost state (container restart) just costs one extra cart.
+    """
+    state_dir.mkdir(parents=True, exist_ok=True)
+    jar = state_dir / f"{CART_JOURNEY}-{tenant}-{now.strftime('%Y%m%d')}.cookies"
+    for old in state_dir.glob(f"{CART_JOURNEY}-{tenant}-*.cookies"):
+        if old != jar:
+            old.unlink(missing_ok=True)
+    return jar
+
+
+def run_journey(
+    journey_file: str,
+    *,
+    tenant: str,
+    odoo_base: str,
+    extra_vars: dict | None = None,
+    cookie_jar: Path | None = None,
+) -> tuple[int, float]:
     """Run one Hurl journey. Returns (success 1/0, duration_ms).
 
     extra_vars (e.g. the canary's variant_id + api_key) are passed via a
     temp variables-file rather than --variable so secrets stay out of argv.
+    cookie_jar, if given, is read before the run (when it exists) and written
+    after it, so the Odoo session carries over between runs.
     """
     path = JOURNEY_DIR / journey_file
     cmd = [
@@ -133,6 +172,10 @@ def run_journey(journey_file: str, *, tenant: str, odoo_base: str, extra_vars: d
             varfile.writelines(f"{k}={v}\n" for k, v in extra_vars.items())
             varfile_path = varfile.name
         cmd += ["--variables-file", varfile_path]
+    if cookie_jar is not None:
+        if cookie_jar.exists():
+            cmd += ["--cookie", str(cookie_jar)]
+        cmd += ["--cookie-jar", str(cookie_jar)]
     cmd.append(str(path))
 
     start = time.perf_counter()
@@ -221,6 +264,7 @@ def main() -> None:
     odoo_base = _env("SYNTHETIC_ODOO_BASE", "http://odoo:8069")
     tenants = [t.strip() for t in _env("SYNTHETIC_TENANTS", "goldberry,ggg,nursery").split(",") if t.strip()]
     env_label = _env("SYNTHETIC_ENV", "local")
+    state_dir = Path(_env("SYNTHETIC_STATE_DIR", "/tmp/grove-synthetic"))
     _log(f"=== synthetic run: tenants={tenants} odoo={odoo_base} env={env_label} ===")
 
     # checkout-canary is opt-in (needs an Odoo API key) and adds the money-path
@@ -240,7 +284,10 @@ def main() -> None:
         results.append({"journey": journey_name, "tenant": "shared", "success": success, "duration_ms": dur})
     for tenant in tenants:
         for journey_name, journey_file in TENANT_JOURNEYS:
-            success, dur = run_journey(journey_file, tenant=tenant, odoo_base=odoo_base)
+            jar = None
+            if journey_name == CART_JOURNEY:
+                jar = cart_cookie_jar(tenant, state_dir, datetime.now(timezone.utc))
+            success, dur = run_journey(journey_file, tenant=tenant, odoo_base=odoo_base, cookie_jar=jar)
             results.append({"journey": journey_name, "tenant": tenant, "success": success, "duration_ms": dur})
         gvars = ghost_vars_for(tenant)
         if gvars is not None:
