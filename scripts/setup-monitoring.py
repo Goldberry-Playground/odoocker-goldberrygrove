@@ -232,9 +232,9 @@ def oo_upsert_destination(dest: dict) -> None:
     name = dest["name"]
     if not dest.get("url"):
         if monitoring_plane() == "app":
-            # Expected: the obs-plane deploy owns the destination and the alerts
-            # reference it by name, so nothing is lost here (GOL-2329 go-live).
-            _log(f"    · destination {name} not managed on this plane (MONITORING_PLANE=app; the obs-plane deploy owns it)")
+            # OpenObserve is shared with the obs plane, whose deploy owns this
+            # destination; skipping here leaves it untouched, so alerts still notify.
+            _log(f"    · destination {name} left as-is (owned by the obs-plane deploy)")
         else:
             _log(f"    ⚠ destination {name} SKIPPED — KEEP_EVENT_URL unset (see docstring re SSRF guard)")
         return
@@ -263,6 +263,15 @@ def oo_existing_alert_ids() -> dict[str, str]:
     return out
 
 
+def oo_alert_stream(alert_id: str) -> tuple[str | None, str | None]:
+    """(stream_type, stream_name) of an existing v2 alert; (None, None) if unreadable."""
+    code, resp = http_request("GET", f"{oo_v2_api()}/alerts/{alert_id}", auth=oo_auth())
+    if code != 200 or not isinstance(resp, dict):
+        return (None, None)
+    alert = resp.get("alert", resp)
+    return (alert.get("stream_type"), alert.get("stream_name"))
+
+
 def oo_bootstrap_alerts(dest_available: bool) -> None:
     src = OPENOBSERVE_DIR / "alerts.json"
     data = json.loads(src.read_text())
@@ -276,6 +285,12 @@ def oo_bootstrap_alerts(dest_available: bool) -> None:
     for a in alerts:
         payload = {k: v for k, v in a.items() if not k.startswith("_")}
         name = payload["name"]
+        live = oo_alert_stream(existing[name]) if name in existing else (None, None)
+        if live != (None, None) and live != (payload.get("stream_type"), payload.get("stream_name")):
+            # OO's v2 PUT keeps an alert's stream: a rule that moves streams
+            # (11-03: RED rules _max -> _bucket) would keep querying the old one
+            # in its metadata. Recreate it instead.
+            http_request("DELETE", f"{oo_v2_api()}/alerts/{existing.pop(name)}", auth=oo_auth())
         if name in existing:
             code, resp = http_request(
                 "PUT", f"{oo_v2_api()}/alerts/{existing[name]}", body=payload, auth=oo_auth()

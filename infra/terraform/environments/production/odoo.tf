@@ -180,6 +180,14 @@ resource "digitalocean_droplet" "odoo" {
     stripe_webhook_secret_ggg       = var.stripe_webhook_secret_ggg
     stripe_webhook_secret_goldberry = var.stripe_webhook_secret_goldberry
 
+    # Per-tenant Stripe SECRET keys (GOL-1892 Gap B, Josh 2026-10-30): each
+    # storefront charges into its OWN LLC's account. grove_headless
+    # _tenant_secret_key() prefers stripe_secret_key_{tenant}; once ANY is set
+    # a tenant without one fails closed (503), so all three ship together.
+    stripe_secret_key_goldberry = var.stripe_secret_key_goldberry
+    stripe_secret_key_nursery   = var.stripe_secret_key_nursery
+    stripe_secret_key_ggg       = var.stripe_secret_key_ggg
+
     # Stripe Tax per-tenant cutover flag (GOL-2568). Rendered for all three
     # tenants so the compose environment: keys always exist on the box; "1"
     # only for the slugs in var.grove_stripe_tax_tenants, "" (= OFF = Odoo's

@@ -307,12 +307,23 @@ jobs:
         run: python3 scripts/test_obs_firewall_check.py
       - name: Run monitoring bootstrap plane tests (GOL-2323 app plane must not wait on Keep)
         run: python3 scripts/test_setup_monitoring_plane.py
+      - name: Run collector Docker-access tests (docker_stats API pin + DOCKER_GID)
+        run: python3 scripts/test_otelcol_docker_stats.py
+      - name: Run hostmetrics alert-rule tests (cpu reads idle, memory reads used)
+        run: python3 scripts/test_hostmetrics_alert_rules.py
+      - name: Run RED alert-rule tests (windowed SQL over Beyla's cumulative histograms)
+        run: python3 scripts/test_red_alert_rules.py
       - name: Run app-plane monitoring compose tests (GOL-2329 go-live -- otelcol pin, docker gid, monitors.json)
         run: python3 scripts/test_app_plane_compose.py
       # Legacy goldberry Ghost migration: old side by IP + pinned key, no member
       # writes into any Ghost (option C, GOL-3454).
       - name: Run blogs-migrate tests (legacy Ghost by IP, pinned key, no member import)
         run: python3 scripts/test_blogs_migrate.py
+      # grove-prod-blogs memory budget (2026-11-03): MySQL caps, per-Ghost heap
+      # cap, swap before stack-up. user_data is ignore_changes, so a regression
+      # would otherwise surface only at the next deliberate replace.
+      - name: Run blogs memory-budget tests (MySQL + Ghost caps, swap)
+        run: python3 scripts/test_blogs_memory_budget.py
       # GOL-2963: the odoo-logistics self-service env bootstrap. Guards the
       # sidecar contract, the in-cluster-base/Host-header split, the shallow
       # adapterConfig merge (which would otherwise drop sibling secrets), and

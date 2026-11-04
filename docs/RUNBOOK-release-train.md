@@ -31,7 +31,7 @@ separately — see "The Wednesday promote leg" below.
 
 | Leg | When | Command | What it does |
 |-----|------|---------|--------------|
-| **train-up** | Mon | `make train-up` | `= make qa-l3-up`. Idempotent `terraform apply` of the QA env. Droplets re-bootstrap from cloud-init; Odoo reconnects to the surviving Managed PG. **Safe to re-run.** Hard-gated on the publish-webhook secret guard — see below. |
+| **train-up** | Mon | `make train-up` | `= make qa-l3-up`. Idempotent `terraform apply` of the QA env. Droplets re-bootstrap from cloud-init; Odoo reconnects to the surviving Managed PG. **Safe to re-run.** Gated on `train-preflight`, the TF state-lock guard (`scripts/tf-state-lock-check.sh`) and the publish-webhook secret guard — see below. |
 | **train-teardown** | Thu | `make train-teardown` | `= make qa-l3-teardown` → `scripts/qa-l3-teardown.sh compute`. Destroys the 4 apps + the Odoo droplet + 2 volume attachments (the spend) — GOL-2327 resolved as **Option A: destroy**, not park and not scale-to-zero, so anything live-only on an app (an un-vaulted env secret) is gone. Typed-confirm gated. **Data/DNS/certs survive.** There is no obs exemption any more — `grove-qa-l3-obs` was retired 2026-09-29 under ADR-010, see below. |
 
 The **promote** leg (Wed) is not a `make` target: it is the odoocker modules-pin
@@ -39,9 +39,15 @@ bump (`scripts/prod-modules-promote.sh`, see
 [`RUNBOOK-module-upgrade.md`](RUNBOOK-module-upgrade.md)) plus
 `promote-storefronts.yml`, and Josh approves the production environment.
 Any **per-tenant env flag** a train activates on prod — e.g. the Stripe Tax
-cutover `GROVE_STRIPE_TAX_{TENANT}` (GOL-2568) — is a *separate named step* in
-that runbook, because prod's `user_data` is in `ignore_changes` and no
-`terraform apply` injects it into the running droplet.
+cutover `GROVE_STRIPE_TAX_{TENANT}` (GOL-2568) — is a *separate named step*,
+because prod's `user_data` is in `ignore_changes` and no `terraform apply`
+injects it into the running droplet. `scripts/prod-modules-promote.sh` carries
+the ones it knows as env on the same run, with process-level verification:
+`GROVE_STRIPE_TAX_{GOLDBERRY,GGG,NURSERY}=0|1` and `PRINTIFY_PASSTHROUGH=1`
+(plus `PERENUAL_API_KEY`). Anything else rendered only by cloud-init — the
+Discord topic webhooks `DISCORD_{SALES,SUPPORT,SHIPPING}_WEBHOOK_URL` (#967) and
+the per-tenant Stripe secret keys (#969) — is a hand edit of
+`/etc/grove/docker-compose.yml` + `/etc/grove/.env` and an odoo recreate.
 
 Preview before either (read-only, no spend, no lock-and-leave):
 
@@ -181,9 +187,10 @@ Any **per-tenant env flag** a train activates on prod — e.g. the Stripe Tax
 cutover `GROVE_STRIPE_TAX_{TENANT}` (GOL-2568) — is step 7, a *separate named
 step*, never a side effect of steps 3–6. prod's `user_data` is in
 `ignore_changes`, so no `terraform apply` injects it into the running droplet;
-the procedure is in
-[`RUNBOOK-module-upgrade.md`](RUNBOOK-module-upgrade.md) → "Flipping the Stripe
-Tax cutover flag on prod".
+flip it on the Leg B run itself:
+`GROVE_STRIPE_TAX_NURSERY=1 TARGET_REF=<40-char sha> CONFIRM=PROMOTE PROD_HOST=grove-prod-odoo scripts/prod-modules-promote.sh`
+(details in [`RUNBOOK-module-upgrade.md`](RUNBOOK-module-upgrade.md) → "Flipping
+the Stripe Tax cutover flag on prod").
 
 **The rule (ruled 2026-10-02, GOL-2584):** the flag **ships OFF** regardless of
 what merged, and is flipped at the Wednesday promote **only if its QA gates
@@ -221,7 +228,7 @@ migration is due before you commit to step 4.
   `CUSTOM_MODULES_REF` is the truth for Leg B; the storefront build fingerprint
   is the truth for Leg A. A merged reconcile PR only means committed HCL now
   agrees with what was already live.
-- `scripts/test_prod_modules_promote.py` (27 tests, hermetic — no droplet) is
+- `scripts/test_prod_modules_promote.py` (hermetic — no droplet) is
   the regression suite for this leg, including the two retired caveats above.
 
 ---

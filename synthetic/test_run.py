@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""Unit tests for the synthetic runner's OTLP metric builder.
+"""Unit tests for the synthetic runner's OTLP metric builder and cart cookie jars.
 
-Runs without Hurl, OpenObserve, or a network — verifies the one piece of pure
-logic locally:  python3 synthetic/test_run.py
+Runs without Hurl, OpenObserve, or a network — verifies the pure logic
+locally:  python3 synthetic/test_run.py
 """
 
 from __future__ import annotations
 
 import sys
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
 
 import run
 
@@ -46,7 +49,60 @@ def test_empty_results() -> None:
     assert all(m["gauge"]["dataPoints"] == [] for m in metrics)
 
 
+def test_cart_cookie_jar_per_tenant_per_day() -> None:
+    day1 = datetime(2026, 11, 2, 23, 59, tzinfo=timezone.utc)
+    day2 = datetime(2026, 11, 3, 0, 1, tzinfo=timezone.utc)
+    with tempfile.TemporaryDirectory() as tmp:
+        state = Path(tmp) / "state"  # created on demand
+        nursery = run.cart_cookie_jar("nursery", state, day1)
+        farm = run.cart_cookie_jar("goldberry", state, day1)
+        # Same tenant + same day -> same jar, so the Odoo session (and cart) is reused.
+        assert run.cart_cookie_jar("nursery", state, day1) == nursery
+        # Tenants share one Odoo host, so their sessions must never share a jar.
+        assert nursery != farm
+        nursery.write_text("cookie")
+        farm.write_text("cookie")
+
+        rolled = run.cart_cookie_jar("nursery", state, day2)
+        assert rolled != nursery
+        # The new day prunes that tenant's stale jar but leaves other tenants alone.
+        assert not nursery.exists()
+        assert farm.exists()
+
+
+def test_run_journey_passes_cookie_jar() -> None:
+    calls = []
+
+    class _Proc:
+        returncode = 0
+        stderr = ""
+
+    def fake_run(cmd, **_kwargs):
+        calls.append(cmd)
+        return _Proc()
+
+    real_run = run.subprocess.run
+    run.subprocess.run = fake_run
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            jar = Path(tmp) / "jar.cookies"
+            # First run of the day: no jar yet -> write it, don't read it (Hurl
+            # errors on a missing --cookie file).
+            run.run_journey("cart-flow.hurl", tenant="nursery", odoo_base="http://x", cookie_jar=jar)
+            assert "--cookie-jar" in calls[-1] and "--cookie" not in calls[-1]
+            jar.write_text("cookie")
+            run.run_journey("cart-flow.hurl", tenant="nursery", odoo_base="http://x", cookie_jar=jar)
+            assert calls[-1][calls[-1].index("--cookie") + 1] == str(jar)
+            # Journeys without a jar stay cookie-less.
+            run.run_journey("catalog.hurl", tenant="nursery", odoo_base="http://x")
+            assert "--cookie" not in calls[-1] and "--cookie-jar" not in calls[-1]
+    finally:
+        run.subprocess.run = real_run
+
+
 if __name__ == "__main__":
     test_otlp_shape()
     test_empty_results()
-    print("ok: synthetic runner OTLP builder", file=sys.stderr)
+    test_cart_cookie_jar_per_tenant_per_day()
+    test_run_journey_passes_cookie_jar()
+    print("ok: synthetic runner OTLP builder + cart cookie jars", file=sys.stderr)

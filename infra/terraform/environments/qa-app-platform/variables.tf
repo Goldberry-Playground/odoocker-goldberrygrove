@@ -645,7 +645,8 @@ variable "nursery_planner_enabled" {
 }
 
 # grove_support's chat-start Discord ping (grove_support/models/discord.py)
-# reads ONLY os.environ DISCORD_OPS_WEBHOOK_URL -- it does not fall back to
+# reads os.environ DISCORD_SUPPORT_WEBHOOK_URL, then DISCORD_OPS_WEBHOOK_URL
+# (gom#384) -- it does not fall back to
 # DISCORD_ORDERS_WEBHOOK_URL the way grove_headless _notify_discord() does.
 # QA plumbed neither ops webhook until now, so the Train #3 live-chat gate
 # ("Discord ops ping on chat start") was untestable on QA. Mirrors prod's

@@ -58,6 +58,10 @@ receivers:
   # Per-container CPU% + memory% (of limit) via the Docker socket.
   docker_stats:
     endpoint: unix:///var/run/docker.sock
+    # Receiver defaults to Docker API 1.25; prod's daemon rejects anything
+    # below 1.40 (11-03: collector crash-looped "client version 1.25 is too
+    # old"). 1.40 = Docker 19.03, so QA's older engine accepts it too.
+    api_version: "1.40"
     collection_interval: 30s
     metrics:
       container.cpu.utilization:

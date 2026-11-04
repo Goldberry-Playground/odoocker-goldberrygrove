@@ -150,7 +150,8 @@ op run --env-file=scripts/prod-monitoring.env.op -- \
   sh -c 'env | grep -E "^(MONITORING|OPENOBSERVE|KEEP|DISCORD|SYNTHETIC|ODOO|GHOST|POSTGRES|COST|OTELCOL|BEYLA)_" \
          > /etc/grove/.env.monitoring'
 # docker.sock gid differs per host; the otel-collector joins it to read
-# container stats (GOL-2329). Compose refuses to start without it.
+# container stats (GOL-2329). Unset, compose falls back to QA's 988 and the
+# collector crash-loops on prod.
 echo "DOCKER_GID=$(getent group docker | cut -d: -f3)" >> /etc/grove/.env.monitoring
 chmod 600 /etc/grove/.env.monitoring
 
@@ -238,8 +239,8 @@ make monitoring-down \
 docker compose -f docker-compose.monitoring.app-plane.yml --env-file /etc/grove/.env.monitoring down
 ```
 
-An env-file rendered before GOL-2329 has no `DOCKER_GID`, and compose refuses
-to interpolate the file without it (even for `down`). Append it first:
+An env-file rendered before GOL-2329 has no `DOCKER_GID`, so compose falls back
+to QA's gid 988 and the prod collector crash-loops on docker.sock. Append it:
 `echo "DOCKER_GID=$(getent group docker | cut -d: -f3)" >> /etc/grove/.env.monitoring`.
 
 To fully back out the prod-data footprint (only if the CEO reverses gate a):

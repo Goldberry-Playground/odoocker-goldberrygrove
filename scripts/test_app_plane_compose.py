@@ -9,7 +9,7 @@ grove-prod-odoo (2026-10-29) came up but not healthy:
   docker-gid-not-literal  group_add "988" was QA's docker gid; prod's differs,
                         so the non-root collector got EACCES on docker.sock and
                         crash-looped. The gid must come from the host
-                        (DOCKER_GID), and compose must refuse to start without it.
+                        (DOCKER_GID), rendered into the env-file from the host.
   render-adds-docker-gid  the documented env-file render appends DOCKER_GID.
   monitors-json-mounted   probes.emit died with FileNotFoundError because the
                         runner's build context is ./synthetic only.
@@ -75,8 +75,8 @@ class AppPlaneComposeTests(unittest.TestCase):
         for f in (APP_PLANE, APM):
             for entry in group_add_entries(f.read_text()):
                 self.assertFalse(entry.isdigit(), f"{f.name}: hardcoded gid {entry}")
-                self.assertTrue(entry.startswith("${DOCKER_GID:?"),
-                                f"{f.name}: group_add must require DOCKER_GID, got {entry}")
+                self.assertTrue(entry.startswith("${DOCKER_GID"),
+                                f"{f.name}: group_add must come from DOCKER_GID, got {entry}")
 
     def test_render_appends_docker_gid(self) -> None:
         want = 'DOCKER_GID=$(getent group docker | cut -d: -f3)'
