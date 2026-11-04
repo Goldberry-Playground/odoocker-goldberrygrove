@@ -309,6 +309,8 @@ jobs:
         run: python3 scripts/test_setup_monitoring_plane.py
       - name: Run collector Docker-access tests (docker_stats API pin + DOCKER_GID)
         run: python3 scripts/test_otelcol_docker_stats.py
+      - name: Run grove-caddy CVE floor tests (go module floors + full apk upgrade)
+        run: python3 scripts/test_caddy_dockerfile_cve_floors.py
       - name: Run hostmetrics alert-rule tests (cpu reads idle, memory reads used)
         run: python3 scripts/test_hostmetrics_alert_rules.py
       - name: Run RED alert-rule tests (windowed SQL over Beyla's cumulative histograms)
