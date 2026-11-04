@@ -57,9 +57,15 @@ FROM caddy:2-builder AS builder
 # `--with pkg@ver` raises the module version via MVS as a FLOOR -- a future
 # caddy:2-builder that already requires a higher x/net wins, so this never
 # silently downgrades the base (which a `--replace ...=...@v0.60.0` pin would).
+#
+# 2026-11-03: same drift, new module -- Trivy flags HIGH CVE-2026-116587 in
+# github.com/go-jose/go-jose/v4 v4.1.5 (DoS parsing JWKs with RSA keys; fixed in
+# 4.1.6). The module root IS an importable package (`jose`), so the plain
+# `--with module@ver` floor works here.
 RUN xcaddy build \
     --with github.com/caddy-dns/digitalocean@v0.0.0-20250606074528-04bde2867106 \
-    --with golang.org/x/net/http2@v0.60.0
+    --with golang.org/x/net/http2@v0.60.0 \
+    --with github.com/go-jose/go-jose/v4@v4.1.6
 
 FROM caddy:2
 # CI-unblock (incidental to GOL-345, unrelated to the cert logic): the floating
@@ -76,5 +82,11 @@ FROM caddy:2
 # `--with golang.org/x/net/http2@v0.60.0` above forces the fixed x/net into the
 # binary; this runtime stage still only patches OS packages (the CVE is in the
 # compiled Go binary, so no apk fix applies here).
-RUN apk upgrade --no-cache c-ares
+#
+# 2026-11-03: the base drifted again -- brotli-libs 1.2.0-r0 (HIGH CVE-2026-111497,
+# fixed 1.2.1-r0) and curl 8.22.0-r0 (HIGH CVE-2026-92392, fixed 8.23.0-r0) block
+# every rebuild (seen on Dependabot odoocker-goldberrygrove#960). Upgrading
+# the whole installed set instead of naming packages stops this recurring one
+# CVE at a time; it only moves to versions the base's Alpine branch already ships.
+RUN apk upgrade --no-cache
 COPY --from=builder /usr/bin/caddy /usr/bin/caddy
