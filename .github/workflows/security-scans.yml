@@ -100,6 +100,13 @@ jobs:
           # Scan tags must track what we actually deploy — see .env.example.
           # When the production ODOO_TAG bumps, update here too.
           #
+          # APT_CACHE_BUST (GOL-3780): the apt security-patch layer in
+          # odoo/Dockerfile is restored from `cache-from: type=gha` on its
+          # instruction text alone, so without a per-run value the scan keeps
+          # examining a stale package set (apt CVE-2026-109518 was fixed in
+          # noble-security a day before run 42121264782 still flagged 2.8.3).
+          # `github.run_id` forces `apt-get upgrade` to re-run every scan.
+          #
           # ENTERPRISE_ADDONS / THIRD_PARTY_ADDONS must be non-empty for
           # clone-addons.sh's `mkdir -p` to work under `set -e`. Production
           # sets these via .env.example to subdirs of ROOT_PATH; here we use
@@ -121,6 +128,7 @@ jobs:
               USE_REDIS=false
               USE_S3=false
               USE_SENTRY=false
+              APT_CACHE_BUST=${{ github.run_id }}
           - service: postgres
             dockerfile: ./postgres/Dockerfile
             context: .
