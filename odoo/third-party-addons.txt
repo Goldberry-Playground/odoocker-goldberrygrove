@@ -15,4 +15,13 @@ public https://github.com/odoocker/server-tools.git sentry ${USE_SENTRY}
 
 # Public repositories
 
+# OCA accounting addons for grove_schedule_f (farm books, Phase 1)
+public https://github.com/OCA/account-reconcile.git account_statement_base true account_reconcile_oca true
+public https://github.com/OCA/bank-statement-import.git account_statement_import_base true account_statement_import_file true account_statement_import_sheet_file true account_statement_import_online true account_statement_import_online_stripe true
+public https://github.com/OCA/account-financial-tools.git account_asset_management true
+public https://github.com/OCA/account-financial-reporting.git account_financial_report true
+public https://github.com/OCA/server-ux.git date_range true
+public https://github.com/OCA/reporting-engine.git report_xlsx true report_xlsx_helper true
+public https://github.com/OCA/mis-builder.git mis_builder true mis_builder_budget true
+
 # Private repositories
