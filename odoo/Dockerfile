@@ -70,8 +70,9 @@ RUN touch ${LOG_PATH} && chown odoo:odoo ${LOG_PATH}
 # purged between attempts or apt re-reads the same bad lists. `Acquire::Retries`
 # alone does NOT cover this — it retries the fetch inside one `update`, against
 # the same mid-sync mirror state; the sleep is what makes the retry meaningful.
-# APT_CACHE_BUST changes once per ISO week (set by docker-odoo.yml and by
-# local `make build`), so the apt-get upgrade layer below is rebuilt at
+# APT_CACHE_BUST changes once per ISO week (set by docker-odoo.yml; local
+# builds pass it through docker-compose from the environment, else it stays
+# 0), so the apt-get upgrade layer below is rebuilt at
 # least weekly instead of being served from the BuildKit cache forever.
 # Without it the upgrade never re-runs and Trivy reds the image on every
 # Debian/Ubuntu CVE fixed after the first cached build (run 42091218403).
