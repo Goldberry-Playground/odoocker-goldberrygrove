@@ -5,6 +5,7 @@ services:
       dockerfile: ./odoo/Dockerfile
       args:
         - ODOO_TAG
+        - APT_CACHE_BUST
         - ODOO_RC
         - ROOT_PATH
         - ENTERPRISE_USER
