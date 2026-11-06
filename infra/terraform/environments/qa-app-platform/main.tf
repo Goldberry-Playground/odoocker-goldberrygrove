@@ -104,8 +104,11 @@ data "digitalocean_ssh_key" "qa_deploy" {
 
 # qa_admin is managed OUT OF BAND. TF references via data source so it's
 # never created/destroyed/replaced here. To rotate: replace the DO SSH key
-# named "grove-qa-admin" via DO UI, then re-apply (data source picks up
-# the new fingerprint, droplet's ssh_keys list updates in place).
+# named "grove-qa-admin" via DO UI, then re-apply. NOTE (GOL-3802): the DO
+# provider force-REPLACES a droplet when its ssh_keys change ("Modifying this
+# field will prompt you to destroy and recreate the Droplet") -- it does NOT
+# update in place. On QA that is acceptable (L3 droplets are rebuilt every
+# train); do it at a bring-up, not mid-train.
 data "digitalocean_ssh_key" "qa_admin" {
   name = "grove-qa-admin"
 }
