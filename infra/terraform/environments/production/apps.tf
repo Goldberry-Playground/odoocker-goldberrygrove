@@ -45,20 +45,6 @@ locals {
   # apex serves pre-cutover (blogs.tf serves the Ghost Content API on blog.*
   # from day one). Mirrors the blog_urls output.
   ghost_urls = { for k, z in local.tenants : k => "https://blog.${z}" }
-
-  # GOL-1884 (GOL-1881 root cause): grove-sites' newsletter capture
-  # (packages/newsletter/src/config.ts) 503s `newsletter_not_configured` unless
-  # GHOST_NEWSLETTER_INSTANCES is set. PUBLIC config, not a secret — subscribe
-  # only calls each instance's public /members/api/send-magic-link/. Members
-  # route lives on blog.* (GET blog.{domain}/members/api/site/ → 200; apexes
-  # redirect), so reuse ghost_urls. Brand keys are grove-sites' newsletter
-  # brands (hub = `grove`, kept for the hubOptIn dual-write). Same value on
-  # every tenant; each app resolves its own brand's instance.
-  ghost_newsletter_instances = jsonencode({
-    grove     = { url = local.ghost_urls["hub"] }
-    nursery   = { url = local.ghost_urls["nursery"] }
-    goldberry = { url = local.ghost_urls["goldberry"] }
-  })
 }
 
 # ── Hub ──────────────────────────────────────────────────────────────────────
@@ -323,18 +309,6 @@ resource "digitalocean_app" "tenant" {
       env {
         key   = "GHOST_CONTENT_KEY"
         value = var.ghost_content_keys[each.key]
-        scope = "RUN_AND_BUILD_TIME"
-      }
-
-      # GOL-1884: newsletter capture instances (see local above).
-      # RETIRE AFTER THE TRAIN #4 PROMOTE (GOL-3495 follow-up): grove-sites
-      # #1130 (GOL-3456) stops reading GHOST_NEWSLETTER_INSTANCES entirely, but
-      # the Train #3 pin (pre-#1130 code) 503s its capture routes without it,
-      # and this file is applied as-is on every promote. Keep it until the
-      # Train #4 image is serving, then drop this env + the local above.
-      env {
-        key   = "GHOST_NEWSLETTER_INSTANCES"
-        value = local.ghost_newsletter_instances
         scope = "RUN_AND_BUILD_TIME"
       }
 
