@@ -261,6 +261,35 @@ qa-l3-seed-e2e:
 		curl -fsSL "$(SEED_E2E_URL)" -o "$$tmp"; \
 		DRY_RUN="$(DRY_RUN)" op run --env-file=$(QA_L3_SEED_ENV_FILE) -- python3 "$$tmp"
 
+# ── QA bundle-photo sync from prod (GOL-3785) ────────────────────────────────
+# QA's Odoo DB + filestore SURVIVE the train teardown (qa-app-platform README,
+# "What survives"), so QA is never re-seeded from prod: a photo uploaded straight
+# to prod (the five nursery bundle heroes — Mountain Mama 132 et al.) never
+# reaches QA, and the home-page lead-seller card renders imageless there while
+# the same build is fine on prod (Train #4 gate, 2026-11-06). This copies the
+# bundle hero + gallery rows prod -> QA by template id (the bundles carry no
+# SKU) with grove-odoo-modules' copy_product_images.py: prod is only READ over
+# XML-RPC, QA is the only write target, an existing QA photo is never clobbered
+# (FORCE_HERO=1 to overwrite), and a template whose name differs between the
+# two sides is refused. Run once after `qa-l3-up`, next to qa-l3-seed-e2e;
+# idempotent (a converged QA is a no-op). DRY_RUN=1 for a read-only plan.
+# Creds via `op run --env-file` like the seed; see .env.op.sync-images for why
+# it is a separate file and which op account can resolve it.
+QA_L3_SYNC_IMAGES_ENV_FILE := $(QA_L3_DIR)/.env.op.sync-images
+SYNC_IMAGES_REF ?= main
+SYNC_IMAGES_URL := https://raw.githubusercontent.com/Goldberry-Playground/grove-odoo-modules/$(SYNC_IMAGES_REF)/scripts/copy_product_images.py
+# `bundles` = the script's BUNDLE_TEMPLATE_IDS (22,132,134,135,140); override
+# with a comma list of template ids to sync something else by id.
+SYNC_IMAGES_TEMPLATE_IDS ?= bundles
+
+## qa-l3-sync-bundle-images: copy the nursery bundle photos prod -> QA Odoo (idempotent; DRY_RUN=1 for a plan)
+.PHONY: qa-l3-sync-bundle-images
+qa-l3-sync-bundle-images:
+	@tmp=$$(mktemp); trap 'rm -f "$$tmp"' EXIT; \
+		curl -fsSL "$(SYNC_IMAGES_URL)" -o "$$tmp"; \
+		DRY_RUN="$(DRY_RUN)" FORCE_HERO="$(FORCE_HERO)" TEMPLATE_IDS="$(SYNC_IMAGES_TEMPLATE_IDS)" \
+		op run --env-file=$(QA_L3_SYNC_IMAGES_ENV_FILE) -- python3 "$$tmp"
+
 ## qa-test-data-cleanup: DRY-RUN report of QA test data (canary/journey orders, test partners) — deletes nothing
 .PHONY: qa-test-data-cleanup
 qa-test-data-cleanup:
