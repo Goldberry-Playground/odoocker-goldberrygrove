@@ -1,4 +1,34 @@
-# RUNBOOK — fence the legacy Ghost snowflake (GOL-2566)
+# RUNBOOK — fence the legacy Ghost snowflake (GOL-2566) — RETIRING under GOL-863
+
+> **Status 2026-11-06: retiring.** The board accepted the destroy of
+> `ghostgoldberrygrove-nyc1` (droplet `468914087`) on GOL-863. The archive this
+> runbook said must not be lost is live on `goldberrygrove.farm/blog` (28 posts,
+> legacy slugs 308 → `/blog/<slug>`, Train #4 2026-11-05); DR = DO snapshots
+> `251634997` (2026-10-26, 21.63 GB) and `241457688` (2026-08-16), both of which
+> outlive the droplet. The "Do NOT destroy" section below is kept as history and
+> is **superseded**.
+>
+> **Retirement is two steps, because of `prod-plan-guard`:**
+>
+> 1. **Decouple (PR, this change):** `legacy-ghost-fw.tf` no longer resolves the
+>    droplet through `data "digitalocean_droplet"` (that lookup would ERROR every
+>    production plan the moment the droplet is gone) and pins `droplet_ids = []`.
+>    Plan on a live droplet = one in-place update; after the destroy = no change.
+>    **Only after this is on `main`** may the droplet be destroyed
+>    (`DELETE /v2/droplets/468914087`, Terra, same heartbeat as the go).
+> 2. **Remove the empty firewall (board-gated apply, then PR):**
+>    ```bash
+>    cd infra/terraform/environments/production
+>    terraform init -backend-config=backend.hcl
+>    op run --env-file=.env.op -- terraform plan  -var legacy_ghost_firewall_enabled=false
+>    # expect: 0 to add, 0 to change, 1 to destroy  (digitalocean_firewall.legacy_ghost[0], 4351b197)
+>    op run --env-file=.env.op -- terraform apply -var legacy_ghost_firewall_enabled=false
+>    ```
+>    then open a PR deleting `legacy-ghost-fw.tf`, `legacy_ghost_firewall_enabled`,
+>    `legacy_ghost_http_public` and this runbook. That PR's plan is clean because
+>    the resource is already gone from state. Deleting the file FIRST would show a
+>    destroy of a live resource and fail `prod-plan-guard` — by design.
+
 
 Holding action for `ghostgoldberrygrove-nyc1` (droplet `468914087`,
 `178.128.152.218`, created 2025-01-10), the last of the two Ghost snowflakes named
@@ -32,7 +62,7 @@ frontend. No DO load balancer and no reserved IP reference it. The box is
 reachable only by raw IP, so `:80`/`:443` are fenced to `admin_ip_cidrs` by
 default alongside `:22`.
 
-## Do NOT destroy this droplet yet
+## Do NOT destroy this droplet yet (superseded 2026-11-06 — see status at top)
 
 It holds **29 authored posts** (its own `sitemap-posts.xml`) and it is the **sole
 copy**. `goldberrygrove.farm/blog` serves a *different*, 4-post set from
@@ -126,8 +156,9 @@ compromise, and that cannot be done from the agent plane.
 
 - **GOL-2565** — `grove-prod-odoo-fw` membership drift (`droplet_ids = []`). Different
   failure: that firewall *is* codified, so it converges on the next apply.
-- **GOL-863** — Ghost snowflake retire. Premise corrected above; blocked on the
-  content migration.
+- **GOL-863** — Ghost snowflake retire. Content migration done (Train #4,
+  2026-11-05); destroy accepted by the board 2026-11-06; two-step retirement
+  at the top of this runbook.
 - **PR #745** — nightly firewall-membership watcher. Cannot cover this box: it
   asserts codified firewalls contain their codified droplets, and an un-codified
   droplet is invisible to it by construction. Once this firewall is codified and
