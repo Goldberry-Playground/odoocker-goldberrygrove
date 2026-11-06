@@ -208,6 +208,45 @@ logins are unaffected. Flip device verification only after that is confirmed.
    hub sending domain), restart Odoo, and place a test storefront order to confirm
    the order-confirmation email delivers and passes SPF/DKIM.
 
+## Tracking hosts over HTTPS — `email.<sending-domain>` (GOL-3594, 2026-10-22)
+
+The storefronts send HSTS. Adding `includeSubDomains` means every subdomain of
+each brand apex must complete a TLS handshake. That includes Mailgun's
+tracking hosts. State as of 2026-10-22:
+
+| Tracking host | DNS (Cloudflare) | Cert |
+| --- | --- | --- |
+| `email.mg.goldberrygrove.farm` | CNAME `mailgun.org`, **DNS-only** | Mailgun-issued Let's Encrypt |
+| `email.mg.atthegrovenursery.com` | CNAME `mailgun.org`, DNS-only | Mailgun-issued Let's Encrypt |
+| `email.mg.woodworkingeorge.com` | CNAME `mailgun.org`, DNS-only | Mailgun-issued Let's Encrypt |
+| `email.send.gatheringatthegrove.com` | CNAME `mailgun.org`, DNS-only | Mailgun-issued Let's Encrypt |
+
+All four Mailgun domains have `web_scheme=https`. The `news.<domain>` domains
+were created with `web_scheme=https` and have no `email.news.*` record (tracking
+is off), so they have no tracking host to cover.
+
+**Rules:**
+
+- **Never proxy (orange-cloud) an `email.<sending-domain>` CNAME.** Universal
+  SSL covers `*.<apex>` only. A third-level name like `email.mg.<apex>` gets no
+  edge cert, so the handshake fails at Cloudflare. Mailgun also cannot complete
+  its Let's Encrypt HTTP-01 challenge through the proxy.
+- **Adding a new sending domain:** create it with `web_scheme=https`, publish
+  the tracking CNAME as DNS-only, and run `POST /v2/x509/email.<domain>`. Then
+  poll `GET /v2/x509/email.<domain>/status` until it reads `active`. Mailgun
+  auto-renews the cert.
+- The hub sends from `send.gatheringatthegrove.com`, not `mg.*`. There is no
+  `mg.gatheringatthegrove.com` Mailgun domain. Its proxied `email.mg` CNAME was
+  an orphan and was deleted 2026-10-22 (the content was `mailgun.org`, proxied).
+  Its stale SPF and DKIM TXT records under `mg.gatheringatthegrove.com` are
+  harmless and were left in place.
+- Open, click and unsubscribe tracking stays **off** on all domains, because
+  click rewriting breaks Ghost magic links. HTTPS is about correctness under
+  HSTS, not about turning tracking on.
+
+**Verify:** `curl -sI https://<host>/`. Any HTTP status (Mailgun answers
+`404` on `/`) means TLS works. A handshake error means it does not.
+
 ## Notes / follow-ups
 
 - **Odoo per-brand From:** Mailgun rejects a From outside the authenticated domain,
