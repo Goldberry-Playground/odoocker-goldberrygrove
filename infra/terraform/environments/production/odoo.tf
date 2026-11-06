@@ -336,8 +336,15 @@ resource "digitalocean_droplet" "odoo" {
   # Reversible: delete this block to re-expose the drift. Restoring byte-for-byte
   # reproducibility (a conscious rebuild to reconcile the snowflake) is the
   # separate GOL-391 decision, not this safety guard.
+  # ssh_keys (GOL-3802): the DO provider docs are explicit -- "Once a Droplet is
+  # created keys can not be added or removed via this provider. Modifying this
+  # field will prompt you to destroy and recreate the Droplet." So swapping the
+  # admin key data source (grove-qa-admin -> grove-prod-admin) would otherwise
+  # propose a prod REPLACE and trip prod-plan-guard. The live authorized_keys
+  # edit is manual (docs/RUNBOOK-dec-2026-credential-window-GOL-3802.md item 1);
+  # config here only governs what the NEXT deliberate rebuild trusts.
   lifecycle {
-    ignore_changes = [user_data, monitoring]
+    ignore_changes = [user_data, monitoring, ssh_keys]
   }
 }
 
