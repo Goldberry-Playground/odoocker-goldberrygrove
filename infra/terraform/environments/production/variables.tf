@@ -707,23 +707,6 @@ variable "perenual_api_key" {
   }
 }
 
-###############################################################################
-# GOL-2566 - legacy Ghost snowflake holding-action firewall. See
-# legacy-ghost-fw.tf for the full rationale and rollback.
-###############################################################################
-
-variable "legacy_ghost_firewall_enabled" {
-  description = "Keep the (now EMPTY) `grove-legacy-ghost-fw` cloud firewall (4351b197) in state. It fenced the un-codified `ghostgoldberrygrove-nyc1` snowflake (droplet 468914087) from 2026-10-15 until the board-accepted destroy of that droplet under GOL-863 (2026-11-06). Still TRUE because flipping it to false is `count -> 0` = a DESTROY of a live resource, which prod-plan-guard refuses on a PR by design. Step 2 of the GOL-863 retirement is the board-gated `terraform apply -var legacy_ghost_firewall_enabled=false` (destroys the empty firewall), followed by a PR that deletes legacy-ghost-fw.tf and this variable. See the header of legacy-ghost-fw.tf and docs/RUNBOOK-legacy-ghost-firewall.md."
-  type        = bool
-  default     = true
-}
-
-variable "legacy_ghost_http_public" {
-  description = "Inert since GOL-863 step 1 (the firewall attaches to no droplet). Kept only so the applied rule set stays byte-identical until step 2 deletes the firewall and this variable together. Leave false."
-  type        = bool
-  default     = false
-}
-
 # --- grove_support live chat switch-on (GOL-3302 / GOL-2023, Train #3) -------
 #
 # The nursery storefront embeds Odoo's im_livechat widget (grove-sites
