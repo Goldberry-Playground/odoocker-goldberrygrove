@@ -713,19 +713,13 @@ variable "perenual_api_key" {
 ###############################################################################
 
 variable "legacy_ghost_firewall_enabled" {
-  description = "Attach `grove-legacy-ghost-fw` to the un-codified `ghostgoldberrygrove-nyc1` snowflake (droplet 468914087), closing its internet-wide :22 (and :80/:443, see legacy_ghost_http_public). Defaults TRUE since GOL-3392: Josh ruled 2026-10-14 that the holding-action fence is permanent and applied it 2026-10-15 (fw 4351b197), so the box is now fenced DELIBERATELY and a plain apply must converge on it, not detach it. Flipping this back to false DETACHES the firewall (count -> 0 destroys it) -- do that only as the documented rollback in docs/RUNBOOK-legacy-ghost-firewall.md, or in the same change that retires the box (GOL-863)."
+  description = "Keep the (now EMPTY) `grove-legacy-ghost-fw` cloud firewall (4351b197) in state. It fenced the un-codified `ghostgoldberrygrove-nyc1` snowflake (droplet 468914087) from 2026-10-15 until the board-accepted destroy of that droplet under GOL-863 (2026-11-06). Still TRUE because flipping it to false is `count -> 0` = a DESTROY of a live resource, which prod-plan-guard refuses on a PR by design. Step 2 of the GOL-863 retirement is the board-gated `terraform apply -var legacy_ghost_firewall_enabled=false` (destroys the empty firewall), followed by a PR that deletes legacy-ghost-fw.tf and this variable. See the header of legacy-ghost-fw.tf and docs/RUNBOOK-legacy-ghost-firewall.md."
   type        = bool
   default     = true
 }
 
-variable "legacy_ghost_droplet_name" {
-  description = "Name the legacy Ghost droplet is resolved by, rather than pinning the bare id 468914087 in code. The DO `droplet` data source has no id lookup, and the name is the stable handle: if the box is rebuilt the name is what gets reused. Only read when legacy_ghost_firewall_enabled is true."
-  type        = string
-  default     = "ghostgoldberrygrove-nyc1"
-}
-
 variable "legacy_ghost_http_public" {
-  description = "Keep :80/:443 on the legacy Ghost box open to the world. FALSE by default: verified 2026-09-29 that ZERO DNS records across all four Cloudflare zones resolve to 178.128.152.218 (every blog.* A record points at 159.89.243.121, every apex is an App Platform CNAME), and no DO load balancer or reserved IP references it -- so the box is DNS-orphaned and fencing HTTP breaks no routed path. What is listening on :443 is a Ghost ADMIN login behind a cert that expired 2025-10-07. Set true to restore world access if an unknown raw-IP consumer surfaces; the :22 fence is unaffected either way. Both legs resolve to var.admin_ip_cidrs, so a new operator address added there (GOL-1842) covers this box too."
+  description = "Inert since GOL-863 step 1 (the firewall attaches to no droplet). Kept only so the applied rule set stays byte-identical until step 2 deletes the firewall and this variable together. Leave false."
   type        = bool
   default     = false
 }

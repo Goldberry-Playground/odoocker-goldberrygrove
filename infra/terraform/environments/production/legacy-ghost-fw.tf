@@ -1,74 +1,51 @@
 ###############################################################################
-# GOL-2566 - holding-action cloud firewall for the LAST legacy Ghost snowflake
+# GOL-2566 / GOL-863 - cloud firewall that USED to fence the last legacy Ghost
+# snowflake, `ghostgoldberrygrove-nyc1` (droplet 468914087, 2025-01-10).
 #
-# `ghostgoldberrygrove-nyc1` (droplet 468914087, created 2025-01-10) sits in NO
-# DO cloud firewall, so every port it listens on answers the whole internet.
-# This is NOT Terraform drift: there is no resource for the droplet, so nothing
-# can converge, and the nightly membership watcher cannot see it either -- that
-# check asserts codified firewalls contain their codified droplets, and an
-# un-codified droplet is invisible to it by construction.
+# STATUS: RETIRING. The board accepted the destroy of that droplet on
+# 2026-11-06 (GOL-863 confirmation card). The content archive it held (28 posts
+# + 4 pages) is live on grove-prod-blogs / goldberrygrove.farm/blog since
+# Train #4 (2026-11-05); DR = DO snapshots 251634997 (2026-10-26) and
+# 241457688 (2026-08-16), both of which outlive the droplet. History of why the
+# fence existed (internet-wide :22/:443 on a Ghost admin login behind an
+# expired cert) is in `git log -p` of this file and in
+# docs/RUNBOOK-legacy-ghost-firewall.md.
 #
-# WHAT IS ACTUALLY EXPOSED (verified read-only from the agent plane 2026-09-29,
-# nothing applied):
-#   :22  OPEN   ssh, since 2025-01-10
-#   :80  OPEN   301 -> https
-#   :443 OPEN   Ghost, serving a Let's Encrypt cert that EXPIRED 2025-10-07
-#               (CN=goldberrygrove.farm) -- ~12 months of dead certbot
-#   https://178.128.152.218/ghost/            -> 200, Ghost ADMIN LOGIN
-#   https://178.128.152.218/ghost/api/admin/site/ -> 200
-# So an unattended, unpatched CMS admin login is on the public internet behind a
-# year-expired certificate. That, not :22, is the headline.
+# WHY THIS FILE STILL EXISTS, EMPTY, INSTEAD OF BEING DELETED IN ONE STEP:
+#   1. The droplet used to be resolved by NAME through `data
+#      "digitalocean_droplet"`. The moment the droplet is destroyed that lookup
+#      ERRORS on every production plan -- and `prod-plan-guard` re-runs the plan
+#      for every merge-group entry that touches production terraform. So the
+#      data source has to be gone from main BEFORE the droplet is.
+#   2. Deleting the firewall resource (or flipping its count to 0) in the same
+#      PR would be a DESTROY of a live resource, which `prod-plan-guard` fails by
+#      design. Destroys of live prod resources are taken deliberately in a
+#      board-gated apply, never landed via a PR.
+#   Hence the two-step retirement:
+#     step 1 (this change)  drop the data source, pin `droplet_ids = []`. On a
+#                           still-live droplet the plan is ONE in-place update
+#                           (droplet_ids [468914087] -> []); once the droplet is
+#                           destroyed DO has already emptied the list and the
+#                           plan is clean either way. Never a destroy/replace.
+#     step 2 (GOL-863 follow-up, board-gated)
+#                           `op run --env-file=.env.op -- terraform apply
+#                            -var legacy_ghost_firewall_enabled=false`
+#                           destroys the now-empty firewall (4351b197), then a
+#                           PR deletes this file + its 2 variables; that PR's
+#                           plan is clean because the resource is already gone.
 #
-# WHY IT IS SAFE TO FENCE :80/:443 TOO -- the box is DNS-ORPHANED:
-#   Across all four Cloudflare zones (goldberrygrove.farm, atthegrovenursery.com,
-#   woodworkingeorge.com, gatheringatthegrove.com) exactly ZERO DNS records
-#   resolve to 178.128.152.218. Every `blog.*` A record points at 159.89.243.121
-#   (the grove-prod-blogs reserved IP) and every apex is a CNAME to an App
-#   Platform frontend. No DO load balancer and no reserved IP references it.
-#   Nothing routes to this box; it is reachable only by raw IP.
-#
-# WHY THIS IS A FIREWALL AND NOT A DESTROY (GOL-863):
-#   The box holds 29 authored posts (its own sitemap-posts.xml) and it is the
-#   SOLE copy. goldberrygrove.farm/blog serves a different, 4-post set from
-#   grove-prod-blogs; a 5-slug sample of the legacy archive -- pollarding-vs-
-#   coppicing..., november-at-goldberry-grove, the-peoples-nut-that-fed-
-#   appalachia, mycoforestry-101..., planting-without-a-mask... -- all return
-#   404 on the live site. The archive was never migrated. Destroying this
-#   droplet today destroys the farm's entire blog history, so retirement is
-#   gated on a content migration, not merely on a CEO go.
-#
-#   Also correcting GOL-863's premise: its sibling snowflake
-#   `gatheratthegrove-blog-nyc` is already gone from the account, so the standing
-#   cost is ONE $32/mo droplet plus DO backups (~$6.40/mo), not ~$96/mo.
-#
-# WHAT THIS DOES NOT DO:
-#   It does NOT import or manage the droplet. The droplet is resolved through a
-#   `data` source, so Terraform never owns its lifecycle and `terraform destroy`
-#   in this env can never delete it -- which matters a lot given what is on it.
-#   Only the firewall is managed. Attaching a DO cloud firewall is an in-place
-#   change on the firewall object: it does not touch, reboot or replace the
-#   droplet, and detaching takes effect immediately.
-#
-# ROLLBACK: set `legacy_ghost_firewall_enabled = false` and apply, or detach in
-# the DO console. Host-level rules on the box are untouched either way. If some
-# unknown raw-IP consumer turns out to exist, `legacy_ghost_http_public = true`
-# restores today's HTTP reachability without giving up the :22 fence.
+# Rollback of step 1 is just reverting the commit: re-attaching a droplet to a
+# DO cloud firewall is an in-place change on the firewall object.
 ###############################################################################
-
-# Resolve the un-codified snowflake by name. If the droplet is ever destroyed
-# (the GOL-863 outcome, after the content migration) this data source errors,
-# which is the desired signal: flip `legacy_ghost_firewall_enabled` to false in
-# the same change that retires the box, and this whole file goes away with it.
-data "digitalocean_droplet" "legacy_ghost" {
-  count = var.legacy_ghost_firewall_enabled ? 1 : 0
-  name  = var.legacy_ghost_droplet_name
-}
 
 resource "digitalocean_firewall" "legacy_ghost" {
   count = var.legacy_ghost_firewall_enabled ? 1 : 0
 
-  name        = "grove-legacy-ghost-fw"
-  droplet_ids = [data.digitalocean_droplet.legacy_ghost[0].id]
+  name = "grove-legacy-ghost-fw"
+  # Empty on purpose (step 1 above): the droplet this fence was for is being
+  # destroyed under GOL-863. DO drops a destroyed droplet from every firewall
+  # it was attached to, so [] is both the desired and the eventual live state.
+  droplet_ids = []
 
   # SSH goes from 0.0.0.0/0 to the operator CIDRs (var.admin_ip_cidrs, a LIST since GOL-1842 -- appending a
   # new operator address there covers this box too, same as blogs and Odoo).
@@ -95,9 +72,8 @@ resource "digitalocean_firewall" "legacy_ghost" {
     }
   }
 
-  # Outbound stays open: the box needs egress for certbot, apt and Ghost's
-  # outbound mail. Constricting egress on a box nobody has logged into for
-  # months is how a holding action turns into an outage.
+  # Rules kept byte-identical to the applied fence so step 1 is a single
+  # droplet_ids update and nothing else; they attach to nothing now.
   outbound_rule {
     protocol              = "tcp"
     port_range            = "1-65535"
