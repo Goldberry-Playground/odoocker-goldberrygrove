@@ -311,6 +311,8 @@ jobs:
         run: python3 scripts/test_otelcol_docker_stats.py
       - name: Run grove-caddy CVE floor tests (go module floors + full apk upgrade)
         run: python3 scripts/test_caddy_dockerfile_cve_floors.py
+      - name: Run odoo apt layer-cache-bust tests (GOL-3780 stale security-patch layer)
+        run: python3 scripts/test_odoo_dockerfile_apt_cache_bust.py
       - name: Run hostmetrics alert-rule tests (cpu reads idle, memory reads used)
         run: python3 scripts/test_hostmetrics_alert_rules.py
       - name: Run RED alert-rule tests (windowed SQL over Beyla's cumulative histograms)
