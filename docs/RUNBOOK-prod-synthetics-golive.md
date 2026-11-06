@@ -149,12 +149,24 @@ cd /etc/grove
 op run --env-file=scripts/prod-monitoring.env.op -- \
   sh -c 'env | grep -E "^(MONITORING|OPENOBSERVE|KEEP|DISCORD|SYNTHETIC|ODOO|GHOST|POSTGRES|COST|OTELCOL|BEYLA)_" \
          > /etc/grove/.env.monitoring'
+# docker.sock gid differs per host; the otel-collector joins it to read
+# container stats (GOL-2329). Unset, compose falls back to QA's 988 and the
+# collector crash-loops on prod.
+echo "DOCKER_GID=$(getent group docker | cut -d: -f3)" >> /etc/grove/.env.monitoring
 chmod 600 /etc/grove/.env.monitoring
 
 # Seed the $0 canary + upload monitors/alerts (idempotent), then start the runner.
 make monitoring-up \
   MONITORING_COMPOSE=docker-compose.monitoring.app-plane.yml \
   MONITORING_ENV_FILE=/etc/grove/.env.monitoring
+```
+
+The prod droplet has no `make`; the target is these two commands (GOL-2329
+go-live ran them directly):
+
+```sh
+set -a; . /etc/grove/.env.monitoring; set +a; python3 scripts/setup-monitoring.py
+docker compose -f docker-compose.monitoring.app-plane.yml --env-file /etc/grove/.env.monitoring up -d
 ```
 
 `monitoring-setup` runs `setup-monitoring.py`, which (with
@@ -223,7 +235,13 @@ Odoo's DB except the `$0` canary product + its own draft orders.
 make monitoring-down \
   MONITORING_COMPOSE=docker-compose.monitoring.app-plane.yml \
   MONITORING_ENV_FILE=/etc/grove/.env.monitoring
+# no make on prod:
+docker compose -f docker-compose.monitoring.app-plane.yml --env-file /etc/grove/.env.monitoring down
 ```
+
+An env-file rendered before GOL-2329 has no `DOCKER_GID`, so compose falls back
+to QA's gid 988 and the prod collector crash-loops on docker.sock. Append it:
+`echo "DOCKER_GID=$(getent group docker | cut -d: -f3)" >> /etc/grove/.env.monitoring`.
 
 To fully back out the prod-data footprint (only if the CEO reverses gate a):
 archive the `SYNTHETIC-CANARY` product (`active=false`) and unlink any residual

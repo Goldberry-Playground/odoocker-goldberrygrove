@@ -22,6 +22,7 @@
 #   COST_ENV                     qa | prod
 #   SYNTHETIC_ODOO_BASE          e.g. http://odoo:8069 (internal DNS)
 #   SYNTHETIC_TENANTS            e.g. goldberry,ggg,nursery
+#   DOCKER_GID                   host docker group gid: getent group docker | cut -d: -f3
 ###############################################################################
 
 name: grove-monitoring
@@ -33,7 +34,7 @@ networks:
 
 services:
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:${OTELCOL_TAG:-latest}
+    image: otel/opentelemetry-collector-contrib:${OTELCOL_TAG:-0.115.1}
     restart: unless-stopped
     # Second --config merges the postgresql receiver into the metrics pipeline
     # (GOL-335). App-plane hosts always have a Managed PG (ADR-007), so the

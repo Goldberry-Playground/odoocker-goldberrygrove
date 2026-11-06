@@ -218,7 +218,7 @@ services:
   # are the USE metrics the CostOps rightsizing dashboard joins with cost.
   # See otel/README.md. Contrib image = the receivers/basicauth extension.
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:${OTELCOL_TAG:-0.115.0}
+    image: otel/opentelemetry-collector-contrib:${OTELCOL_TAG:-0.115.1}
     restart: unless-stopped
     command: ["--config=/etc/otelcol/config.yaml"]
     depends_on:

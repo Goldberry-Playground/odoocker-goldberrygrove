@@ -317,6 +317,8 @@ jobs:
         run: python3 scripts/test_hostmetrics_alert_rules.py
       - name: Run RED alert-rule tests (windowed SQL over Beyla's cumulative histograms)
         run: python3 scripts/test_red_alert_rules.py
+      - name: Run app-plane monitoring compose tests (GOL-2329 go-live -- otelcol pin, docker gid, monitors.json)
+        run: python3 scripts/test_app_plane_compose.py
       # Legacy goldberry Ghost migration: old side by IP + pinned key, no member
       # writes into any Ghost (option C, GOL-3454).
       - name: Run blogs-migrate tests (legacy Ghost by IP, pinned key, no member import)
