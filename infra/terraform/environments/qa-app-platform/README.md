@@ -149,6 +149,31 @@ make qa-l3-seed-e2e            # converge the fixture (idempotent no-op if prese
   docker-compose.preview.yml`), so `/shop` can't render the catalog there
   regardless of the fixture. Revisit when preview gains the custom modules.
 
+## Post-apply: sync the nursery bundle photos from prod (GOL-3785)
+
+The Managed PG + filestore volumes survive every teardown, so QA is **never
+re-seeded from prod**: a photo uploaded straight to prod — the five nursery
+bundle heroes (`product.template` 22, 132, 134, 135, 140; Mountain Mama Package
+is 132) — never reaches QA, and the home-page lead-seller card renders without
+an image there while the identical build is fine on prod (Train #4 gate,
+2026-11-06). `qa-photos.spec.ts` in grove-sites now fails the gate on that.
+
+```bash
+# From the repo root, after `make qa-l3-up` has the Odoo droplet serving.
+make qa-l3-sync-bundle-images DRY_RUN=1   # read-only plan: prod is only ever read
+make qa-l3-sync-bundle-images            # copy hero + gallery rows prod -> QA (idempotent)
+```
+
+- Runs grove-odoo-modules' `scripts/copy_product_images.py` (`TEMPLATE_IDS=bundles`,
+  fetched pinned to `SYNC_IMAGES_REF`, default `main`). Prod is read over XML-RPC
+  only; QA is the only write target; an existing QA photo is never clobbered
+  (`FORCE_HERO=1` to overwrite); a template whose name differs between the two
+  sides is refused.
+- Creds resolve from `.env.op.sync-images` (prod read login from `Grove Prod`,
+  QA admin key from `Grove QA`), so the resolving `op` account must read both
+  vaults — the human running the train, same as `make train-up`.
+- Re-run after any prod-side photo upload you want on QA; it converges.
+
 ## SSH access
 
 Same two-key pattern as monolith QA:

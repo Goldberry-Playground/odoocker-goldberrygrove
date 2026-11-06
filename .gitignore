@@ -8,6 +8,7 @@
 # rule and is already tracked; `.env.op.seed` (GOL-1152) needs the negation.
 !.env.op
 !.env.op.seed
+!.env.op.sync-images
 
 # Ignores the pgadmin private key
 pgadmin/private_key
