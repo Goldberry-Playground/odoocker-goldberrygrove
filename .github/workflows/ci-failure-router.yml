@@ -6,7 +6,12 @@
 # keeps only what is repo-specific: the event triggers and the list of watched
 # workflows below.
 #
-#   Shared action: Goldberry-Playground/grove-sites/.github/actions/ci-failure-router@main
+#   Shared action: Goldberry-Playground/grove-sites/.github/actions/ci-failure-router
+#   PINNED to a grove-sites commit SHA (GOL-3587): this job holds
+#   issues:write + pull-requests:write here, so a mutable cross-repo @main
+#   would let any grove-sites push run with odoocker write scope. To take a
+#   router fix: bump every `ci-failure-router@<sha>` below to the grove-sites
+#   commit that last touched .github/actions/ci-failure-router/.
 #
 # Routes every failed run of the watched workflows by WHO owns the failure:
 #   - PR failure (live owner)  → sticky comment on the PR; 3 strikes escalate.
@@ -57,7 +62,7 @@ jobs:
     if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure'
     runs-on: ubuntu-latest
     steps:
-      - uses: Goldberry-Playground/grove-sites/.github/actions/ci-failure-router@main
+      - uses: Goldberry-Playground/grove-sites/.github/actions/ci-failure-router@a80a81da24cb0db090933363ad6e6cd702e5ae49 # main 2026-10-08 (gs#975)
         with:
           mode: route
           github-token: ${{ github.token }}
@@ -75,7 +80,7 @@ jobs:
     if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
-      - uses: Goldberry-Playground/grove-sites/.github/actions/ci-failure-router@main
+      - uses: Goldberry-Playground/grove-sites/.github/actions/ci-failure-router@a80a81da24cb0db090933363ad6e6cd702e5ae49 # main 2026-10-08 (gs#975)
         with:
           mode: close-success
           github-token: ${{ github.token }}
@@ -92,7 +97,7 @@ jobs:
       github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: Goldberry-Playground/grove-sites/.github/actions/ci-failure-router@main
+      - uses: Goldberry-Playground/grove-sites/.github/actions/ci-failure-router@a80a81da24cb0db090933363ad6e6cd702e5ae49 # main 2026-10-08 (gs#975)
         with:
           mode: branch-gone
           github-token: ${{ github.token }}
@@ -105,7 +110,7 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: Goldberry-Playground/grove-sites/.github/actions/ci-failure-router@main
+      - uses: Goldberry-Playground/grove-sites/.github/actions/ci-failure-router@a80a81da24cb0db090933363ad6e6cd702e5ae49 # main 2026-10-08 (gs#975)
         with:
           mode: sweep
           github-token: ${{ github.token }}

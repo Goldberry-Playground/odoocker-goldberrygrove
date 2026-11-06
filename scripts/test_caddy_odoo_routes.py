@@ -105,6 +105,34 @@ def test_catch_all_stays_on_http_worker():
         )
 
 
+# GOL-3587 edge hardening — production front door only. QA keeps the DB
+# manager reachable (bring-up/reseed tooling); prod must never expose it.
+PROD_CADDYFILE = ODOO_CADDYFILES["production"]
+
+
+def test_prod_db_manager_is_404():
+    src = _read(PROD_CADDYFILE)
+    m = re.search(r"^\s*@dbmgr\s+path\s+(.+?)\s*$", src, re.M)
+    assert m, f"{PROD_CADDYFILE}: no `@dbmgr path ...` matcher for /web/database"
+    paths = m.group(1).split()
+    assert "/web/database" in paths and "/web/database/*" in paths, (
+        f"{PROD_CADDYFILE}: @dbmgr must cover /web/database and /web/database/*; "
+        f"paths={paths}"
+    )
+    assert re.search(r"^\s*respond\s+@dbmgr\s+404\s*$", src, re.M), (
+        f"{PROD_CADDYFILE}: @dbmgr is not answered with `respond @dbmgr 404`"
+    )
+
+
+def test_prod_admin_api_off():
+    src = _read(PROD_CADDYFILE)
+    glob = re.match(r"(?:\s*#[^\n]*\n)*\s*\{(.*?)\}", src, re.S)
+    assert glob, f"{PROD_CADDYFILE}: no global options block before the first site"
+    assert re.search(r"^\s*admin\s+off\s*$", glob.group(1), re.M), (
+        f"{PROD_CADDYFILE}: global options block lacks `admin off`"
+    )
+
+
 def test_every_odoo_caddyfile_is_covered():
     # Guards the map above against a new environment being added without its
     # routing asserted. Any .tpl that proxies to the evented port must be listed.
