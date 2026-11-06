@@ -67,7 +67,7 @@ jobs:
       # Build args mirror what local make build does via .env. Defaults match
       # .env.example so changes to that file flow into CI on the next run.
       # ODOO_TAG is image-pinned (19.0@sha256:...) for supply-chain hardening.
-      ODOO_TAG: "19.0@sha256:83223b09a6245871a0a7118c2ac4a60e871e8bcda7168086abd3d355c0402ff7"
+      ODOO_TAG: "19.0@sha256:5e755c725b3c43cf0be16d579904e1418300db3a2c44952f928eaddbcb0cc16d"
       ROOT_PATH: "/usr/lib/python3/dist-packages/odoo"
       LOG_PATH: "/var/log/odoo/odoo.log"
       ODOO_RC: "/etc/odoo/odoo.conf"
