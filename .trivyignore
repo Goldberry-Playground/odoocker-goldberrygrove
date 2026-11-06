@@ -22,12 +22,20 @@
 # expiry; drop this entry once a newer odoo:19 base ships postcss ≥ 8.5.18.
 # Tracked: GOL-934.
 GHSA-r28c-9q8g-f849 exp:2026-09-15
+# Status 2026-11-06: upstream has shipped the fix. odoo:19.0 build 20261102
+# (sha256:5e755c72...) carries postcss 8.5.32, nanoid 3.3.20 and source-map-js
+# 1.2.2, and none of these findings fire against it. The image we ship is
+# still built from the 20260513 base pinned as ODOO_TAG in docker-odoo.yml and
+# .env.example, so these entries stay until that pin moves. Fix path: bump the
+# pin, then delete the entries below. Security Scans builds floating odoo:19.0,
+# so its green result does not cover the pinned base; docker-odoo.yml does.
+#
 # CVE-2026-73646 is the CVE alias of the same postcss advisory
 # (GHSA-r28c-9q8g-f849). Trivy's DB now keys the finding under this CVE ID,
 # so the GHSA line above no longer matches — same package, path, mitigation,
 # and fix path (postcss 8.5.14 → 8.5.18 via an upstream odoo:19 rebuild).
 # Tracked: GOL-934 / GOL-1644.
-CVE-2026-73646 exp:2026-11-15
+CVE-2026-73646 exp:2026-12-15
 
 # nanoid DoS via infinite loop in random-ID generation (CVE-2026-67213,
 # fixed 3.3.18/5.1.6) and in custom-alphabet generation (CVE-2026-67214,
@@ -40,8 +48,8 @@ CVE-2026-73646 exp:2026-11-15
 # not reachable in our deployment. Not our dependency — cannot bump without
 # an upstream odoo:19 rebuild that revs rtlcss's nanoid. Drop once a newer
 # odoo:19 base ships nanoid ≥ 3.3.18. Tracked: GOL-934 / GOL-1644.
-CVE-2026-67213 exp:2026-11-15
-CVE-2026-67214 exp:2026-11-15
+CVE-2026-67213 exp:2026-12-15
+CVE-2026-67214 exp:2026-12-15
 
 # source-map-js DoS via malformed indexed source maps (CVE-2026-93749,
 # fixed 1.2.2). source-map-js 1.2.1 is postcss's transitive dependency,
@@ -54,4 +62,4 @@ CVE-2026-67214 exp:2026-11-15
 # dependency — cannot bump without an upstream odoo:19 rebuild that revs
 # rtlcss's source-map-js. Drop once a newer odoo:19 base ships
 # source-map-js ≥ 1.2.2. Tracked: GOL-934 / GOL-1644.
-CVE-2026-93749 exp:2026-11-15
+CVE-2026-93749 exp:2026-12-15
