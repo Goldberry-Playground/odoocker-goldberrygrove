@@ -221,8 +221,9 @@ Host-level rules on the droplet are untouched by anything in this runbook.
 - **GOL-2565** — `grove-prod-odoo-fw` membership drift. **Applied**; verified
   `138.197.44.60:22` and `174.138.119.171:22` now filtered from the agent plane
   (2026-09-29).
-- **GOL-2566** — legacy Ghost snowflake, same blind spot
-  (`production/legacy-ghost-fw.tf`, `docs/RUNBOOK-legacy-ghost-firewall.md`).
+- **GOL-2566** — legacy Ghost snowflake, same blind spot. Retired: droplet
+  destroyed under GOL-863 (2026-11-06) and the empty fence + its runbook removed
+  under GOL-3812 (history: `git log --all -- '*legacy-ghost*'`).
 - **GOL-2306** — agent-plane credential exposure (the token half).
 - **GOL-3412** — CI SSH through the fence: the `grove-agent-plane-ci-fw` sibling
   (`digitalocean_firewall.agent_plane_ci`, same file; AgenticOS
