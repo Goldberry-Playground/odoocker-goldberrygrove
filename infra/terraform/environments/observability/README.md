@@ -18,7 +18,7 @@ First live apply is recorded. Board-approved separate prod obs droplet is up:
   `/healthz` 200 + root auth 200, all three containers up from unattended
   cloud-init.
 - State: `s3://grove-tf-state/observability/terraform.tfstate` (DO Spaces, locked)
-- Secrets flow 1Password `Grove Infra` → `TF_VAR_*` → cloud-init; nothing hardcoded.
+- Secrets flow 1Password `Grove Infra` → `.env.op` (committed op:// refs) → `TF_VAR_*` → cloud-init; nothing hardcoded.
 
 Remaining before the rich alert layer produces signal: run `setup-monitoring.py`
 (monitors/alerts/dashboards + Discord routing) and enable the agenticos collector
@@ -145,12 +145,55 @@ warning under Apply), which is the strongest argument for doing it.
 > it and you did not intend a rebuild, stop.
 
 ```bash
-cp backend.hcl.example backend.hcl        # git-ignored
-cp terraform.tfvars.example terraform.tfvars   # or use op:// injection
-terraform init -upgrade -backend-config=backend.hcl   # -upgrade: picks up hashicorp/archive
-terraform plan      # review before first apply — CHECK FOR "forces replacement"
-terraform apply
+cp backend.hcl.example backend.hcl        # git-ignored; only `key` differs per env
+# No terraform.tfvars is needed: the live env runs on variables.tf defaults +
+# the committed .env.op (op:// refs -> TF_VAR_* + the AWS_* Spaces keys the S3
+# backend needs). `init` must ALSO run under op run -- the backend reads
+# AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY from .env.op, so a bare
+# `terraform init` fails before it ever reaches the state bucket.
+op run --env-file=.env.op -- terraform init -upgrade -backend-config=backend.hcl
+op run --env-file=.env.op -- terraform plan   # CHECK FOR "must be replaced" on module.obs_droplet
+op run --env-file=.env.op -- terraform apply -target=<the resource you reviewed>
 ```
+
+`.terraform.lock.hcl` is committed (GOL-3816) with linux_amd64 + darwin_arm64 +
+darwin_amd64 hashes, so your Mac and CI resolve the same provider builds;
+`-upgrade` only moves within `versions.tf` constraints and shows up as a lock
+diff you commit deliberately.
+
+### Known baseline plan (read this before trusting a "drift" plan)
+
+As of 2026-11-07 an **untargeted** plan here is expected to show exactly:
+
+- `module.obs_droplet.digitalocean_droplet.this` **must be replaced** — this is
+  the documented, deliberate backlog of codified-for-next-rebuild changes
+  (GOL-277 compose fix, GOL-311 RUM vhost, GOL-598 discord overlay), NOT tfvars
+  drift. Proof: rendering `cloud-init.yaml.tpl` at the first-apply commit
+  `94f6a1f2` with the `.env.op` refs reproduces the `user_data` hash in state
+  (`No changes`); at `main` it does not. The refs are right; the template moved.
+- nothing else. The firewall refreshes to its live GOL-2600 rules (the state
+  file predates that apply) and the three alert policies are in state.
+
+If anything **other** than the droplet replace appears, stop and investigate
+before applying. Never apply untargeted here unless a rebuild is intended.
+
+### grove-obs alert policies (`monitor-alerts.tf`)
+
+The three DO alert policies (cpu/memory/disk) reference the droplet through
+`data.digitalocean_droplets` (name `grove-obs`), not `module.obs_droplet`, so
+`plan/apply -target=digitalocean_monitor_alert.obs_droplet` never pulls the
+pending droplet replace into the graph. They were first created with `doctl`
+on 2026-11-07 and imported (GOL-3816):
+
+```bash
+op run --env-file=.env.op -- terraform import 'digitalocean_monitor_alert.obs_droplet["cpu"]'    <uuid>
+op run --env-file=.env.op -- terraform import 'digitalocean_monitor_alert.obs_droplet["memory"]' <uuid>
+op run --env-file=.env.op -- terraform import 'digitalocean_monitor_alert.obs_droplet["disk"]'   <uuid>
+op run --env-file=.env.op -- terraform apply -target=digitalocean_monitor_alert.obs_droplet   # adds the Discord slack-shim block
+```
+
+On a fresh build the lookup is empty and `for_each` yields no policies; apply
+once for the droplet, then again for the policies.
 
 ## Applying monitors/alerts/dashboards + Discord routing
 Config-as-code is applied **against this droplet from CI/operator**, not from the
@@ -184,8 +227,8 @@ KEEP_WEBHOOK_TOKEN=... DISCORD_WEBHOOK_WARNING=... DISCORD_WEBHOOK_CRITICAL=... 
   `synthetic-runner`/`cost-bridge` add their source `/32`s to the same var.
 - **Cloudflare-WAF Bearer ingest endpoint** (spec §1) for the off-droplet GitHub
   Actions Playwright/Hurl crons.
-- **`make` targets** (`obs-init/plan/apply/destroy`) + `op run` env-file, matching
-  the other envs.
+- **`make` targets** (`obs-init/plan/apply/destroy`). The `op run` env-file half
+  is DONE (`.env.op`, GOL-3816); only the Makefile wrappers remain.
 - **Release-manifest wiring** — the manifest (ADR-004) isn't implemented yet; pin
   OpenObserve/Keep tags there once it exists so the obs stack promotes qa→main
   with everything else.
