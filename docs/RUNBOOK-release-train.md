@@ -334,11 +334,27 @@ op run --env-file=scripts/newsletter-mail-servers.env.op -- \
 #    seed address — headers must show `d=news.<domain>`; an order receipt sent in
 #    the same window must still show `d=send.gatheringatthegrove.com`.
 
-# 3. Wed, after promote — the promoted DB already carries the rows, so verify only
-op run --env-file=scripts/newsletter-mail-servers.env.op -- \
-  env ODOO_XMLRPC_URL=https://odoo.gatheringatthegrove.com ODOO_API_KEY="op://Grove Prod/REPLACE_ITEM_ID/odoo_api_key" \
+# 3. Wed, after promote — verify prod with the PROD env file (never override the
+#    QA file's ODOO_* vars: `op run --env-file` values win over the shell, so an
+#    override silently keeps talking to QA — measured 2026-11-07)
+PROD_RECONFIG_CONFIRM=yes op run --env-file=scripts/newsletter-mail-servers.prod.env.op -- \
   python3 scripts/prod-reconfig.py --target prod \
     --spec scripts/newsletter-mail-servers.spec.json --check
+
+# 3b. If step 3 exits 2 with "exactly one active bulk server per brand" count=0 the
+#     rows never reached prod (Train #4 case: the QA leg was skipped, QA torn down
+#     2026-11-05, promoted DB had no news rows). Apply on prod directly — same spec,
+#     idempotent, board approval on the GOL-3455 thread, Josh's own key (the
+#     `Odoo - Prod Drift Readonly` item in the prod env file is for reads only).
+#     Swap the key line on the fly; a shell `ODOO_API_KEY=…` would be overridden
+#     by the env file, and `${VAR:-op://Grove Prod/…}` defaults fail op's dotenv
+#     parser on the vault-name space (both measured 2026-11-07):
+PROD_RECONFIG_CONFIRM=yes op run \
+  --env-file=<(sed 's#^ODOO_API_KEY=.*#ODOO_API_KEY="op://Grove Prod/<josh prod odoo item>/credential"#' \
+                 scripts/newsletter-mail-servers.prod.env.op) -- \
+  python3 scripts/prod-reconfig.py --target prod \
+    --spec scripts/newsletter-mail-servers.spec.json --apply
+#     Then re-run step 3: exit 0. Do not send any newsletter from prod before that.
 ```
 
 Exit `0` = post-conditions hold, `2` = an assertion failed (transactional server

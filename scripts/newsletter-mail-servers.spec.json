@@ -19,8 +19,10 @@
     "server picker in Email Marketing so the composer picks the brand's news server",
     "(one list of record, four brands => no single default mass_mailing.mail_server_id).",
     "ir.mail_server has no company_id in Odoo 19; brand selection is by From domain.",
-    "QA and prod share the news.<domain> domains and credentials; a QA->prod DB",
-    "promotion carries these rows over, so prod only ever needs --check."
+    "QA and prod share the news.<domain> domains and credentials. A QA->prod DB",
+    "promotion carries these rows over ONLY if the QA --apply ran first; Train #4",
+    "skipped it, so prod is verified with newsletter-mail-servers.prod.env.op",
+    "(--check) and applied there directly when the check reports 0 bulk rows."
   ],
 
   "allowed_targets": ["scratch", "qa", "prod"],

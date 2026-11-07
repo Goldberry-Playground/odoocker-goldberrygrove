@@ -366,9 +366,21 @@ def test_newsletter_mail_servers_spec():
     # the committed env-file names every ref the spec uses
     config_only = {k: v for k, v in raw.items() if not k.startswith("_")}
     refs = set(reconfig._ENV_REF.findall(json.dumps(config_only)))
-    with open(os.path.join(_HERE, "newsletter-mail-servers.env.op"), encoding="utf-8") as fh:
-        declared = set(re.findall(r"^([A-Z0-9_]+)=", fh.read(), re.M))
-    check("env.op declares every ${ref} in the spec", refs <= declared, sorted(refs - declared))
+    # both the QA and the PROD env-file (GOL-3455: prod was bootstrapped bare on
+    # Train #4, so prod has its own file instead of a shell override — `op run
+    # --env-file` values win over the shell, an override keeps talking to QA)
+    for env_name, want_url in (("newsletter-mail-servers.env.op", "odoo.qa.gatheringatthegrove.com"),
+                               ("newsletter-mail-servers.prod.env.op", "odoo.gatheringatthegrove.com")):
+        with open(os.path.join(_HERE, env_name), encoding="utf-8") as fh:
+            env_text = fh.read()
+        declared = set(re.findall(r"^([A-Z0-9_]+)=", env_text, re.M))
+        check(f"{env_name} declares every ${{ref}} in the spec", refs <= declared, sorted(refs - declared))
+        url_line = re.search(r'^ODOO_XMLRPC_URL="([^"]+)"', env_text, re.M)
+        check(f"{env_name} pins the XML-RPC host it is named for",
+              url_line is not None and url_line.group(1) == f"https://{want_url}", url_line and url_line.group(1))
+        check(f"{env_name} holds no literal secret (every secret is an op:// ref)",
+              all("op://" in line for line in env_text.splitlines()
+                  if re.match(r"^(ODOO_API_KEY|NEWS_SMTP_(USER|PASSWORD)_[A-Z]+)=", line)))
 
 
 # ── promotion-integrity-gates ─────────────────────────────────────────────────

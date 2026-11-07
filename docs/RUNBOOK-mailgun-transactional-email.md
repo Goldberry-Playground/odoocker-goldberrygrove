@@ -106,12 +106,22 @@ Why the shape is what it is:
   server picker in Email Marketing. There is deliberately no single default
   `mass_mailing.mail_server_id` — four brands, one list of record.
 - QA and prod share the domains and credentials. A QA→prod DB promotion carries
-  the rows over, so prod needs `--check`, not `--apply`.
+  the rows over **only if the QA `--apply` actually ran before the promote**. On
+  Train #4 it did not (QA was torn down 2026-11-05 first), so prod came up bare
+  (verified 2026-11-07: 1 transactional row, 0 `news.` rows, picker param
+  absent). `scripts/newsletter-mail-servers.prod.env.op` targets prod directly:
+  `--check` any time with the read-only key it names; `--apply` with Josh's key
+  after board approval. Do not "override" the QA file's `ODOO_*` vars from the
+  shell — `op run --env-file` values win and you keep talking to QA.
+- Until the four rows exist, Email Marketing has nothing to match a
+  `@news.<domain>` From against and would fall back to the transactional
+  server — do not send a newsletter from prod before `--check` exits 0.
 
 Run order on a train: mint creds (above) → `--apply` on QA on the Monday
 bring-up → compose a test mailing per brand From `news.<domain>` and confirm the
 `Received:` chain shows `d=news.<domain>` → `--check` on prod after the Wednesday
-promote. See the matching gate in `RUNBOOK-release-train.md`.
+promote (prod env file) → `--apply` on prod only if that check reports 0 bulk
+rows. See the matching gate in `RUNBOOK-release-train.md`.
 
 **Rollback:** `DELETE /v3/domains/news.<domain>` in Mailgun, then delete the
 Cloudflare records carrying the `GOL-3455` comment. Neither touches the
