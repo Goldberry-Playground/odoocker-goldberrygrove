@@ -319,6 +319,7 @@ Procedures that are not tied to an alert key. Each one is a standalone `docs/RUN
 - [RUNBOOK-nursery-golive.md](RUNBOOK-nursery-golive.md): Nursery storefront go-live (GOL-484, revenue #1)
 - [RUNBOOK-consult-host.md](RUNBOOK-consult-host.md): Grove Consult host (consult.gatheringatthegrove.com) — GOL-3577
 - [RUNBOOK-merge-queue-enqueue-identity.md](RUNBOOK-merge-queue-enqueue-identity.md): Merge-queue enqueue identity — operations runbook (GOL-2524)
+- [prod-hand-installed-core-modules.md](prod-hand-installed-core-modules.md): registry of stock Odoo modules installed on prod by hand (outside `AUTO_UPGRADE_MODULES`) — `survey`, `google_calendar` (GOL-3831)
 
 ### Odoo data and database
 

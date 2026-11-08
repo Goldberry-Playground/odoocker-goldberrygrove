@@ -37,7 +37,8 @@ odoo --init=base,$AUTO_UPGRADE_MODULES --update=$AUTO_UPGRADE_MODULES \
      --stop-after-init --no-http --workers=0 --without-demo=all
 ```
 
-- **Opt-in** via `AUTO_UPGRADE_MODULES` (comma list), set to `grove_headless` in
+- **Opt-in** via `AUTO_UPGRADE_MODULES` (comma list; today `grove_headless,grove_support,grove_calendar`
+  on prod, plus the livechat stack on QA) in
   the qa (`environments/qa-app-platform/compose/docker-compose.qa.yml`) and
   production (`environments/production/compose/docker-compose.odoo.yml`) compose
   `environment:` blocks. Local / preview / testing don't set it → untouched.
