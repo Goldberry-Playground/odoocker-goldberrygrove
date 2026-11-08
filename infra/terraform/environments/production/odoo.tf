@@ -250,6 +250,17 @@ resource "digitalocean_droplet" "odoo" {
     # prefers this and falls back to the ops webhook above, so order alerts
     # separate from bot-logs once the webhook is provisioned.
     discord_orders_webhook_url = var.discord_orders_webhook_url
+    # Discord calendar (GOL-3831, grove-odoo-modules#395 phase C). grove_calendar
+    # posts the Monday digest to EVENTS (falls back to the ops webhook above when
+    # empty) and, from Train #6, syncs native guild events with BOT_TOKEN +
+    # GUILD_ID. All three default empty => digest misroutes visibly to #grove-ops,
+    # events cron inert. user_data is in ignore_changes (below), so landing this
+    # does NOT touch the running droplet; the live box gets the lines from
+    # scripts/prod-discord-events-apply.sh on promote day, and the next rebuild
+    # reproduces them from here.
+    discord_events_webhook_url = var.discord_events_webhook_url
+    discord_bot_token          = var.discord_bot_token
+    discord_guild_id           = var.discord_guild_id
 
     # Perenual plant-facts enrichment (GOL-2507, parent GOL-2383). The
     # grove.enrich.job cron only drains when PerenualProvider.configured is

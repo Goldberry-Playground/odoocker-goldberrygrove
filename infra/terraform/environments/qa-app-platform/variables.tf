@@ -662,3 +662,22 @@ variable "discord_ops_webhook_url" {
     error_message = "discord_ops_webhook_url must be empty or a bare Discord webhook URL (https://discord.com/api/webhooks/<id>/<token>) with NO /slack suffix and no whitespace -- cloud-init writes it UNQUOTED into the bash-sourced /etc/grove/.env."
   }
 }
+
+# Discord calendar (GOL-3831, grove-odoo-modules#395 phase C). grove_calendar
+# posts the Monday "Coming up" digest to os.environ DISCORD_EVENTS_WEBHOOK_URL,
+# falling back to DISCORD_OPS_WEBHOOK_URL. QA points it at the QA ops channel so
+# the digest is visible during the train window. There is deliberately NO QA
+# variable for DISCORD_BOT_TOKEN / DISCORD_GUILD_ID: cloud-init never writes
+# them, so the phase D events cron is inert on QA and QA can never create
+# scheduled events on the real Discord server (spec phase C).
+variable "discord_events_webhook_url" {
+  description = "Discord webhook grove_calendar posts the Monday 'Coming up' digest to on QA (os.environ DISCORD_EVENTS_WEBHOOK_URL; falls back to DISCORD_OPS_WEBHOOK_URL when empty). Wired to the QA ops channel -- same ref as discord_ops_webhook_url -- so the Train #5 QA gate can see the post. 1P: op://Goldberry Grove - Admin/Grove Infra/discord_webhook_url (via .env.op). BARE url, no /slack suffix. Feeds user_data -- changing it REPLACES the QA odoo droplet (which is what train-up does anyway)."
+  type        = string
+  sensitive   = true
+  default     = ""
+
+  validation {
+    condition     = var.discord_events_webhook_url == "" || can(regex("^https://discord(app)?\\.com/api/webhooks/[0-9]+/[A-Za-z0-9_-]+$", var.discord_events_webhook_url))
+    error_message = "discord_events_webhook_url must be empty or a bare Discord webhook URL (https://discord.com/api/webhooks/<id>/<token>) with NO /slack suffix and no whitespace -- cloud-init writes it UNQUOTED into the bash-sourced /etc/grove/.env."
+  }
+}

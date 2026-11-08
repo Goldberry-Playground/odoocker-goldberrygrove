@@ -110,7 +110,16 @@ services:
       # makes the intent readable. QA git-sync tracks grove-odoo-modules main and
       # PR #171 has merged, so the module is present in the checkout -- this line
       # is what makes the entrypoint actually install it.
-      AUTO_UPGRADE_MODULES: grove_headless,im_livechat,website_livechat,crm,grove_support
+      #
+      # GOL-3831 (Train #5): grove_calendar appended (Odoo calendar -> Discord,
+      # grove-odoo-modules#395; GOL-3830 builds the module). Depends on
+      # `calendar` only, auto-installed via --init; must NOT depend on
+      # google_calendar, which QA never installs or pairs. QA git-sync floats
+      # grove-odoo-modules main, so this line is live the moment the module
+      # merges there -- and a QA bring-up on a main that LACKS the module makes
+      # the boot --init crash-loop odoo. Merge this file only after
+      # grove_calendar/__manifest__.py is on grove-odoo-modules main.
+      AUTO_UPGRADE_MODULES: grove_headless,im_livechat,website_livechat,crm,grove_support,grove_calendar
       # Stripe TEST-mode sandbox checkout (GOL-688). grove_headless reads these
       # from os.environ (LOWERCASE names, controllers/main.py). The odoo process
       # env comes ONLY from this compose environment block -- the /.env mount
@@ -220,6 +229,24 @@ services:
       DISCORD_SALES_WEBHOOK_URL: ${DISCORD_SALES_WEBHOOK_URL:-}
       DISCORD_SUPPORT_WEBHOOK_URL: ${DISCORD_SUPPORT_WEBHOOK_URL:-}
       DISCORD_SHIPPING_WEBHOOK_URL: ${DISCORD_SHIPPING_WEBHOOK_URL:-}
+      # Discord calendar (GOL-3831, phase C of grove-odoo-modules#395
+      # docs/superpowers/specs/2026-11-07-discord-calendar-design.md).
+      # grove_calendar reads all five from os.environ. On QA, EVENTS is wired to
+      # the QA ops channel (cloud-init writes it from TF var
+      # discord_events_webhook_url) so the Monday "Coming up" digest is visible
+      # during the train window. BOT_TOKEN + GUILD_ID are deliberately NEVER
+      # written to QA's /etc/grove/.env: with both empty the phase D events cron
+      # logs once at INFO and does nothing, so QA can never create scheduled
+      # events on the real Discord server. The passthrough lines still exist so
+      # the compose matches prod shape. WINDOW_DAYS / LOCATION_DEFAULT carry
+      # compose-side defaults because an EMPTY passthrough would override the
+      # module's own default with "" (the UPS_API_BASE trap above). Same
+      # bare-URL / no-/slack rule as DISCORD_OPS.
+      DISCORD_EVENTS_WEBHOOK_URL: ${DISCORD_EVENTS_WEBHOOK_URL:-}
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
+      DISCORD_GUILD_ID: ${DISCORD_GUILD_ID:-}
+      GROVE_EVENTS_WINDOW_DAYS: ${GROVE_EVENTS_WINDOW_DAYS:-60}
+      GROVE_EVENTS_LOCATION_DEFAULT: ${GROVE_EVENTS_LOCATION_DEFAULT:-Goldberry Grove Farm}
       # Perenual plant-facts enrichment (GOL-2507, parent GOL-2383).
       # grove_headless services/plant_data/perenual.py reads PERENUAL_API_KEY
       # from os.environ, and the odoo process env comes ONLY from this block

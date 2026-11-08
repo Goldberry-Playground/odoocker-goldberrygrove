@@ -471,6 +471,50 @@ variable "discord_orders_webhook_url" {
   }
 }
 
+# === Discord calendar (GOL-3831, phase C of grove-odoo-modules#395) ==========
+# grove_calendar (Train #5) posts the Monday "Coming up" digest to a Discord
+# channel webhook; phase D (Train #6) mirrors public calendar.event rows into
+# native Discord scheduled events with a bot token. The module reads all of
+# these from os.environ, so each needs BOTH the cloud-init /etc/grove/.env line
+# AND the odoo compose passthrough (the GOL-1935 footgun). user_data is in
+# ignore_changes, so merging this does NOT touch the running droplet: the live
+# box gets its lines from scripts/prod-discord-events-apply.sh on promote day,
+# and the next rebuild reproduces them from here with no hand step.
+variable "discord_events_webhook_url" {
+  description = "Discord webhook for the events channel that receives grove_calendar's Monday 'Coming up' digest (spec open question 1 picks the channel; GOL-3829 creates the webhook). The module falls back to DISCORD_OPS_WEBHOOK_URL when this is empty, so an unset value misroutes the digest visibly into #grove-ops instead of dropping it. BARE url, no /slack suffix. 1P: op://Grove Prod/odoocker/DISCORD_EVENTS_WEBHOOK_URL (via .env.op once the field exists). user_data input => same droplet-replace semantics as discord_orders_webhook_url."
+  type        = string
+  sensitive   = true
+  default     = ""
+
+  validation {
+    condition     = var.discord_events_webhook_url == "" || can(regex("^https://(discord\\.com|discordapp\\.com)/api/webhooks/[0-9]+/[A-Za-z0-9_.-]+$", var.discord_events_webhook_url))
+    error_message = "discord_events_webhook_url must be empty or a bare Discord webhook URL (https://discord.com/api/webhooks/<id>/<token>) with NO trailing /slack and no whitespace -- cloud-init writes it UNQUOTED into the bash-sourced /etc/grove/.env."
+  }
+}
+
+variable "discord_bot_token" {
+  description = "Discord bot token with the Manage Events permission on the Grove guild (phase D, Train #6; GOL-3829 mints it, joins the December rotation batch). grove_calendar's 15-minute events cron creates/patches/deletes guild scheduled events with it; empty => the cron logs once at INFO and does nothing, and the digest webhook above keeps working without it. 1P: op://Grove Prod/odoocker/DISCORD_BOT_TOKEN. PROD ONLY -- QA never sets it, so QA can never write events to the real server."
+  type        = string
+  sensitive   = true
+  default     = ""
+
+  validation {
+    condition     = var.discord_bot_token == "" || can(regex("^[A-Za-z0-9_.-]+$", var.discord_bot_token))
+    error_message = "discord_bot_token must be empty or a bare Discord bot token (letters, digits, '.', '_', '-'; no 'Bot ' prefix, no whitespace) -- cloud-init writes it UNQUOTED into the bash-sourced /etc/grove/.env."
+  }
+}
+
+variable "discord_guild_id" {
+  description = "Snowflake id of the Grove Discord server, the guild grove_calendar's phase D cron syncs scheduled events into (Server Settings -> Widget -> Server ID, or Copy Server ID with developer mode on). Not a secret, kept beside the bot token because the two are useless apart. Empty => the events cron is inert. 1P: op://Grove Prod/odoocker/DISCORD_GUILD_ID."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.discord_guild_id == "" || can(regex("^[0-9]{17,20}$", var.discord_guild_id))
+    error_message = "discord_guild_id must be empty or a 17-20 digit Discord snowflake."
+  }
+}
+
 # === Stripe Tax per-tenant cutover flag (GOL-2568 / Train #2 GOL-2584) =======
 variable "grove_stripe_tax_tenants" {
   description = "Storefront tenant slugs whose PROD headless checkout hands sales tax to Stripe Tax instead of Odoo's computed WV line (GOL-2568). grove_headless controllers/main.py `_stripe_tax_enabled(order)` reads GROVE_STRIPE_TAX_{TENANT} from os.environ; unset/empty/anything-but-truthy is OFF, and OFF is byte-identical to the pre-GOL-2568 checkout AND the documented rollback (grove-odoo-modules docs/stripe-tax-cutover.md). ONE set of slugs rather than three booleans so the live cutover state is a single reviewable line and no tenant can be half-flipped; cloud-init renders all three GROVE_STRIPE_TAX_* keys unconditionally. Empty default = every tenant on Odoo tax, i.e. today's prod behaviour. THIS IS A MONEY PATH: turning a slug on changes what customers are charged, so it is a separate, named, board-approved promote step taken only after the QA e2e gate asserted amounts for a WV and a non-WV address. user_data input and user_data is in ignore_changes (GOL-385), so landing this scaffold does NOT touch the running droplet and a plain apply will NOT activate it - activation is the GOL-1772 Option B env-file upsert (see docs/RUNBOOK-release-train.md) or a droplet REPLACE."

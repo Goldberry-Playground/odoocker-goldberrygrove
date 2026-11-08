@@ -229,6 +229,12 @@ write_files:
       # reads DISCORD_SUPPORT_WEBHOOK_URL, then this (gom#384; no ORDERS
       # fallback). Bare URL.
       DISCORD_OPS_WEBHOOK_URL=${discord_ops_webhook_url}
+      # Discord calendar digest channel (GOL-3831, grove-odoo-modules#395 phase
+      # C). grove_calendar reads DISCORD_EVENTS_WEBHOOK_URL from os.environ (via
+      # the compose environment: block), falling back to DISCORD_OPS above. QA =
+      # the QA ops channel. DISCORD_BOT_TOKEN / DISCORD_GUILD_ID are deliberately
+      # NOT written on QA so the phase D events cron stays inert here. Bare URL.
+      DISCORD_EVENTS_WEBHOOK_URL=${discord_events_webhook_url}
       # Perenual plant-facts enrichment (GOL-2507, parent GOL-2383).
       # grove_headless services/plant_data/perenual.py reads this from
       # os.environ (compose environment: block -> here), so it MUST also be
