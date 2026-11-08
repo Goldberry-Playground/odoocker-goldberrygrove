@@ -42,7 +42,11 @@ nginx/snippets/cors-allowlist-dev.conf
 *.tfstate.lock.info
 infra/terraform/environments/**/backend.hcl
 infra/terraform/environments/**/terraform.tfvars
-infra/terraform/environments/**/.terraform.lock.hcl
+# .terraform.lock.hcl IS committed (GOL-3816): it pins provider versions +
+# multi-platform hashes (linux_amd64 for CI, darwin_arm64/amd64 for operator
+# Macs) so every machine resolves byte-identical providers and `init` never
+# silently upgrades. Bump deliberately with
+# `terraform providers lock -platform=linux_amd64 -platform=darwin_arm64 -platform=darwin_amd64`.
 *.tfplan
 tfplan.binary
 # ANY terraform plan artifact, any name -- plan binaries embed resolved

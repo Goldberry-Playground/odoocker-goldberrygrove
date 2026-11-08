@@ -60,7 +60,14 @@ resources being changed, and any plan that proposes replacing
      Add an operator address by appending its `/32` to the `admin_ip_cidrs`
      list default (GOL-1842) — never as a hand-added DO rule, which the next
      apply removes.
-3. `terraform init -backend-config=backend.hcl`
+3. `op run --env-file=.env.op -- terraform init -upgrade -backend-config=backend.hcl`
+   — `init` must run under `op run` too: the S3 backend reads
+   `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` from `.env.op`, so a bare
+   `terraform init` fails before it reaches the state bucket. `-upgrade`
+   stays inside `versions.tf` constraints; `.terraform.lock.hcl` is committed
+   (linux + darwin hashes, GOL-3816), so if `-upgrade` changes it, commit the
+   diff — a stale local lock produced ten `Failed to decode resource from
+   state` warnings on 2026-11-07.
 4. `op run --env-file=.env.op -- terraform plan`
 5. `op run --env-file=.env.op -- terraform apply -target=...`
 6. **If the plan REPLACES a droplet, the same apply must also `-target` that

@@ -1,6 +1,8 @@
-# Copy to terraform.tfvars (git-ignored) and fill in. Secrets normally flow via
-# `op run --env-file=.env.op --` from 1Password (GoldberryGrove Infra), same as
-# the other envs — see README.md.
+# Copy to terraform.tfvars (git-ignored) ONLY for the non-secret knobs below.
+# Every secret flows via `op run --env-file=.env.op -- terraform ...` from the
+# committed .env.op (1Password `Goldberry Grove - Admin / Grove Infra`) — see
+# README.md "Apply". The live env runs on variables.tf defaults + .env.op and
+# needs NO terraform.tfvars at all (GOL-3816).
 
 region        = "nyc3"
 droplet_size  = "s-2vcpu-4gb"
@@ -15,23 +17,29 @@ droplet_size  = "s-2vcpu-4gb"
 # 167.71.109.184/32 is allowlisted again.
 
 # SSH
-ci_ssh_public_key  = "ssh-ed25519 AAAA... grove-obs-deploy"
+# ci_ssh_public_key -> .env.op (Grove Infra/obs_ci_ssh_public_key). A different key
+# re-creates digitalocean_ssh_key.obs_deploy AND replaces the droplet (ssh_keys is ForceNew).
 admin_ssh_key_name = "grove-qa-admin" # reused out-of-band admin key
 
-# Secrets (prefer op:// injection over literals here)
-do_token                  = "dop_v1_..."
-openobserve_root_email    = "monitoring@grove.local"
-openobserve_root_password = "CHANGE_ME"
-keep_webhook_token        = "openssl-rand-hex-32"
-keep_nextauth_secret      = "openssl-rand-hex-32"
-discord_webhook_warning   = "https://discord.com/api/webhooks/.../warning"
-discord_webhook_critical  = "https://discord.com/api/webhooks/.../critical"
+# Secrets: DO NOT put literals here. They are injected by `op run
+# --env-file=.env.op` (committed, op:// refs only) as TF_VAR_*; the 1Password
+# field for each is listed below for reference (all on `Goldberry Grove - Admin
+# / Grove Infra`). A tfvars literal silently WINS over the env var, and any
+# byte that differs from what grove-obs was built with plans a droplet replace.
+#   do_token                  -> do_token
+#   openobserve_root_email    -> obs_openobserve_root_email
+#   openobserve_root_password -> obs_openobserve_root_password
+#   keep_webhook_token        -> obs_keep_webhook_token
+#   keep_nextauth_secret      -> obs_keep_nextauth_secret
+#   discord_webhook_warning   -> discord_webhook_url   (ONE ops webhook today, shared
+#   discord_webhook_critical  -> discord_webhook_url    with Keep's live routes; the DO
+#                                                        alerts append /slack -- GOL-3816)
 
-# OpenObserve Parquet storage → DO Spaces
-spaces_endpoint   = "https://nyc3.digitaloceanspaces.com"
-spaces_bucket     = "grove-openobserve-data"
-spaces_access_key = "DO00..."
-spaces_secret_key = "..."
+# OpenObserve Parquet storage → DO Spaces. Keys + bucket come from .env.op:
+#   spaces_access_key -> spaces_bootstrap_access_key_id (same key the S3 state backend uses)
+#   spaces_secret_key -> spaces_bootstrap_secret_key
+#   spaces_bucket     -> obs_spaces_bucket
+spaces_endpoint = "https://nyc3.digitaloceanspaces.com"
 
 cost_env = "prod"
 
@@ -43,27 +51,16 @@ cost_env = "prod"
 # (SSL/TLS -> Origin Server -> Create Certificate) or the API, scoped to
 # rum.gatheringatthegrove.com (or *.gatheringatthegrove.com), 15-year validity.
 # rum_public_host = "rum.gatheringatthegrove.com"
-cf_origin_cert_pem = <<-EOT
-  -----BEGIN CERTIFICATE-----
-  ...op://Grove Prod/grove-obs-rum/origin_cert...
-  -----END CERTIFICATE-----
-EOT
-cf_origin_key_pem = <<-EOT
-  -----BEGIN PRIVATE KEY-----
-  ...op://Grove Prod/grove-obs-rum/origin_key...
-  -----END PRIVATE KEY-----
-EOT
+# cf_origin_cert_pem / cf_origin_key_pem come from .env.op
+# (Grove Infra: obs_rum_origin_cert / obs_rum_origin_key).
 
 # ── Discord bridge interactions endpoint overlay (GOL-593 / GOL-598) ─────────
 # Exposes apps/discord-bridge at https://discord.gatheringatthegrove.com via a
 # Cloudflare Tunnel (no inbound port, no origin cert). All secrets below flow
-# from 1Password Grove Infra — inject via op://, never paste literals. Set
+# from 1Password Grove Infra via .env.op (buffer_api_token, discord_bot_token,
+# discord_app_id, discord_public_key, discord_insights_channel_id,
+# discord_tunnel_token). A literal "op://..." string in a tfvars is NOT resolved
+# by Terraform — it would be baked into user_data verbatim. Set
 # discord_bridge_enabled=false to skip the overlay entirely on a fresh rebuild.
 discord_bridge_enabled = true
 # discord_bridge_port  = 8787   # default; matches server.ts
-discord_buffer_api_token    = "op://Goldberry Grove - Admin/Grove Infra/buffer_api_token"
-discord_bot_token           = "op://Goldberry Grove - Admin/Grove Infra/discord_bot_token"
-discord_app_id              = "op://Goldberry Grove - Admin/Grove Infra/discord_app_id"
-discord_public_key          = "op://Goldberry Grove - Admin/Grove Infra/discord_public_key"
-discord_insights_channel_id = "op://Goldberry Grove - Admin/Grove Infra/discord_insights_channel_id"
-discord_tunnel_token        = "op://Goldberry Grove - Admin/Grove Infra/discord_tunnel_token"
