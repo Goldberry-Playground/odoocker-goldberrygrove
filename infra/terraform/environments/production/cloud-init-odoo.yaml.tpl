@@ -201,6 +201,21 @@ write_files:
       # empty => order alerts visibly misroute into #grove-ops rather than drop.
       # Same bare-URL / no-/slack rule as DISCORD_OPS.
       DISCORD_ORDERS_WEBHOOK_URL=${discord_orders_webhook_url}
+      # Discord calendar (GOL-3831, grove-odoo-modules#395 phase C). grove_calendar
+      # reads these from os.environ via the compose environment: block. EVENTS =
+      # the channel for the Monday "Coming up" digest, falls back to DISCORD_OPS
+      # above when empty. BOT_TOKEN + GUILD_ID = phase D native events (Train #6);
+      # both empty => that cron is inert. The topic webhooks of #967 were never
+      # rendered here and so vanish on a rebuild -- these three are, so a rebuild
+      # reproduces promote day. Unquoted like the webhooks above: the TF-var
+      # validations forbid whitespace and shell metacharacters, so bash-sourcing
+      # this file under set -euo pipefail stays safe. GROVE_EVENTS_WINDOW_DAYS and
+      # GROVE_EVENTS_LOCATION_DEFAULT are NOT rendered: the compose passthrough
+      # carries their defaults (60 / Goldberry Grove Farm); add a line here by
+      # hand only to override.
+      DISCORD_EVENTS_WEBHOOK_URL=${discord_events_webhook_url}
+      DISCORD_BOT_TOKEN=${discord_bot_token}
+      DISCORD_GUILD_ID=${discord_guild_id}
       # Perenual plant-facts enrichment (GOL-2507, parent GOL-2383).
       # grove_headless services/plant_data/perenual.py reads this from
       # os.environ (compose environment: block -> here), so it MUST also be

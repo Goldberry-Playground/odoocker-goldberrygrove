@@ -541,6 +541,12 @@ resource "digitalocean_droplet" "odoo" {
     # odoo.tf. Empty default = ping silent in QA.
     discord_ops_webhook_url = var.discord_ops_webhook_url
 
+    # Discord calendar digest channel (GOL-3831, grove-odoo-modules#395 phase C).
+    # grove_calendar posts the Monday "Coming up" digest here, falling back to
+    # the ops webhook above. QA = the QA ops channel. No bot token / guild id
+    # on QA by design (events cron inert, never touches the real server).
+    discord_events_webhook_url = var.discord_events_webhook_url
+
     # Perenual plant-facts enrichment (GOL-2507, parent GOL-2383). The
     # grove.enrich.job cron only drains when PerenualProvider.configured is
     # true, i.e. os.environ PERENUAL_API_KEY is non-empty; default-empty here

@@ -47,7 +47,9 @@ the ones it knows as env on the same run, with process-level verification:
 (plus `PERENUAL_API_KEY`). Anything else rendered only by cloud-init — the
 Discord topic webhooks `DISCORD_{SALES,SUPPORT,SHIPPING}_WEBHOOK_URL` (#967) and
 the per-tenant Stripe secret keys (#969) — is a hand edit of
-`/etc/grove/docker-compose.yml` + `/etc/grove/.env` and an odoo recreate.
+`/etc/grove/docker-compose.yml` + `/etc/grove/.env` and an odoo recreate. The
+Discord **calendar** env (Train #5, GOL-3831) has that hand edit scripted:
+`scripts/prod-discord-events-apply.sh`, see the gate below.
 
 Preview before either (read-only, no spend, no lock-and-leave):
 
@@ -311,6 +313,73 @@ GOL-2326.
   `down`) posts a test embed to the ops Discord channel immediately.
 
 ---
+
+## Gate: Discord calendar env + `grove_calendar` (Train #5, GOL-3831)
+
+Train #5 ships `grove_calendar` (grove-odoo-modules#395 phase B, GOL-3830): the
+Monday "Coming up" Discord digest of public `calendar.event` rows, and from
+Train #6 native Discord scheduled events. Phase C (this repo) is the plumbing:
+compose passthrough for `DISCORD_EVENTS_WEBHOOK_URL`, `DISCORD_BOT_TOKEN`,
+`DISCORD_GUILD_ID`, `GROVE_EVENTS_WINDOW_DAYS`, `GROVE_EVENTS_LOCATION_DEFAULT`
+on prod + QA, `grove_calendar` in both `AUTO_UPGRADE_MODULES` lists, the prod
+TF chain (vars → `odoo.tf` → cloud-init `.env`) so a rebuild reproduces promote
+day, and the promote-day script for the live box. The hand-installed core
+module `google_calendar` (phase A, Josh) is tracked in
+[`prod-hand-installed-core-modules.md`](prod-hand-installed-core-modules.md).
+
+**Merge order.** Both compose files add `grove_calendar` to
+`AUTO_UPGRADE_MODULES`. QA git-sync floats grove-odoo-modules `main`, so a QA
+train-up on a `main` that lacks `grove_calendar/__manifest__.py` crash-loops
+odoo on the boot `--init`. Merge the odoocker phase C PR only **after** the
+module is on grove-odoo-modules `main`.
+
+```bash
+# 0. Josh, before the train (GOL-3829 first half): create the digest channel
+#    webhook, store it as DISCORD_EVENTS_WEBHOOK_URL on op://Grove Prod/odoocker,
+#    and uncomment TF_VAR_discord_events_webhook_url in
+#    infra/terraform/environments/production/.env.op (same day, same field).
+
+# 1. Any time, read-only: three-point report (.env / deployed compose / odoo
+#    process env) for the five keys + whether grove_calendar is in the list.
+#    exit 0 = converged, 2 = pending.
+op run --env-file=scripts/prod-discord-events.env.op -- scripts/prod-discord-events-apply.sh
+
+# 2. Wed, promote day, BEFORE Leg B. TARGET_REF = the grove-odoo-modules sha you
+#    are about to promote; the script refuses to append grove_calendar unless
+#    `gh api` proves that sha carries grove_calendar/__manifest__.py.
+TARGET_REF=<gom 40-char sha> \
+  op run --env-file=scripts/prod-discord-events.env.op -- scripts/prod-discord-events-apply.sh --apply
+
+# 3. Leg B as usual. The revision advance runs --init on the new list, which is
+#    what installs grove_calendar (and its `calendar` dependency).
+TARGET_REF=<same sha> CONFIRM=PROMOTE scripts/prod-modules-promote.sh
+
+# 4. Train #6 (GOL-3829 second half): uncomment DISCORD_BOT_TOKEN / DISCORD_GUILD_ID
+#    in scripts/prod-discord-events.env.op (and the TF_VAR lines in production/.env.op),
+#    then re-run step 2 with SKIP_MODULE=1 -- the env lines land, the list is untouched.
+```
+
+Why step 2 comes first: the recreate it performs happens on the *current*
+modules revision, so the entrypoint's marker says "unchanged" and no upgrade
+runs; Leg B then advances the pin and the rev-gated pass picks up the longer
+list. If the steps were swapped, `grove_calendar` would sit in the list with
+nothing to trigger its install until the next train — the recovery is
+`scripts/module-upgrade.sh` (clears the marker, restarts odoo).
+
+**QA.** `DISCORD_EVENTS_WEBHOOK_URL` is wired to the QA ops channel through TF
+var `discord_events_webhook_url` (`qa-app-platform/.env.op`), so the Monday
+digest is visible during the QA window. `DISCORD_BOT_TOKEN` and
+`DISCORD_GUILD_ID` are **never** written on QA: the passthrough exists, the
+values do not, so the events cron logs once at INFO and QA can never create
+scheduled events on the real server. First live check after promote (spec
+Rollout): Josh marks the Nov 27 co-op meeting Public in Gmail, confirms it
+appears in Odoo with Privacy: Public, and the Monday 11-23 digest lists it.
+
+**Rollback.** The script backs up `/etc/grove/.env` and
+`/etc/grove/docker-compose.yml` with a UTC stamp before writing and prints the
+exact `cp` + `docker compose up -d --force-recreate --no-deps odoo` that undoes
+the run. Removing `grove_calendar` from the list does not uninstall the module;
+that is a separate, data-destroying Odoo action.
 
 ## Gate: newsletter bulk mail servers (Train #4, GOL-3455 / GOL-3454)
 

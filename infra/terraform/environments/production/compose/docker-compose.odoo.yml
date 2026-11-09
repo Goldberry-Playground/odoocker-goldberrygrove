@@ -90,7 +90,20 @@ services:
       # The pin and this compose file are rendered by the SAME cloud-init apply, so
       # they cannot skew -- a rebuild takes both or neither. Re-check this if the
       # pin is ever moved BACKWARDS to a SHA predating f10c789.
-      AUTO_UPGRADE_MODULES: grove_headless,grove_support
+      #
+      # GOL-3831 (Train #5): append grove_calendar (Odoo calendar -> Discord,
+      # grove-odoo-modules#395 phase B/C). Depends on `calendar` only, which
+      # --init=base,<mods> installs transitively; it must NOT depend on
+      # google_calendar (that core module is hand-installed, see
+      # docs/prod-hand-installed-core-modules.md). SAME GATE as grove_support:
+      # this list must not reach a prod pin whose tree lacks
+      # grove_calendar/__manifest__.py or the boot --init crash-loops odoo. On
+      # a rebuild the pin and this file render from the same cloud-init apply,
+      # so they move together; on the LIVE box the deployed compose is a hand
+      # copy, and scripts/prod-discord-events-apply.sh appends the module there
+      # only after `gh api` proves TARGET_REF carries the manifest, BEFORE Leg B
+      # advances the pin (the rev-gated upgrade then runs --init on the new list).
+      AUTO_UPGRADE_MODULES: grove_headless,grove_support,grove_calendar
       # Stripe LIVE-mode prod checkout (GOL-973). grove_headless reads these
       # from os.environ (LOWERCASE names, controllers/main.py). The odoo process
       # env comes ONLY from this compose environment block -- the /.env mount
@@ -205,6 +218,25 @@ services:
       DISCORD_SALES_WEBHOOK_URL: ${DISCORD_SALES_WEBHOOK_URL:-}
       DISCORD_SUPPORT_WEBHOOK_URL: ${DISCORD_SUPPORT_WEBHOOK_URL:-}
       DISCORD_SHIPPING_WEBHOOK_URL: ${DISCORD_SHIPPING_WEBHOOK_URL:-}
+      # Discord calendar (GOL-3831, phase C of grove-odoo-modules#395
+      # docs/superpowers/specs/2026-11-07-discord-calendar-design.md).
+      # grove_calendar reads all five from os.environ. EVENTS = the channel that
+      # gets the Monday "Coming up" digest; falls back to DISCORD_OPS_WEBHOOK_URL
+      # when empty (visible misroute, never a drop -- same stance as the topic
+      # channels above). BOT_TOKEN + GUILD_ID are the phase D native-events
+      # credentials (Train #6, GOL-3829 mints them): both empty => the events
+      # cron logs once at INFO and does nothing. WINDOW_DAYS / LOCATION_DEFAULT
+      # carry compose-side defaults on purpose: an EMPTY passthrough would
+      # override the module's own default with "" (the UPS_API_BASE trap above),
+      # and int("") raises. Values come from /etc/grove/.env -- cloud-init
+      # renders the three secrets from TF vars on a rebuild; the live box gets
+      # them from scripts/prod-discord-events-apply.sh on promote day. Same
+      # bare-URL / no-/slack rule as DISCORD_OPS.
+      DISCORD_EVENTS_WEBHOOK_URL: ${DISCORD_EVENTS_WEBHOOK_URL:-}
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
+      DISCORD_GUILD_ID: ${DISCORD_GUILD_ID:-}
+      GROVE_EVENTS_WINDOW_DAYS: ${GROVE_EVENTS_WINDOW_DAYS:-60}
+      GROVE_EVENTS_LOCATION_DEFAULT: ${GROVE_EVENTS_LOCATION_DEFAULT:-Goldberry Grove Farm}
       # Perenual plant-facts enrichment (GOL-2507, parent GOL-2383).
       # grove_headless services/plant_data/perenual.py reads PERENUAL_API_KEY
       # from os.environ, and the odoo process env comes ONLY from this block
