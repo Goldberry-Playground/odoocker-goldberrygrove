@@ -845,3 +845,15 @@ variable "consult_access_aud" {
     error_message = "consult_access_aud must be empty or the 64-char hex AUD tag from the Cloudflare Access application."
   }
 }
+
+# === Storefront shared data cache (GOL-3907) - valkey.tf, apps.tf ===========
+
+variable "storefront_cache_apps" {
+  description = "Storefront apps that get the shared Valkey cache env (VALKEY_URL + GROVE_CACHE_NAMESPACE, RUN_TIME). Members: goldberry, ggg, nursery, hub. Default [] = no env on any app, so the app specs are unchanged. Rollout (Josh decides each step): goldberry, then nursery, then ggg + hub, 24h soak between, each as a targeted apply. Rollback = remove the app from the set; @grove/next-cache falls back to the local cache when VALKEY_URL is unset."
+  type        = set(string)
+  default     = []
+  validation {
+    condition     = alltrue([for a in var.storefront_cache_apps : contains(["goldberry", "ggg", "nursery", "hub"], a)])
+    error_message = "storefront_cache_apps members must be goldberry, ggg, nursery or hub."
+  }
+}

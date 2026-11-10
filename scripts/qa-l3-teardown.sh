@@ -9,7 +9,10 @@
 #              4 App Platform apps + the Odoo droplet + BOTH volume
 #              attachments (caddy_data and odoo_filestore -- the volumes
 #              themselves survive; only the attachments drop, and
-#              `make qa-l3-up` reattaches them). Managed PG (all Odoo
+#              `make qa-l3-up` reattaches them). The storefront Valkey
+#              cache (grove-qa-l3-valkey, GOL-3907) and its firewall go
+#              too: it is a rebuildable cache that only lives for the
+#              train window. Managed PG (all Odoo
 #              data), the caddy-data volume (LE certs -- rate-limit
 #              protection, see ADR-005), the DNS zone, and the reserved
 #              IP all survive.
@@ -69,7 +72,8 @@ if [ "$MODE" = "all" ]; then
   echo "!! the qa DNS zone, and the Cloudflare NS delegation."
 else
   echo "'compute' destroys: 4 App Platform apps, the Odoo droplet,"
-  echo "2 volume attachments (caddy_data + odoo_filestore), plus their"
+  echo "2 volume attachments (caddy_data + odoo_filestore), the storefront"
+  echo "Valkey cache cluster grove-qa-l3-valkey (GOL-3907), plus their"
   echo "DEPENDENTS terraform pulls in via -target: the Odoo droplet firewall"
   echo "and the odoo/apex DNS records."
   echo "Survives: Managed PG cluster+data, the LE-cert + filestore volumes,"
@@ -113,7 +117,7 @@ if [ "$MODE" = "compute" ]; then
   # env README ("Release-train teardown: App Platform apps") for rationale.
   # -target on the bare for_each address (digitalocean_app.tenant)
   # covers all its instances.
-  TARGETS="-target=digitalocean_app.hub -target=digitalocean_app.tenant -target=digitalocean_volume_attachment.caddy_data -target=digitalocean_droplet.odoo"
+  TARGETS="-target=digitalocean_app.hub -target=digitalocean_app.tenant -target=digitalocean_volume_attachment.caddy_data -target=digitalocean_droplet.odoo -target=digitalocean_database_cluster.valkey"
 fi
 
 echo "==> terraform destroy ($MODE)..."
