@@ -29,6 +29,16 @@ WHY A SHELL SCRIPT (not XML-RPC)
     `_`-prefixed calls, so keys can only be minted in-process (same reason as
     odoocker scripts/mint_agent_key_shell.py, whose idiom this mirrors).
 
+WHY with_user(user).sudo()
+    Odoo 19's _generate runs _check_expiration_date, which allows
+    expiration_date=False (a non-expiring key) only when env.is_system().
+    with_user(user) drops the shell's superuser flag. The default owner, admin,
+    is a system user so the plain call happened to work, but a non-admin
+    OWNER_LOGIN would raise "ValidationError: The API key must have an
+    expiration date". .sudo() sets su=True but keeps uid = the owner, so keys
+    are still owned by OWNER_LOGIN. Odoo's own _generate docstring says to call
+    it in sudo for a persistent key.
+
 RUN (on the QA odoo droplet, from /etc/grove)
     docker compose exec -T odoo \
         odoo shell -d odoo --no-http --logfile=/dev/null \
@@ -90,7 +100,9 @@ def main():
         return 2
 
     Apikeys = env["res.users.apikeys"].sudo()
-    generate = env["res.users.apikeys"].with_user(user)._generate
+    # .sudo() keeps uid = owner but restores su, which Odoo 19 requires for a
+    # non-expiring key (see "WHY with_user(user).sudo()" above).
+    generate = env["res.users.apikeys"].with_user(user).sudo()._generate
     kwargs = {}
     if "expiration_date" in inspect.signature(generate).parameters:
         kwargs["expiration_date"] = False  # non-expiring service credential
