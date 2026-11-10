@@ -170,7 +170,7 @@ services:
       # Shippo fulfillment (GOL-988). Outbound: sale_order.py reads
       # SHIPPO_API_KEY via os.environ (UserError when empty). Same --env-file
       # source as stripe_test_* above. (Inbound tracking webhook retired in
-      # GOL-2302 — carrier_tracking poll now sources shipped/delivered events.)
+      # GOL-2302 -- carrier_tracking poll now sources shipped/delivered events.)
       SHIPPO_API_KEY: ${SHIPPO_API_KEY:-}
       # Printify merch (GOL-3316, Train #3; spec grove-odoo-modules#340).
       # printify_client / product_template / sale_order / the printify webhook

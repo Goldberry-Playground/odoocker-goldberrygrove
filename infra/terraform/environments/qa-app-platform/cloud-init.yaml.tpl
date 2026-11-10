@@ -184,7 +184,7 @@ write_files:
       # Shippo fulfillment (GOL-988). SHIPPO_API_KEY: outbound label purchase
       # (sale_order.py raises UserError when empty). Consumed via the compose
       # environment: block, same --env-file path as stripe_test_*. (Inbound
-      # tracking webhook retired in GOL-2302 — carrier_tracking poll now sources
+      # tracking webhook retired in GOL-2302 -- carrier_tracking poll now sources
       # shipped/delivered events.)
       SHIPPO_API_KEY=${shippo_api_key}
       # Printify merch (GOL-3316, Train #3; spec grove-odoo-modules#340).
