@@ -275,10 +275,11 @@ jobs:
         run: python3 scripts/test_stripe_tax_gate.py
       - name: Run github-push doctor tests (GOL-2629 copy-paste contract)
         run: python3 scripts/test_github_push_doctor.py
-      - name: Run provisioning script tests (CEO login + per-agent Projects roster)
+      - name: Run provisioning script tests (CEO login + per-agent Projects roster + key mints)
         run: |
           python3 scripts/test_provision_ceo_user_shell.py
           python3 scripts/test_provision_project_agents_shell.py
+          python3 scripts/test_mint_key_shell_scripts.py
       - name: Run Odoo Caddyfile routing tests (bus on the evented worker)
         run: python3 scripts/test_caddy_odoo_routes.py
       - name: Run pgadmin dist-info purge tests (GOL-2846 Trivy orphan-metadata guard)
