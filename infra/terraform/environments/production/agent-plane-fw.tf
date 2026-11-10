@@ -149,6 +149,28 @@ resource "digitalocean_firewall" "agent_plane" {
     }
   }
 
+  # VPC ingress for the AgenticOS dashboard (App Platform app
+  # `agenticos-dashboard`, attached to agenticos-vpc). Its server-side routes
+  # reach the droplet's VPC-bound services directly:
+  #   1933 OpenViking  (OPENVIKING_ENDPOINT)
+  #   3100 Paperclip   (PAPERCLIP_API_URL)
+  #   5432 Postgres    (AGENTICOS_DB_URL)
+  #   7779 vault-server (VAULT_SERVER_URL)
+  # The 2026-09-29 scan above ran from the docker bridge, so it never saw these
+  # 10.116.16.2-only binds, and the 2026-10-14 "no inbound peers" check missed
+  # the dashboard. DO cloud firewalls DO filter VPC traffic, so since the fence
+  # landed on 2026-10-15 every one of these calls died in a 10s connect timeout
+  # (dashboard /memory 500s on /api/vault/*; first logged 2026-10-18). Source is
+  # the VPC CIDR only, matching the host's ufw rules -- never the world.
+  dynamic "inbound_rule" {
+    for_each = toset(var.agent_plane_vpc_ingress_ports)
+    content {
+      protocol         = "tcp"
+      port_range       = inbound_rule.value
+      source_addresses = [var.agent_plane_vpc_cidr]
+    }
+  }
+
   # Outbound stays WIDE OPEN, and this is not laziness -- it is the whole point.
   #
   # A DO cloud firewall with NO outbound rules blocks ALL egress. The agent plane
@@ -298,4 +320,16 @@ variable "agent_plane_syncthing_sync_public" {
   description = "Open Syncthing's sync transport (tcp+udp 22000) to the world on the agent plane. FALSE by default and KEPT false under the permanent fence (GOL-3392). On 2026-09-29 tcp/22000 was not listening at all; re-verified 2026-10-14 via `ss`: Syncthing now DOES listen on *:22000 tcp+udp, but its only live peer connects over Tailscale (100.80.65.84), so fencing inbound :22000 only pushes that peer onto Syncthing/Tailscale relays -- it does not break sync. Set true only if sync measurably degrades after the fence. Private-VPC listeners on 10.116.16.2 (:5432, :7779, :3100, :1933) had no inbound peers from other hosts at check time; DO cloud firewalls DO filter VPC traffic, so if something off-box ever needs one, add a VPC-CIDR inbound rule rather than widening anything to the world. The GUI (:8384) fence is unaffected either way."
   type        = bool
   default     = false
+}
+
+variable "agent_plane_vpc_cidr" {
+  description = "agenticos-vpc range (DO VPC 5cab368d-...). The AgenticOS dashboard on App Platform egresses from here; the droplet's VPC address is 10.116.16.2. Matches the host ufw `from 10.116.16.0/20` rules."
+  type        = string
+  default     = "10.116.16.0/20"
+}
+
+variable "agent_plane_vpc_ingress_ports" {
+  description = "TCP ports on the agent plane admitted from var.agent_plane_vpc_cidr, i.e. what the agenticos-dashboard App Platform app calls: 1933 OpenViking, 3100 Paperclip, 5432 Postgres, 7779 vault-server. Add a port here (not a world rule) when another VPC client appears."
+  type        = list(string)
+  default     = ["1933", "3100", "5432", "7779"]
 }
