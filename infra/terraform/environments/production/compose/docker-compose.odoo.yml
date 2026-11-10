@@ -218,6 +218,15 @@ services:
       DISCORD_SALES_WEBHOOK_URL: ${DISCORD_SALES_WEBHOOK_URL:-}
       DISCORD_SUPPORT_WEBHOOK_URL: ${DISCORD_SUPPORT_WEBHOOK_URL:-}
       DISCORD_SHIPPING_WEBHOOK_URL: ${DISCORD_SHIPPING_WEBHOOK_URL:-}
+      # Interactive order cards (grove-odoo-modules#408): Odoo POSTs each new
+      # order to the Discord bridge's /orders/alert so the bot posts the card
+      # with hold / move / Mark shipped buttons. grove_headless reads both from
+      # os.environ, and this block is the odoo process's only env source. Inert
+      # while either is empty: Odoo falls back to the plain webhook ping above.
+      # ORDER_ALERT_SECRET must equal the bridge app's value; the base URL is
+      # the bridge app's public origin, no trailing slash.
+      ORDER_ALERT_SECRET: ${ORDER_ALERT_SECRET:-}
+      DISCORD_BRIDGE_BASE_URL: ${DISCORD_BRIDGE_BASE_URL:-}
       # Discord calendar (GOL-3831, phase C of grove-odoo-modules#395
       # docs/superpowers/specs/2026-11-07-discord-calendar-design.md).
       # grove_calendar reads all five from os.environ. EVENTS = the channel that
