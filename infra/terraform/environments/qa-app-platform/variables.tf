@@ -681,3 +681,27 @@ variable "discord_events_webhook_url" {
     error_message = "discord_events_webhook_url must be empty or a bare Discord webhook URL (https://discord.com/api/webhooks/<id>/<token>) with NO /slack suffix and no whitespace -- cloud-init writes it UNQUOTED into the bash-sourced /etc/grove/.env."
   }
 }
+
+# === Storefront shared data cache QA gate (GOL-3907) - valkey.tf ============
+
+variable "valkey_outage_mode" {
+  description = "Train #5 cache-outage test. \"\" (default) = QA storefronts use the real QA Valkey. \"hang\" = VALKEY_URL points at an unreachable address (connects hang). \"refused\" = VALKEY_URL points at a closed local port (connects refused). Pages must keep serving in both. Set back to \"\" after the test."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = contains(["", "hang", "refused"], var.valkey_outage_mode)
+    error_message = "valkey_outage_mode must be \"\", \"hang\" or \"refused\"."
+  }
+}
+
+variable "valkey_operator_cidrs" {
+  description = "Operator IPs/CIDRs admitted to the QA Valkey firewall so the Train #5 gate can scan for grove:<ns>:d:* keys. Default [] = apps only. QA only; prod has no equivalent."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for c in var.valkey_operator_cidrs : can(cidrhost(c, 0)) && c != "0.0.0.0/0"])
+    error_message = "valkey_operator_cidrs entries must be CIDRs (e.g. 203.0.113.7/32) and never 0.0.0.0/0."
+  }
+}

@@ -140,6 +140,21 @@ resource "digitalocean_app" "hub" {
         }
       }
 
+      # Shared Valkey data cache (GOL-3907, valkey.tf), always on in QA.
+      # VALKEY_URL is the QA cluster's rediss:// URI and carries the password
+      # -- never print it. Namespace keeps the hub's entries apart from the others.
+      env {
+        key   = "VALKEY_URL"
+        value = local.qa_valkey_url
+        scope = "RUN_TIME"
+      }
+
+      env {
+        key   = "GROVE_CACHE_NAMESPACE"
+        value = "hub"
+        scope = "RUN_TIME"
+      }
+
       # Signed webhook secret so grove-sites' /api/revalidate can be poked by
       # Odoo / Ghost when their content changes. Rotates whenever this TF
       # applies with a new var value. Sensitive: never printed by outputs.
@@ -425,6 +440,21 @@ resource "digitalocean_app" "tenant" {
           value = "1"
           scope = "RUN_TIME"
         }
+      }
+
+      # Shared Valkey data cache (GOL-3907, valkey.tf), always on in QA.
+      # VALKEY_URL is the QA cluster's rediss:// URI and carries the password
+      # -- never print it. Namespace keeps each tenant's entries apart from the others.
+      env {
+        key   = "VALKEY_URL"
+        value = local.qa_valkey_url
+        scope = "RUN_TIME"
+      }
+
+      env {
+        key   = "GROVE_CACHE_NAMESPACE"
+        value = each.key
+        scope = "RUN_TIME"
       }
 
       # Capture-outage alert for the tenant newsletter forms (goldberry +

@@ -141,6 +141,28 @@ resource "digitalocean_app" "hub" {
         scope = "RUN_TIME"
       }
 
+      # Shared Valkey data cache (GOL-3907, valkey.tf). Only when "hub" is in
+      # var.storefront_cache_apps. VALKEY_URL is the cluster's rediss:// URI,
+      # which carries the password -- never print it. RUN_TIME + GENERAL for
+      # the same provider re-diff reason as ODOO_API_KEY.
+      dynamic "env" {
+        for_each = contains(var.storefront_cache_apps, "hub") ? [1] : []
+        content {
+          key   = "VALKEY_URL"
+          value = digitalocean_database_cluster.valkey.uri
+          scope = "RUN_TIME"
+        }
+      }
+
+      dynamic "env" {
+        for_each = contains(var.storefront_cache_apps, "hub") ? [1] : []
+        content {
+          key   = "GROVE_CACHE_NAMESPACE"
+          value = "hub"
+          scope = "RUN_TIME"
+        }
+      }
+
       # Signed webhook secret so grove-sites' /api/revalidate can be poked by
       # Odoo / Ghost on content change. GENERAL, not SECRET (see var docs).
       env {
@@ -349,6 +371,28 @@ resource "digitalocean_app" "tenant" {
         content {
           key   = "PLANNER_ENABLED"
           value = "1"
+          scope = "RUN_TIME"
+        }
+      }
+
+      # Shared Valkey data cache (GOL-3907, valkey.tf). Only for tenants in
+      # var.storefront_cache_apps; the namespace is the tenant key so the
+      # four apps never read each other's entries. VALKEY_URL carries the
+      # password -- never print it. RUN_TIME + GENERAL (provider re-diff).
+      dynamic "env" {
+        for_each = contains(var.storefront_cache_apps, each.key) ? [1] : []
+        content {
+          key   = "VALKEY_URL"
+          value = digitalocean_database_cluster.valkey.uri
+          scope = "RUN_TIME"
+        }
+      }
+
+      dynamic "env" {
+        for_each = contains(var.storefront_cache_apps, each.key) ? [1] : []
+        content {
+          key   = "GROVE_CACHE_NAMESPACE"
+          value = each.key
           scope = "RUN_TIME"
         }
       }
