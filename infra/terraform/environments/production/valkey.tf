@@ -22,6 +22,10 @@
 #                   -target=digitalocean_database_valkey_config.valkey
 # The firewall references the four apps, so -target pulls them into the plan;
 # with storefront_cache_apps = [] they must show no change.
+#
+# VALKEY_URL is RUN_TIME scope ONLY -- never BUILD_TIME / RUN_AND_BUILD_TIME.
+# `next build` must run with the cache off, and the grove-sites Dockerfiles
+# deliberately have no `ARG VALKEY_URL`; keep both that way.
 ###############################################################################
 
 resource "digitalocean_database_cluster" "valkey" {
@@ -32,6 +36,23 @@ resource "digitalocean_database_cluster" "valkey" {
   region     = var.region
   node_count = 1
   tags       = concat(local.tags, ["role-cache"])
+
+  # GROVE_CACHE_NAMESPACE must be unique per app (apps.tf sets "hub" on the hub
+  # and the tenant key on each tenant). Two apps on one namespace would not
+  # leak data but would share the warm lock and the grove:<ns>:tags hash, so
+  # one app's flush/warm would stomp the other's. Fails the plan if a tenant
+  # key ever collides with "hub".
+  lifecycle {
+    precondition {
+      condition     = length(distinct(local.storefront_cache_namespaces)) == length(local.storefront_cache_namespaces)
+      error_message = "GROVE_CACHE_NAMESPACE values must be unique per storefront app; a tenant key collides with \"hub\"."
+    }
+  }
+}
+
+locals {
+  # One GROVE_CACHE_NAMESPACE per storefront app, as set in apps.tf.
+  storefront_cache_namespaces = concat(["hub"], keys(local.tenant_apps))
 }
 
 # Eviction: volatile-lru evicts only keys that carry a TTL (cache entries), so a

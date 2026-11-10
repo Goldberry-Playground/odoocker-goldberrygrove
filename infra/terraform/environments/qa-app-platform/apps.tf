@@ -145,7 +145,7 @@ resource "digitalocean_app" "hub" {
       # -- never print it. Namespace keeps the hub's entries apart from the others.
       env {
         key   = "VALKEY_URL"
-        value = digitalocean_database_cluster.valkey.uri
+        value = local.qa_valkey_url
         scope = "RUN_TIME"
       }
 
@@ -447,7 +447,7 @@ resource "digitalocean_app" "tenant" {
       # -- never print it. Namespace keeps each tenant's entries apart from the others.
       env {
         key   = "VALKEY_URL"
-        value = digitalocean_database_cluster.valkey.uri
+        value = local.qa_valkey_url
         scope = "RUN_TIME"
       }
 
