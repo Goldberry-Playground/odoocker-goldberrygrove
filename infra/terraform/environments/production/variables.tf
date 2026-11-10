@@ -534,13 +534,6 @@ variable "shippo_api_key" {
   default     = ""
 }
 
-variable "grove_shippo_webhook_token" {
-  description = "Shared token authenticating Shippo's inbound tracking webhooks in prod (controllers/main.py compares os.environ GROVE_SHIPPO_WEBHOOK_TOKEN; empty => fail-closed). 1P: op://Grove Prod/Shippo Prod Key/webhook_token — DISTINCT from the QA token so revoking one stage never breaks the other. The same value must be embedded in the prod webhook URL registered with Shippo. user_data input — same replace semantics as shippo_api_key."
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
 # === Printify print-on-demand merch (GOL-3316, Train #3; spec gom#340) =======
 # grove_headless reads all four UPPERCASE names from os.environ
 # (models/printify_client.py / product_template.py / sale_order.py / the
