@@ -45,6 +45,16 @@ WHAT IT PRINTS
 VERSION-ROBUST
     _generate gained an `expiration_date` parameter in Odoo 17; this introspects
     the live signature and only passes it when present (works 16/17/18/19).
+
+WHY with_user(user).sudo()
+    Odoo 19's _generate runs _check_expiration_date, which allows
+    expiration_date=False (a non-expiring key) only when env.is_system().
+    with_user(user) drops the shell's superuser flag, so for any user WITHOUT
+    Settings/Administration the plain call raises "ValidationError: The API key
+    must have an expiration date". .sudo() sets su=True but keeps uid = that
+    user, so the key is still OWNED by the target user. Odoo's own _generate
+    docstring says to call it in sudo for a persistent key. Verified on prod
+    2026-11-10 (svc-discord-bridge, uid 14: plain call failed, .sudo() minted).
 """
 
 import inspect
@@ -95,7 +105,9 @@ def main():
         Apikeys.invalidate_model()
 
     # Mint as the target user so the key is OWNED by that agent, not admin.
-    generate = env["res.users.apikeys"].with_user(user)._generate
+    # .sudo() keeps uid = user but restores su, which Odoo 19 requires for a
+    # non-expiring key (see "WHY with_user(user).sudo()" above).
+    generate = env["res.users.apikeys"].with_user(user).sudo()._generate
     kwargs = {}
     if "expiration_date" in inspect.signature(generate).parameters:
         kwargs["expiration_date"] = False  # non-expiring service credential
