@@ -167,13 +167,11 @@ services:
       GROVE_STRIPE_TAX_GOLDBERRY: ${GROVE_STRIPE_TAX_GOLDBERRY:-}
       GROVE_STRIPE_TAX_GGG: ${GROVE_STRIPE_TAX_GGG:-}
       GROVE_STRIPE_TAX_NURSERY: ${GROVE_STRIPE_TAX_NURSERY:-}
-      # Shippo fulfillment (GOL-988). Outbound: sale_order.py reads
-      # SHIPPO_API_KEY via os.environ (UserError when empty). Inbound:
-      # controllers/main.py compares GROVE_SHIPPO_WEBHOOK_TOKEN (empty =>
-      # fail-closed, no unauthenticated tracking updates). Same --env-file
-      # source as stripe_test_* above; cloud-init writes both.
+      # Shippo outbound label purchase (GOL-988). sale_order.py reads
+      # SHIPPO_API_KEY via os.environ (UserError when empty). Same --env-file
+      # source as stripe_test_* above. The inbound tracking webhook was retired
+      # (GOL-2302); tracking now comes from the carrier-tracking poll.
       SHIPPO_API_KEY: ${SHIPPO_API_KEY:-}
-      GROVE_SHIPPO_WEBHOOK_TOKEN: ${GROVE_SHIPPO_WEBHOOK_TOKEN:-}
       # Printify merch (GOL-3316, Train #3; spec grove-odoo-modules#340).
       # printify_client / product_template / sale_order / the printify webhook
       # route read these four from os.environ, and os.environ comes ONLY from

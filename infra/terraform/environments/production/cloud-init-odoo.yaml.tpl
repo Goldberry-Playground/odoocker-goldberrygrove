@@ -146,12 +146,11 @@ write_files:
       GROVE_STRIPE_TAX_GOLDBERRY=${grove_stripe_tax_goldberry}
       GROVE_STRIPE_TAX_GGG=${grove_stripe_tax_ggg}
       GROVE_STRIPE_TAX_NURSERY=${grove_stripe_tax_nursery}
-      # Shippo fulfillment (GOL-988). SHIPPO_API_KEY: outbound label purchase
-      # (sale_order.py, UserError when empty). GROVE_SHIPPO_WEBHOOK_TOKEN:
-      # inbound tracking-webhook auth (controllers/main.py, fail-closed when
-      # empty). Same --env-file -> compose environment: path as stripe_test_*.
+      # Shippo outbound label purchase (GOL-988). SHIPPO_API_KEY feeds
+      # sale_order.py (UserError when empty). Same --env-file -> compose
+      # environment: path as stripe_test_*. The inbound tracking webhook was
+      # retired (GOL-2302); tracking now comes from the carrier-tracking poll.
       SHIPPO_API_KEY=${shippo_api_key}
-      GROVE_SHIPPO_WEBHOOK_TOKEN=${grove_shippo_webhook_token}
       # Printify merch (GOL-3316, Train #3; spec grove-odoo-modules#340).
       # grove_headless reads all four from os.environ: token+shop drive the
       # product sync and the order push (empty => clear error, no call),

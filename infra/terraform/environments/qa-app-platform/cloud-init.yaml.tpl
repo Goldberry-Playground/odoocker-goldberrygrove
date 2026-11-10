@@ -181,13 +181,12 @@ write_files:
       SMTP_PASSWORD=${smtp_password}
       EMAIL_FROM="${email_from}"
       FROM_FILTER=${from_filter}
-      # Shippo fulfillment (GOL-988). SHIPPO_API_KEY: outbound label purchase
-      # (sale_order.py raises UserError when empty). GROVE_SHIPPO_WEBHOOK_TOKEN:
-      # inbound tracking-webhook auth (controllers/main.py compares; empty =>
-      # fail-closed). Consumed via the compose environment: block, same
-      # --env-file path as stripe_test_*.
+      # Shippo outbound label purchase (GOL-988). SHIPPO_API_KEY feeds
+      # sale_order.py (UserError when empty), consumed via the compose
+      # environment: block, same --env-file path as stripe_test_*. The inbound
+      # tracking webhook was retired (GOL-2302); tracking now comes from the
+      # carrier-tracking poll.
       SHIPPO_API_KEY=${shippo_api_key}
-      GROVE_SHIPPO_WEBHOOK_TOKEN=${grove_shippo_webhook_token}
       # Printify merch (GOL-3316, Train #3; spec grove-odoo-modules#340).
       # grove_headless reads all four from os.environ: token+shop drive the
       # product sync and the order push (empty => clear error, no call),

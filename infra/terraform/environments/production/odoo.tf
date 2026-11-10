@@ -198,11 +198,11 @@ resource "digitalocean_droplet" "odoo" {
     grove_stripe_tax_ggg       = contains(var.grove_stripe_tax_tenants, "ggg") ? "1" : ""
     grove_stripe_tax_nursery   = contains(var.grove_stripe_tax_tenants, "nursery") ? "1" : ""
 
-    # Shippo fulfillment (GOL-988). Default-empty => label purchase raises
-    # UserError and the tracking webhook fails closed. Activation rides the
-    # board-gated GOL-484 rebuild (user_data input).
-    shippo_api_key             = var.shippo_api_key
-    grove_shippo_webhook_token = var.grove_shippo_webhook_token
+    # Shippo outbound label purchase (GOL-988). Default-empty => label purchase
+    # raises UserError. Activation rides the board-gated GOL-484 rebuild
+    # (user_data input). The inbound tracking webhook was retired (GOL-2302);
+    # shipped/delivered events now come from the carrier-tracking poll.
+    shippo_api_key = var.shippo_api_key
 
     # Printify merch (GOL-3316, Train #3). Token/shop default-empty => sync and
     # push raise a clear error; webhook secret empty => fails closed; dry-run
