@@ -343,7 +343,6 @@ Procedures that are not tied to an alert key. Each one is a standalone `docs/RUN
 
 - [RUNBOOK-agent-plane-firewall-GOL-2569.md](RUNBOOK-agent-plane-firewall-GOL-2569.md): fence the agent plane (`agenticos-droplet`) behind a cloud firewall
 - [RUNBOOK-firewall-census-GOL-2572.md](RUNBOOK-firewall-census-GOL-2572.md): the account-wide firewall census fired (GOL-2572)
-- [RUNBOOK-legacy-ghost-firewall.md](RUNBOOK-legacy-ghost-firewall.md): legacy Ghost snowflake fence (GOL-2566) and its two-step retirement (GOL-863)
 - [RUNBOOK-prod-odoo-ci-fence-GOL-3414.md](RUNBOOK-prod-odoo-ci-fence-GOL-3414.md): CI SSH through the prod Odoo fence (GOL-3414)
 - [RUNBOOK-reattach-prod-odoo-firewall-GOL-2565.md](RUNBOOK-reattach-prod-odoo-firewall-GOL-2565.md): reattach `grove-prod-odoo-fw` to `grove-prod-odoo` (GOL-2565)
 - [RUNBOOK-refresh-admin-ip-cidrs.md](RUNBOOK-refresh-admin-ip-cidrs.md): refresh the operator SSH allowlist (`admin_ip_cidrs`)

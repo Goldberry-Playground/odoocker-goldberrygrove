@@ -3,7 +3,7 @@
 #
 # `agenticos-droplet` (droplet 572389418, 159.223.171.231, created 2026-05-21,
 # tags ["agenticos","Production"]) sits in NO DO cloud firewall. Same structural
-# blind spot as the legacy Ghost box next door in legacy-ghost-fw.tf: there is no
+# blind spot the legacy Ghost box had (GOL-2566, retired under GOL-863): there is no
 # Terraform resource for the droplet, so nothing can converge, and the nightly
 # membership watcher cannot see it either -- that check asserts codified
 # firewalls contain their codified droplets, and an un-codified droplet is
@@ -93,7 +93,8 @@
 # the DO console (immediate). Host-level rules are untouched either way.
 #
 # Related: GOL-2565 (prod Odoo membership drift - APPLIED, verified filtered
-# 2026-09-29), GOL-2566 (legacy Ghost snowflake, legacy-ghost-fw.tf), GOL-2306
+# 2026-09-29), GOL-2566 (legacy Ghost snowflake fence; droplet destroyed and
+# fence removed under GOL-863 / GOL-3812, see git history), GOL-2306
 # (the token half), PR #745 (membership watcher that cannot cover un-codified
 # droplets - see GOL-2572 for the census extension that can).
 ###############################################################################

@@ -12,10 +12,12 @@
 # because its custom domains are the four live brand APEXES - the launch
 # cutover is a one-way door needing CEO coordination.
 #
-# Track 1 replaces the two hand-managed Ghost snowflake droplets
-# (gatheratthegrove-blog-nyc, ghostgoldberrygrove-nyc1). Until the launch
-# cutover, the brand apexes continue to serve Ghost - from this env's
-# blogs droplet once Tasks 6/7 repoint them.
+# Track 1 replaced the two hand-managed Ghost snowflake droplets
+# (gatheratthegrove-blog-nyc, ghostgoldberrygrove-nyc1); both are gone (the
+# last one, 468914087, destroyed 2026-11-06 under GOL-863, its empty cloud
+# firewall removed under GOL-3812). Every droplet in this account is now
+# declared in Terraform. Until the launch cutover, the brand apexes continued
+# to serve Ghost - from this env's blogs droplet once Tasks 6/7 repointed them.
 #
 # Apply is MANUAL by decision (no CI apply for production):
 #   cd infra/terraform/environments/production

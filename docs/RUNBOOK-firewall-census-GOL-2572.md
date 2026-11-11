@@ -100,8 +100,9 @@ neither knows nor preserves it. Codify it:
 1. Add `infra/terraform/environments/production/<name>-fw.tf` declaring a
    `digitalocean_firewall` with `droplet_ids = [<id>]` and the narrowest
    inbound set that keeps the box working (`:22` from known `/32`s only).
-   `agent-plane-fw.tf` (GOL-2569) and `legacy-ghost-fw.tf` (GOL-2566) are the
-   worked examples.
+   `agent-plane-fw.tf` (GOL-2569) is the worked example (`legacy-ghost-fw.tf`,
+   GOL-2566, was the other until its droplet was retired under GOL-863 and the
+   empty fence removed under GOL-3812 - `git log --all -- '*legacy-ghost-fw.tf'`).
 2. `terraform -chdir=... plan -target=digitalocean_firewall.<label>` — confirm
    the plan is a **create only**, with no droplet replace anywhere in it
    (GOL-817: never bare-apply production).
