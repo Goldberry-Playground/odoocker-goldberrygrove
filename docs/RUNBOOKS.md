@@ -358,6 +358,7 @@ Procedures that are not tied to an alert key. Each one is a standalone `docs/RUN
 - [RUNBOOK-agent-plane-cred-hardening-GOL-2306.md](RUNBOOK-agent-plane-cred-hardening-GOL-2306.md): Harden agent-plane prod-credential exposure (GOL-2306)
 - [RUNBOOK-otto-key-writeback.md](RUNBOOK-otto-key-writeback.md): Otto `ODOO_API_KEY` write-back vault (`Grove CI Writeback`)
 - [RUNBOOK-rotate-op-service-account-token.md](RUNBOOK-rotate-op-service-account-token.md): rotate the 1Password service-account token (agent runtime)
+- [RUNBOOK-dec-2026-credential-window-GOL-3802.md](RUNBOOK-dec-2026-credential-window-GOL-3802.md): December 2026 batched credential-rotation window — SSH key, DO tokens, Cloudflare + R2, Paperclip key, Stripe rename (GOL-3802)
 
 ### Terraform state
 

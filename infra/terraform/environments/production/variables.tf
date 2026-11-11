@@ -10,6 +10,12 @@ variable "cloudflare_api_token" {
   sensitive   = true
 }
 
+variable "prod_admin_ssh_key_name" {
+  description = "Name (in DO → Settings → Security → SSH keys) of the out-of-band operator/admin key trusted by grove-prod-odoo and grove-prod-blogs. Referenced via a data source, never managed. Default is the historical `grove-qa-admin`; the December 2026 credential window (GOL-3802 / GOL-2306) flips this to the Josh-held `grove-prod-admin` once that key exists in DO. Changing it is a NO-OP plan on the running droplets because `ssh_keys` is in ignore_changes (the DO provider force-REPLACES a droplet when ssh_keys changes); the live authorized_keys edit is a manual step (docs/RUNBOOK-dec-2026-credential-window-GOL-3802.md item 1) and the new name takes effect on the next board-gated rebuild."
+  type        = string
+  default     = "grove-qa-admin"
+}
+
 variable "spaces_access_id" {
   description = "DO Spaces access key (plumbing key, All Buckets) for the digitalocean provider's S3-protocol bucket operations AND the droplet's rclone backup uploads."
   type        = string

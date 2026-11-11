@@ -140,8 +140,13 @@ Diff (both prod droplets):
 
 Notes:
 - `qa_deploy` stays (deploy path; its private half is **not** on the agent host).
-- **Inert until rebuild:** prod droplet `user_data` is in `ignore_changes` and
-  `ssh_keys` only applies at create — so this PR does **not** touch running prod;
+- **Inert until rebuild — CORRECTED (GOL-3802, 2026-11-06):** the DO provider
+  force-**replaces** a droplet when `ssh_keys` changes ("Modifying this field will
+  prompt you to destroy and recreate the Droplet"), so the swap above would have
+  proposed a prod replace and tripped `prod-plan-guard`. `ssh_keys` is now in
+  `ignore_changes` on both prod droplets and the key name is
+  `var.prod_admin_ssh_key_name` (tfvars, no same-day PR). With that, this diff
+  does **not** touch running prod;
   it guarantees the *next* board-gated rebuild trusts only `qa_deploy + prod_admin`.
   The live severing is done by A1, not by this diff.
 - **observability** (`main.tf:105`) also defaults to `grove-qa-admin`. Lower

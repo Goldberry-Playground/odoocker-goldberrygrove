@@ -103,8 +103,12 @@ data "digitalocean_ssh_key" "qa_deploy" {
   name = "grove-qa-deploy"
 }
 
+# Operator/admin key, out-of-band. Name is a variable so the December 2026
+# credential window (GOL-3802 / GOL-2306) can swap it to the Josh-held
+# `grove-prod-admin` via tfvars with no same-day PR. See ssh_keys + lifecycle
+# below for why that swap is a no-op on the running droplet.
 data "digitalocean_ssh_key" "qa_admin" {
-  name = "grove-qa-admin"
+  name = var.prod_admin_ssh_key_name
 }
 
 # -- The droplet ---------------------------------------------------------------
@@ -232,8 +236,15 @@ resource "digitalocean_droplet" "blogs" {
   # the live droplet was applied with an operator-local value). Codify it in 1P
   # before the Phase-2 replace or the rebuilt droplet is itself a snowflake — see
   # docs/RUNBOOK-blogs-user_data-reproducibility.md.
+  # ssh_keys (GOL-3802): the DO provider docs are explicit -- "Once a Droplet is
+  # created keys can not be added or removed via this provider. Modifying this
+  # field will prompt you to destroy and recreate the Droplet." So swapping the
+  # admin key data source (grove-qa-admin -> grove-prod-admin) would otherwise
+  # propose a prod REPLACE and trip prod-plan-guard. The live authorized_keys
+  # edit is manual (docs/RUNBOOK-dec-2026-credential-window-GOL-3802.md item 1);
+  # config here only governs what the NEXT deliberate rebuild trusts.
   lifecycle {
-    ignore_changes = [user_data, monitoring]
+    ignore_changes = [user_data, monitoring, ssh_keys]
   }
 }
 
