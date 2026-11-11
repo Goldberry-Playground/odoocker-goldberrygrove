@@ -463,13 +463,6 @@ variable "shippo_api_key" {
   default     = ""
 }
 
-variable "grove_shippo_webhook_token" {
-  description = "Shared token authenticating Shippo's inbound tracking webhooks (grove_headless controllers/main.py reads os.environ GROVE_SHIPPO_WEBHOOK_TOKEN and compares). Empty default = webhook auth fails closed (no unauthenticated status updates). 1P: op://Grove QA/Shippo Key/webhook_token. The same value must be embedded in the webhook URL registered with Shippo. Feeds user_data — changing it REPLACES the QA odoo droplet."
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
 # --- Printify print-on-demand merch (GOL-3316, Train #3; spec grove-odoo-modules#340)
 # grove_headless reads all four UPPERCASE names from os.environ
 # (models/printify_client.py / product_template.py / sale_order.py / the
