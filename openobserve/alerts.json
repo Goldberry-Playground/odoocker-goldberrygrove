@@ -11,11 +11,17 @@
       "query_condition": {
         "type": "custom",
         "conditions": {
-          "or": [
+          "and": [
             {
               "column": "success",
               "operator": "=",
               "value": "0",
+              "ignore_case": false
+            },
+            {
+              "column": "tier",
+              "operator": "=",
+              "value": "frontend",
               "ignore_case": false
             }
           ]
@@ -59,11 +65,23 @@
       "query_condition": {
         "type": "custom",
         "conditions": {
-          "or": [
+          "and": [
             {
               "column": "success",
               "operator": "=",
               "value": "0",
+              "ignore_case": false
+            },
+            {
+              "column": "tier",
+              "operator": "=",
+              "value": "frontend",
+              "ignore_case": false
+            },
+            {
+              "column": "route",
+              "operator": "=",
+              "value": "root",
               "ignore_case": false
             }
           ]
@@ -107,11 +125,17 @@
       "query_condition": {
         "type": "custom",
         "conditions": {
-          "or": [
+          "and": [
             {
               "column": "success",
               "operator": "=",
               "value": "0",
+              "ignore_case": false
+            },
+            {
+              "column": "service",
+              "operator": "=",
+              "value": "odoo",
               "ignore_case": false
             }
           ]
@@ -155,11 +179,17 @@
       "query_condition": {
         "type": "custom",
         "conditions": {
-          "or": [
+          "and": [
             {
               "column": "success",
               "operator": "=",
               "value": "0",
+              "ignore_case": false
+            },
+            {
+              "column": "service",
+              "operator": "=",
+              "value": "odoo",
               "ignore_case": false
             }
           ]
@@ -203,11 +233,17 @@
       "query_condition": {
         "type": "custom",
         "conditions": {
-          "or": [
+          "and": [
             {
               "column": "success",
               "operator": "=",
               "value": "0",
+              "ignore_case": false
+            },
+            {
+              "column": "service",
+              "operator": "=",
+              "value": "ghost",
               "ignore_case": false
             }
           ]
@@ -251,11 +287,17 @@
       "query_condition": {
         "type": "custom",
         "conditions": {
-          "or": [
+          "and": [
             {
               "column": "success",
               "operator": "=",
               "value": "0",
+              "ignore_case": false
+            },
+            {
+              "column": "service",
+              "operator": "=",
+              "value": "postgres",
               "ignore_case": false
             }
           ]

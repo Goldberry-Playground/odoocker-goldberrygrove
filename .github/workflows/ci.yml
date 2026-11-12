@@ -290,6 +290,16 @@ jobs:
         run: python3 scripts/test_qa_pg_firewall_independence.py
       - name: Run modules-pin reconcile tests (GOL-2281)
         run: python3 scripts/test_reconcile_modules_pin.py
+      # The synthetic/ tests (incl. the alert contract that guards against
+      # unscoped uptime/journey rules paging every service at once) were never
+      # wired into CI. They are stdlib-only and import their siblings, so run
+      # them from inside synthetic/.
+      - name: Run synthetic runner + alert contract tests
+        working-directory: synthetic
+        run: |
+          python3 test_alert_contract.py
+          python3 test_probes.py
+          python3 test_run.py
       - name: Run modules-pin drift watcher tests (GOL-2580)
         run: python3 scripts/test_check_prod_modules_pin.py
       - name: Run prod modules-promote tests (GOL-2346 Leg B money guard)
