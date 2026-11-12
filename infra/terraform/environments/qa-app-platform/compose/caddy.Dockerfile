@@ -62,9 +62,14 @@ FROM caddy:2-builder AS builder
 # github.com/go-jose/go-jose/v4 v4.1.5 (DoS parsing JWKs with RSA keys; fixed in
 # 4.1.6). The module root IS an importable package (`jose`), so the plain
 # `--with module@ver` floor works here.
+#
+# 2026-11-11: x/net drifted again -- HIGH CVE-2026-78661 (golang.org/x/net/html
+# DoS, fixed in 0.62.0) against the v0.60.0 floor above (seen on Dependabot
+# odoocker-goldberrygrove#1015). The http2 sub-package floor raises the whole
+# x/net module, so bumping it to v0.62.0 also pulls the fixed html package.
 RUN xcaddy build \
     --with github.com/caddy-dns/digitalocean@v0.0.0-20250606074528-04bde2867106 \
-    --with golang.org/x/net/http2@v0.60.0 \
+    --with golang.org/x/net/http2@v0.62.0 \
     --with github.com/go-jose/go-jose/v4@v4.1.6
 
 FROM caddy:2
