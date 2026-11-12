@@ -317,10 +317,10 @@ GOL-2326.
 ## Gate: Discord calendar env + `grove_calendar` (Train #5, GOL-3831)
 
 Train #5 ships `grove_calendar` (grove-odoo-modules#395 phase B, GOL-3830): the
-Monday "Coming up" Discord digest of public `calendar.event` rows, and from
-Train #6 native Discord scheduled events. Phase C (this repo) is the plumbing:
+Monday "Coming up" Discord digest of public `calendar.event` rows, and phase D
+native Discord scheduled events (Josh ruled 2026-11-08: all phases ride Train #5). Phase C (this repo) is the plumbing:
 compose passthrough for `DISCORD_EVENTS_WEBHOOK_URL`, `DISCORD_BOT_TOKEN`,
-`DISCORD_GUILD_ID`, `GROVE_EVENTS_WINDOW_DAYS`, `GROVE_EVENTS_LOCATION_DEFAULT`
+`DISCORD_GUILD_ID`, `GROVE_EVENTS_WINDOW_DAYS`, `GROVE_EVENTS_DEFAULT_ROOM`
 on prod + QA, `grove_calendar` in both `AUTO_UPGRADE_MODULES` lists, the prod
 TF chain (vars → `odoo.tf` → cloud-init `.env`) so a rebuild reproduces promote
 day, and the promote-day script for the live box. The hand-installed core
@@ -334,13 +334,13 @@ odoo on the boot `--init`. Merge the odoocker phase C PR only **after** the
 module is on grove-odoo-modules `main`.
 
 ```bash
-# 0. Josh, before the train (GOL-3829 first half): create the digest channel
-#    webhook, store it as DISCORD_EVENTS_WEBHOOK_URL on op://Grove Prod/odoocker,
-#    and uncomment TF_VAR_discord_events_webhook_url in
-#    infra/terraform/environments/production/.env.op (same day, same field).
+# 0. Done 2026-11-08 (GOL-3829): DISCORD_EVENTS_WEBHOOK_URL, DISCORD_BOT_TOKEN and
+#    DISCORD_GUILD_ID exist on op://Grove Prod/odoocker; all three refs are active
+#    in scripts/prod-discord-events.env.op and production/.env.op.
 
 # 1. Any time, read-only: three-point report (.env / deployed compose / odoo
 #    process env) for the five keys + whether grove_calendar is in the list.
+#    Expect "provided (N chars), will be written" for all three secrets.
 #    exit 0 = converged, 2 = pending.
 op run --env-file=scripts/prod-discord-events.env.op -- scripts/prod-discord-events-apply.sh
 
@@ -354,9 +354,13 @@ TARGET_REF=<gom 40-char sha> \
 #    what installs grove_calendar (and its `calendar` dependency).
 TARGET_REF=<same sha> CONFIRM=PROMOTE scripts/prod-modules-promote.sh
 
-# 4. Train #6 (GOL-3829 second half): uncomment DISCORD_BOT_TOKEN / DISCORD_GUILD_ID
-#    in scripts/prod-discord-events.env.op (and the TF_VAR lines in production/.env.op),
-#    then re-run step 2 with SKIP_MODULE=1 -- the env lines land, the list is untouched.
+# 4. Josh, in Odoo: tick "publishes to Discord" on his user. That switch is what
+#    starts the first live phase D sync -- QA never exercises phase D (no bot
+#    token, no Google pairing), so prod is the first run. Watch the guild's
+#    Events tab and the odoo log for grove.calendar.discord.
+#
+# Escape hatch, any later time: SKIP_MODULE=1 re-runs step 2 for env lines only
+# (e.g. a rotated bot token) without touching AUTO_UPGRADE_MODULES.
 ```
 
 Why step 2 comes first: the recreate it performs happens on the *current*

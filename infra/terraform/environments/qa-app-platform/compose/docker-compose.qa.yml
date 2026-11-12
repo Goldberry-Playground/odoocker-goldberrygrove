@@ -245,7 +245,7 @@ services:
       # written to QA's /etc/grove/.env: with both empty the phase D events cron
       # logs once at INFO and does nothing, so QA can never create scheduled
       # events on the real Discord server. The passthrough lines still exist so
-      # the compose matches prod shape. WINDOW_DAYS / LOCATION_DEFAULT carry
+      # the compose matches prod shape. WINDOW_DAYS / DEFAULT_ROOM carry
       # compose-side defaults because an EMPTY passthrough would override the
       # module's own default with "" (the UPS_API_BASE trap above). Same
       # bare-URL / no-/slack rule as DISCORD_OPS.
@@ -253,7 +253,7 @@ services:
       DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
       DISCORD_GUILD_ID: ${DISCORD_GUILD_ID:-}
       GROVE_EVENTS_WINDOW_DAYS: ${GROVE_EVENTS_WINDOW_DAYS:-60}
-      GROVE_EVENTS_LOCATION_DEFAULT: ${GROVE_EVENTS_LOCATION_DEFAULT:-Goldberry Grove Farm}
+      GROVE_EVENTS_DEFAULT_ROOM: ${GROVE_EVENTS_DEFAULT_ROOM:-grove-chat}
       # Perenual plant-facts enrichment (GOL-2507, parent GOL-2383).
       # grove_headless services/plant_data/perenual.py reads PERENUAL_API_KEY
       # from os.environ, and the odoo process env comes ONLY from this block

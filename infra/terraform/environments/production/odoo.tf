@@ -251,7 +251,7 @@ resource "digitalocean_droplet" "odoo" {
     discord_orders_webhook_url = var.discord_orders_webhook_url
     # Discord calendar (GOL-3831, grove-odoo-modules#395 phase C). grove_calendar
     # posts the Monday digest to EVENTS (falls back to the ops webhook above when
-    # empty) and, from Train #6, syncs native guild events with BOT_TOKEN +
+    # empty) and, from Train #5, syncs native guild events with BOT_TOKEN +
     # GUILD_ID. All three default empty => digest misroutes visibly to #grove-ops,
     # events cron inert. user_data is in ignore_changes (below), so landing this
     # does NOT touch the running droplet; the live box gets the lines from
