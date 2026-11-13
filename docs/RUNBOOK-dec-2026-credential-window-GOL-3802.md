@@ -219,37 +219,49 @@ Agent heartbeats keep working (they use per-run JWTs, not the board key).
 
 ---
 
-## Item 5 — Stripe env-var rename (GOL-3702 lineage) — **needs one confirmation**
+## Item 5 — Stripe env-var rename (GOL-3702 lineage) — **confirmed by Josh 2026-11-13**
 
-**What is live today** (`production/.env.op`, `variables.tf`, `odoo.tf`, `cloud-init-odoo.yaml.tpl`,
-`compose/docker-compose.odoo.yml`; mirrored in `qa-app-platform`):
+Two parts. Part A is code and needs no vault change. Part B is the vault field rename.
 
-| env var on the Odoo box | TF var | vault field | role |
-|---|---|---|---|
-| `stripe_secret_key_goldberry` | `stripe_secret_key_goldberry` | `Grove Prod/stripe/goldberry_stripe_key` | per-tenant, live since 2026-10-30 (#969) |
-| `stripe_secret_key_nursery` | `stripe_secret_key_nursery` | `Grove Prod/stripe/atthegrovenursery_stripe_key` | per-tenant |
-| `stripe_secret_key_ggg` | `stripe_secret_key_ggg` | `Grove Prod/stripe/ggg_stripe_key` | per-tenant |
-| `stripe_test_secret_key` | `stripe_test_secret_key` | `Grove Prod/stripe/atthegrovenursery_stripe_key` (**same field as nursery**) | legacy global fallback; **misnamed** — it holds a LIVE `rk_live_` key, and `grove_headless._tenant_secret_key()` ignores it once any per-tenant key is set (fail-closed per tenant) |
+**Part A — retire the misnamed global `stripe_test_secret_key` from prod (PR, Josh merges).**
+It held the nursery `rk_live_` key under a "test" name. `grove_headless._tenant_secret_key()`
+never reads it once any `stripe_secret_key_{tenant}` is set (per-tenant mode, live since
+2026-10-30, #969), so removing it changes no charge path. The PR drops the TF var, the
+`.env.op` ref, the cloud-init line and the compose line, and extends
+`scripts/check-checkout-secrets-wired.sh` to require all three prod per-tenant refs and
+reject the global coming back. `user_data` is in `ignore_changes`, so the plan is
+`No changes` and the droplet is not replaced.
 
-**Terra's reading of "env-var rename":** retire the misnamed global `stripe_test_secret_key`
-from prod (TF var, `.env.op` line, cloud-init line, compose line) now that all three tenants
-have their own key, and rename the odd-one-out vault field `atthegrovenursery_stripe_key` →
-`nursery_stripe_key` so the three fields match the slugs. **Josh confirms or corrects this
-in the GOL-3802 confirmation before any PR** — it is a money-flow path (maintainer-protected,
-Josh merges).
+After it merges, converge the running box by hand (same method as 2026-10-30). The line is
+inert, so this is tidy-up and can wait for the window:
 
-Once confirmed, the order is: (1) Terra PR renames the `.env.op` ref + drops the global var
-(plan stays green: the var defaults to `""`, `user_data` is in `ignore_changes` ⇒ **no droplet
-replace**); (2) Josh renames the vault field *after* that PR merges (the `op://` ref and the
-field flip together); (3) converge the running box by hand exactly as on 2026-10-30:
-edit `/etc/grove/.env`, `docker compose up -d odoo`; (4) verify.
+```bash
+ssh grove-prod-odoo
+sudo cp /etc/grove/.env /etc/grove/.env.bak-gol3802
+sudo sed -i '/^stripe_test_secret_key=/d' /etc/grove/.env
+# then pull the compose file from main and: docker compose --env-file /etc/grove/.env up -d odoo
+```
+
+QA is untouched: there `stripe_test_secret_key` really is a test key and is the only key.
+
+**Part B — rename the vault field `atthegrovenursery_stripe_key` → `nursery_stripe_key`.**
+`op` resolves every ref in `.env.op` together, so a ref that points at a missing field breaks
+every prod plan. Do it add-then-remove so nothing is ever unresolvable:
+
+1. Josh: on `Grove Prod/stripe`, **add** field `nursery_stripe_key` with the same value as
+   `atthegrovenursery_stripe_key`. Leave the old field in place. Comment on GOL-3802.
+2. Terra: one-line PR that points `TF_VAR_stripe_secret_key_nursery` (and
+   `scripts/cred-window-verify.sh`) at the new field. `prod-plan-guard` on that PR proves the
+   new field resolves. Josh merges.
+3. Josh: delete the old field `atthegrovenursery_stripe_key`.
 
 **Verify:** `bash scripts/cred-window-verify.sh stripe` → three **distinct** `acct_` ids
 (goldberry `acct_1RbD4B…`, nursery `acct_16cKwA…`, ggg `acct_1Ttsj9…`); one $0.50 live
 checkout per storefront lands in its own Stripe account (GOL-3702 cutover recipe); prod
 `terraform plan` → `No changes`.
 
-**Rollback:** restore the `.env.op` line and the vault field name; the per-tenant keys are
+**Rollback:** Part A: revert the PR and restore the `/etc/grove/.env` backup. Part B: point
+the ref back at the old field (it still exists until step 3). The per-tenant key values are
 untouched by this item, so checkout never depends on the rename landing.
 
 ---

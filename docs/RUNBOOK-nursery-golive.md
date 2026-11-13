@@ -94,6 +94,11 @@ slug-resolved → zero app-code impact per GOL-1214).
 
 ### 3. Inject the live nursery Stripe key
 
+> **Historical (launch, 2026-08).** Prod no longer uses the global
+> `stripe_test_secret_key`; it was retired in GOL-3802. The nursery key now
+> reaches Odoo as `stripe_secret_key_nursery`. See
+> `docs/RUNBOOK-checkout-stripe-guardrails.md` §4.
+
 grove_headless reads its Stripe secret from the **lowercase** process env
 `stripe_test_secret_key` — the single point of failure for ALL checkout (see
 `scripts/check-checkout-secrets-wired.sh`). Inject the live **nursery backend**
