@@ -116,9 +116,20 @@ main() {
   echo ">> $MODULE NOT in AUTO_UPGRADE_MODULES"
 
   # --- gate 2: the image carries the addons the module depends on ---------------
+  # Look where odoo itself looks: the addons path from the process env, else
+  # from the rendered config. Only if neither resolves, fall back to a bounded
+  # find (addons sit 6-7 levels deep under dist-packages/odoo).
+  APATH="$(dc exec -T odoo sh -c 'printenv ADDONS_PATH || sed -n "s/^addons_path *= *//p" "${ODOO_RC:-/etc/odoo/odoo.conf}"' 2>/dev/null | head -1 | tr -d '\r' || true)"
+  echo ">> odoo addons path = ${APATH:-<unresolved, falling back to find>}"
   MISSING=""
   for A in $REQUIRE_ADDONS; do
-    HIT="$(dc exec -T odoo sh -c "find / -xdev -maxdepth 5 -type d -name '$A' 2>/dev/null | head -1" 2>/dev/null | tr -d '\r' || true)"
+    HIT=""
+    for D in $(printf '%s' "$APATH" | tr ',' ' '); do
+      if dc exec -T odoo test -f "$D/$A/__manifest__.py" 2>/dev/null; then HIT="$D/$A"; break; fi
+    done
+    if [ -z "$HIT" ] && [ -z "$APATH" ]; then
+      HIT="$(dc exec -T odoo sh -c "find / -xdev -maxdepth 8 -type d -name '$A' 2>/dev/null | head -1" 2>/dev/null | tr -d '\r' || true)"
+    fi
     if [ -n "$HIT" ] && dc exec -T odoo test -f "$HIT/__manifest__.py" 2>/dev/null; then
       echo ">> gate 2 OK: $A at $HIT"
     else
