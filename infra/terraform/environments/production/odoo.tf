@@ -167,7 +167,8 @@ resource "digitalocean_droplet" "odoo" {
     # CFO mints the live keys and the board greenlights a rebuild; user_data is
     # in ignore_changes (below) so landing this scaffold does NOT touch the
     # running droplet — only a board-gated rebuild activates it.
-    stripe_test_secret_key     = var.stripe_test_secret_key
+    # The global stripe_test_secret_key fallback is retired (GOL-3802); the
+    # secret key is per-tenant only (stripe_secret_key_{tenant} below).
     stripe_test_webhook_secret = var.stripe_test_webhook_secret
 
     # Per-tenant Stripe webhook signing secrets (GOL-973 Gap A, mirrors QA
@@ -184,6 +185,8 @@ resource "digitalocean_droplet" "odoo" {
     # storefront charges into its OWN LLC's account. grove_headless
     # _tenant_secret_key() prefers stripe_secret_key_{tenant}; once ANY is set
     # a tenant without one fails closed (503), so all three ship together.
+    # No global fallback exists in prod (GOL-3802), and
+    # scripts/check-checkout-secrets-wired.sh reds a PR that drops one ref.
     stripe_secret_key_goldberry = var.stripe_secret_key_goldberry
     stripe_secret_key_nursery   = var.stripe_secret_key_nursery
     stripe_secret_key_ggg       = var.stripe_secret_key_ggg

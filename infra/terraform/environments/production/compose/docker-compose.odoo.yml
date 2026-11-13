@@ -114,7 +114,6 @@ services:
       # key shortcut or revoking a storefront key would kill checkout. Default-
       # empty so the controller no-ops (checkout inert / webhook not verified)
       # until CFO mints the live keys AND the board greenlights a rebuild.
-      stripe_test_secret_key: ${stripe_test_secret_key:-}
       stripe_test_webhook_secret: ${stripe_test_webhook_secret:-}
       # Per-tenant Stripe webhook signing secrets (GOL-973 Gap A, mirrors QA
       # GOL-1016 docker-compose.qa.yml). grove_headless tries EACH non-empty
@@ -126,7 +125,9 @@ services:
       stripe_webhook_secret_ggg: ${stripe_webhook_secret_ggg:-}
       stripe_webhook_secret_goldberry: ${stripe_webhook_secret_goldberry:-}
       # Per-tenant Stripe SECRET keys (GOL-1892 Gap B, Josh 2026-10-30). See
-      # cloud-init-odoo.yaml.tpl: all three or none.
+      # cloud-init-odoo.yaml.tpl: all three or none. These are the ONLY secret
+      # keys in prod -- the global stripe_test_secret_key fallback is retired
+      # (GOL-3802).
       stripe_secret_key_goldberry: ${stripe_secret_key_goldberry:-}
       stripe_secret_key_nursery: ${stripe_secret_key_nursery:-}
       stripe_secret_key_ggg: ${stripe_secret_key_ggg:-}
