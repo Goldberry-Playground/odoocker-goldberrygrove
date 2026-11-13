@@ -103,7 +103,16 @@ services:
       # copy, and scripts/prod-discord-events-apply.sh appends the module there
       # only after `gh api` proves TARGET_REF carries the manifest, BEFORE Leg B
       # advances the pin (the rev-gated upgrade then runs --init on the new list).
-      AUTO_UPGRADE_MODULES: grove_headless,grove_support,grove_calendar
+      #
+      # grove_schedule_f (farm books, grove-odoo-modules#390) appended so a
+      # promote or a rebuild installs it without a click in Apps. It depends on
+      # the OCA addons account_reconcile_oca and
+      # account_statement_import_sheet_file, which live in the IMAGE
+      # (odoo/third-party-addons.txt, #986), not in the git-synced tree. A box
+      # still running an image built before #986 would crash-loop on the boot
+      # --init, so on the LIVE box scripts/prod-auto-upgrade-add.sh appends it
+      # only after proving both addons exist inside the running container.
+      AUTO_UPGRADE_MODULES: grove_headless,grove_support,grove_calendar,grove_schedule_f
       # Stripe LIVE-mode prod checkout (GOL-973). grove_headless reads these
       # from os.environ (LOWERCASE names, controllers/main.py). The odoo process
       # env comes ONLY from this compose environment block -- the /.env mount

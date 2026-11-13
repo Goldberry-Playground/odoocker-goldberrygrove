@@ -119,7 +119,12 @@ services:
       # merges there -- and a QA bring-up on a main that LACKS the module makes
       # the boot --init crash-loop odoo. Merge this file only after
       # grove_calendar/__manifest__.py is on grove-odoo-modules main.
-      AUTO_UPGRADE_MODULES: grove_headless,im_livechat,website_livechat,crm,grove_support,grove_calendar
+      #
+      # grove_schedule_f appended (farm books, grove-odoo-modules#390, on main
+      # since 2026-11-05). Its OCA dependencies come from the image
+      # (odoo/third-party-addons.txt, #986). QA installing it at train-up is
+      # the rehearsal for the prod install at promote.
+      AUTO_UPGRADE_MODULES: grove_headless,im_livechat,website_livechat,crm,grove_support,grove_calendar,grove_schedule_f
       # Stripe TEST-mode sandbox checkout (GOL-688). grove_headless reads these
       # from os.environ (LOWERCASE names, controllers/main.py). The odoo process
       # env comes ONLY from this compose environment block -- the /.env mount
