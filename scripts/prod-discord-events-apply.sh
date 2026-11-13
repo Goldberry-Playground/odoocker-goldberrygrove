@@ -29,7 +29,8 @@
 #   TARGET_REF=<grove-odoo-modules 40-char sha> \
 #     op run --env-file=scripts/prod-discord-events.env.op -- scripts/prod-discord-events-apply.sh --apply
 #
-#   # env lines only, leave AUTO_UPGRADE_MODULES alone (e.g. Train #6 bot token)
+#   # escape hatch: env lines only, leave AUTO_UPGRADE_MODULES alone (e.g. a
+#   # rotated bot token, or grove_calendar already installed)
 #   SKIP_MODULE=1 op run --env-file=scripts/prod-discord-events.env.op -- scripts/prod-discord-events-apply.sh --apply
 #
 # ORDER MATTERS: run --apply BEFORE Leg B. The recreate here happens on the
@@ -46,15 +47,14 @@
 #
 # Values: DISCORD_EVENTS_WEBHOOK_URL / DISCORD_BOT_TOKEN / DISCORD_GUILD_ID are
 # each OPTIONAL. Unset or empty => that key's .env line is left exactly as it
-# is (the passthrough is still ensured). This is what lets Train #5 land the
-# webhook with the bot token lines still commented in the .env.op, and Train #6
-# re-run the same command once GOL-3829 mints the token. Each value is
+# is (the passthrough is still ensured), so a re-run with a single rotated
+# value touches only that line. On Train #5 all three are provided. Each value is
 # validated locally against the same regex as the TF variable, travels to the
 # droplet on STDIN (never argv, never the remote process list), and is never
 # echoed -- only character counts are printed.
-# GROVE_EVENTS_WINDOW_DAYS / GROVE_EVENTS_LOCATION_DEFAULT get their defaults
-# from the compose passthrough (60 / Goldberry Grove Farm); this script does
-# not write them to .env.
+# GROVE_EVENTS_WINDOW_DAYS / GROVE_EVENTS_DEFAULT_ROOM get their defaults
+# from the compose passthrough (60 / grove-chat: an event with a blank Location
+# becomes a voice event in grove-chat); this script does not write them to .env.
 #
 # Rollback: the script backs up both files with a UTC stamp before writing and
 # prints the exact `cp` + recreate to undo the run.
@@ -141,7 +141,7 @@ main() {
   dc() { docker compose --env-file "$DEPLOY_DIR/.env" "$@"; }
   STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
   SECRET_KEYS="DISCORD_EVENTS_WEBHOOK_URL DISCORD_BOT_TOKEN DISCORD_GUILD_ID"
-  ALL_KEYS="$SECRET_KEYS GROVE_EVENTS_WINDOW_DAYS GROVE_EVENTS_LOCATION_DEFAULT"
+  ALL_KEYS="$SECRET_KEYS GROVE_EVENTS_WINDOW_DAYS GROVE_EVENTS_DEFAULT_ROOM"
   echo ">> $(hostname) $STAMP -- Discord calendar env (GOL-3831), mode $MODE"
   [ -f .env ] || { echo "ERROR: $DEPLOY_DIR/.env missing" >&2; exit 10; }
   [ -f docker-compose.yml ] || { echo "ERROR: $DEPLOY_DIR/docker-compose.yml missing" >&2; exit 10; }
@@ -227,7 +227,7 @@ PY
 import re, sys
 path = sys.argv[1]
 want = [("DISCORD_EVENTS_WEBHOOK_URL", ""), ("DISCORD_BOT_TOKEN", ""), ("DISCORD_GUILD_ID", ""),
-        ("GROVE_EVENTS_WINDOW_DAYS", "60"), ("GROVE_EVENTS_LOCATION_DEFAULT", "Goldberry Grove Farm")]
+        ("GROVE_EVENTS_WINDOW_DAYS", "60"), ("GROVE_EVENTS_DEFAULT_ROOM", "grove-chat")]
 lines = open(path).read().splitlines(keepends=True)
 def has(key): return any(re.match(r"^\s*" + re.escape(key) + r":", l) for l in lines)
 def anchor():

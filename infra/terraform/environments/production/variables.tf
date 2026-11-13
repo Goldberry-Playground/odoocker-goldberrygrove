@@ -479,7 +479,7 @@ variable "discord_orders_webhook_url" {
 
 # === Discord calendar (GOL-3831, phase C of grove-odoo-modules#395) ==========
 # grove_calendar (Train #5) posts the Monday "Coming up" digest to a Discord
-# channel webhook; phase D (Train #6) mirrors public calendar.event rows into
+# channel webhook; phase D (Train #5) mirrors public calendar.event rows into
 # native Discord scheduled events with a bot token. The module reads all of
 # these from os.environ, so each needs BOTH the cloud-init /etc/grove/.env line
 # AND the odoo compose passthrough (the GOL-1935 footgun). user_data is in
@@ -499,7 +499,7 @@ variable "discord_events_webhook_url" {
 }
 
 variable "discord_bot_token" {
-  description = "Discord bot token with the Manage Events permission on the Grove guild (phase D, Train #6; GOL-3829 mints it, joins the December rotation batch). grove_calendar's 15-minute events cron creates/patches/deletes guild scheduled events with it; empty => the cron logs once at INFO and does nothing, and the digest webhook above keeps working without it. 1P: op://Grove Prod/odoocker/DISCORD_BOT_TOKEN. PROD ONLY -- QA never sets it, so QA can never write events to the real server."
+  description = "Discord bot token with the Manage Events permission on the Grove guild (phase D, Train #5; GOL-3829 minted it, joins the December rotation batch). grove_calendar's 15-minute events cron creates/patches/deletes guild scheduled events with it; empty => the cron logs once at INFO and does nothing, and the digest webhook above keeps working without it. 1P: op://Grove Prod/odoocker/DISCORD_BOT_TOKEN. PROD ONLY -- QA never sets it, so QA can never write events to the real server."
   type        = string
   sensitive   = true
   default     = ""

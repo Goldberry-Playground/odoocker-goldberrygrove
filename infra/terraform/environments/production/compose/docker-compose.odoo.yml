@@ -231,8 +231,9 @@ services:
       # gets the Monday "Coming up" digest; falls back to DISCORD_OPS_WEBHOOK_URL
       # when empty (visible misroute, never a drop -- same stance as the topic
       # channels above). BOT_TOKEN + GUILD_ID are the phase D native-events
-      # credentials (Train #6, GOL-3829 mints them): both empty => the events
-      # cron logs once at INFO and does nothing. WINDOW_DAYS / LOCATION_DEFAULT
+      # credentials (Train #5, GOL-3829 minted them): both empty => the events
+      # cron logs once at INFO and does nothing. DEFAULT_ROOM = the voice channel
+      # an event with a blank Location is held in. WINDOW_DAYS / DEFAULT_ROOM
       # carry compose-side defaults on purpose: an EMPTY passthrough would
       # override the module's own default with "" (the UPS_API_BASE trap above),
       # and int("") raises. Values come from /etc/grove/.env -- cloud-init
@@ -243,7 +244,7 @@ services:
       DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
       DISCORD_GUILD_ID: ${DISCORD_GUILD_ID:-}
       GROVE_EVENTS_WINDOW_DAYS: ${GROVE_EVENTS_WINDOW_DAYS:-60}
-      GROVE_EVENTS_LOCATION_DEFAULT: ${GROVE_EVENTS_LOCATION_DEFAULT:-Goldberry Grove Farm}
+      GROVE_EVENTS_DEFAULT_ROOM: ${GROVE_EVENTS_DEFAULT_ROOM:-grove-chat}
       # Perenual plant-facts enrichment (GOL-2507, parent GOL-2383).
       # grove_headless services/plant_data/perenual.py reads PERENUAL_API_KEY
       # from os.environ, and the odoo process env comes ONLY from this block
