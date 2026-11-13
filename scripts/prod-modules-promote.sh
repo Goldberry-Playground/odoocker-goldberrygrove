@@ -457,7 +457,7 @@ ssh -o StrictHostKeyChecking=yes -o ConnectTimeout=15 "${PROD_HOST}" "
     echo '       migrations -- a half-migrated production DB. This droplet predates the' >&2
     echo '       GOL-1009 entrypoint wiring (user_data is in ignore_changes, so terraform will' >&2
     echo '       not fix it in place). Hand-add' >&2
-    echo '         AUTO_UPGRADE_MODULES: grove_headless,grove_support,grove_calendar' >&2
+    echo '         AUTO_UPGRADE_MODULES: grove_headless,grove_support,grove_calendar,grove_schedule_f' >&2
     echo '       to the odoo service environment block (it is already in the source compose,' >&2
     echo '       so the edit is convergent and survives a rebuild), then re-run.' >&2
     exit 4

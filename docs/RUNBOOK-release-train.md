@@ -363,6 +363,28 @@ TARGET_REF=<same sha> CONFIRM=PROMOTE scripts/prod-modules-promote.sh
 # (e.g. a rotated bot token) without touching AUTO_UPGRADE_MODULES.
 ```
 
+### Rider: `grove_schedule_f` auto-install (farm books)
+
+`grove_schedule_f` (grove-odoo-modules#390) is in both `AUTO_UPGRADE_MODULES`
+lists in this repo, so QA installs it at train-up and a rebuilt prod installs
+it. The live prod box needs the same append in its deployed compose, and the
+module's OCA dependencies live in the image, not the git-synced tree, so the
+script proves they are inside the running container before it writes anything.
+
+```bash
+# Any time, read-only. exit 0 = already in the list, 2 = pending or refused.
+scripts/prod-auto-upgrade-add.sh
+
+# Promote day, between step 1 and step 2 above. NO_RECREATE=1 because step 2
+# recreates odoo right after.
+NO_RECREATE=1 TARGET_REF=<gom 40-char sha> scripts/prod-auto-upgrade-add.sh --apply
+```
+
+If the report says `REFUSED. The running image lacks: ...`, the box runs an
+image older than #986. Skip the rider: the promote is unaffected, and the books
+module is installed later (after an image refresh) with the same script
+followed by `scripts/module-upgrade.sh`, or by hand in Apps.
+
 Why step 2 comes first: the recreate it performs happens on the *current*
 modules revision, so the entrypoint's marker says "unchanged" and no upgrade
 runs; Leg B then advances the pin and the rev-gated pass picks up the longer
