@@ -227,6 +227,16 @@ the two gates need opposite flag states:
 3. `bash scripts/stripe-tax-gate.sh --gate 4 --merge /tmp/gate3.json --json-out /tmp/stripe-tax-verdict.json`
 4. `bash scripts/qa-test-data-cleanup.sh --apply` before recording the verdict
 
+**Oct 16 to Apr 30 the cart shape changes (Josh's GOL-3801 ruling, 2026-11-16).**
+The nursery checkout refuses a shipped potted cart outside May 1 to Oct 15, and
+every shipped bareroot order in that window is a deposit, so 4a, 4b and 3 as
+first written fail with a checkout 400 on every winter train. In the window the
+runner (`--season auto`, by date) runs 4a and 3 on an in-stock bareroot tree
+bought for **farm pickup**, which is charged in full year-round, and runs 4b as
+a deposit order **shipped to OH** whose settlement Stripe Tax must compute at
+$0. Pass `--variant-pickup <in-stock bareroot id>`; `--variant-instock` is not
+used. 4c and 4d are unchanged.
+
 **Blocker on Gate 4a:** GOL-2574 (Stripe **test-mode** WV registration). Stripe
 Tax settings are per mode and do not inherit from live, so until that exists Gate
 4a returns `NO_TAX` and the flip is correctly refused.

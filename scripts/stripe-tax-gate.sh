@@ -31,6 +31,14 @@
 # throwaway Stripe TEST customer. It needs QA_ODOO_RPC_LOGIN/PASSWORD (see the
 # env.op template); without them 4d FAILs and the flip is not cleared.
 #
+# DORMANT SEASON (Oct 16 to Apr 30): the nursery checkout refuses a shipped
+# potted cart, so 4a and 3 buy an in-stock bareroot tree for FARM PICKUP and 4b
+# ships a deposit order to OH and asserts Stripe Tax settles it at $0 (Josh's
+# GOL-3801 ruling). The runner picks the shape from today's date (--season
+# overrides) and then needs --variant-pickup instead of --variant-instock:
+#        bash scripts/stripe-tax-gate.sh --gate 4 --variant-pickup <in-stock \
+#          bareroot id> --variant-bareroot <sold-out bareroot id>
+#
 # AFTERWARDS: this gate creates real draft orders. They are booked to
 # stripe-tax-gate@grove.invalid, an RFC 2606 reserved TLD, so
 # `bash scripts/qa-test-data-cleanup.sh --apply` reaps every one of them with no
