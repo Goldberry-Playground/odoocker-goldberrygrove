@@ -259,12 +259,15 @@ SEED_E2E_URL := https://raw.githubusercontent.com/Goldberry-Playground/grove-odo
 # contract above. Map it explicitly: DRY_RUN=1 -> plan, anything else -> live.
 # The scripts' own QA-host + QA-db guard still refuses a non-QA live target.
 SEED_DRY_RUN = $(if $(filter 1,$(DRY_RUN)),1,0)
+# The fetch is chained with && on purpose: with `;` a 404 (a SEED_*_REF that
+# does not carry the script yet) left an empty temp file, and python3 on an
+# empty file exits 0 -- a seed that silently did nothing.
 
 ## qa-l3-seed-e2e: seed the Playwright E2E test-inventory fixture into QA Odoo (idempotent; DRY_RUN=1 for a plan)
 .PHONY: qa-l3-seed-e2e
 qa-l3-seed-e2e:
 	@tmp=$$(mktemp); trap 'rm -f "$$tmp"' EXIT; \
-		curl -fsSL "$(SEED_E2E_URL)" -o "$$tmp"; \
+		curl -fsSL "$(SEED_E2E_URL)" -o "$$tmp" && \
 		DRY_RUN="$(SEED_DRY_RUN)" op run --env-file=$(QA_L3_SEED_ENV_FILE) -- python3 "$$tmp"
 
 # ── QA planner-catalog fixture seed (GOL-3999 / GOL-4001) ────────────────────
@@ -295,7 +298,7 @@ SEED_PLANNER_FEED_URL ?= https://nursery.qa.gatheringatthegrove.com/api/planner/
 .PHONY: qa-l3-seed-planner
 qa-l3-seed-planner:
 	@tmp=$$(mktemp); trap 'rm -f "$$tmp"' EXIT; \
-		curl -fsSL "$(SEED_PLANNER_URL)" -o "$$tmp"; \
+		curl -fsSL "$(SEED_PLANNER_URL)" -o "$$tmp" && \
 		DRY_RUN="$(SEED_DRY_RUN)" E2E_PLANNER_FEED_URL="$(SEED_PLANNER_FEED_URL)" \
 		op run --env-file=$(QA_L3_SEED_ENV_FILE) -- python3 "$$tmp"
 
