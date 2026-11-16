@@ -439,6 +439,17 @@ def evaluate_settlement(res: CaseResult, settle_status, order: dict, intent, rat
     return res
 
 
+def gate_tracking_number(order_id, now=None) -> str:
+    """A unique 22-digit, USPS-shaped tracking number for the gate's hand label.
+
+    mark-shipped requires ``tracking`` and ``cost`` in its body since gom#408 and
+    accepts only a UPS 1Z number or 20 to 34 digits. The same number goes to the
+    hand-label step and to mark-shipped, so the route finds the label it expects
+    and settles on the recorded cost instead of replacing it.
+    """
+    return f"9400{int(now if now is not None else time.time()):010d}{int(order_id) % 10**8:08d}"
+
+
 def aggregate(results: list) -> dict:
     """Fold case results into the flip decision.
 
@@ -733,8 +744,9 @@ class Runner:
             return res.fail("STRIPE_HTTP_%d" % st, "attach test card: " + json.dumps(pm)[:300])
 
         rpc = OdooRpc(self.odoo_base, self.rpc_db, self.rpc_login, self.rpc_password)
-        # Unique, alphanumeric (shippo_client.is_valid_tracking: 6-40 chars).
-        tracking = f"9400GATE{int(time.time())}{order_id}"
+        # Unique and USPS-shaped: mark-shipped's parse_tracking (gom#408) takes
+        # only a UPS 1Z number or 20 to 34 digits.
+        tracking = gate_tracking_number(order_id)
         step = "simulate deposit webhook"
         try:
             rpc.execute("sale.order", "write", [[order_id], {
@@ -754,7 +766,8 @@ class Runner:
             return res.fail("ODOO_RPC", f"{step}: {exc}")
 
         st, shipped = _post_json(f"{self.odoo_base}/grove/api/v1/orders/{order_id}/mark-shipped",
-                                 {"actor": "stripe-tax-gate"}, self._api_headers())
+                                 {"actor": "stripe-tax-gate", "tracking": tracking,
+                                  "cost": f"{self.settle_shipping:.2f}"}, self._api_headers())
         if st != 200:
             return res.fail("MARK_SHIPPED_HTTP_%d" % st, json.dumps(shipped)[:300])
         try:

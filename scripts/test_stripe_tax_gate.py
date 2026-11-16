@@ -274,7 +274,7 @@ class TestGate4dDriver(unittest.TestCase):
         return stg.Runner(args)
 
     def test_drives_checkout_to_ship_and_evaluates(self):
-        calls = []
+        calls, shipped_bodies, labelled = [], [], []
 
         def fake_post_json(url, body, headers, timeout=45):
             if url.endswith("/checkout/session"):
@@ -282,11 +282,14 @@ class TestGate4dDriver(unittest.TestCase):
                              "amount_due_today": 10.0}
             if url.endswith("/orders/42/mark-shipped"):
                 calls.append("mark-shipped")
+                shipped_bodies.append(body)
                 return 200, {"settlement": "settled"}
             raise AssertionError(url)
 
         def fake_execute(self, model, method, args, kwargs=None):
             calls.append(method)
+            if method == "action_grove_record_hand_label":
+                labelled.append(args[1])
             if method == "read":
                 return [_settled_order()]
             return True
@@ -301,6 +304,16 @@ class TestGate4dDriver(unittest.TestCase):
         self.assertEqual(out.status, stg.STATUS_PASS, out.reasons)
         self.assertEqual(calls, ["write", "action_confirm", "action_grove_assign_wave",
                                  "action_grove_record_hand_label", "mark-shipped", "read"])
+        # mark-shipped 422s without tracking and cost (gom#408), and the number
+        # must be the one on the hand label or the route replaces the label.
+        body = shipped_bodies[0]
+        self.assertEqual(body["tracking"], labelled[0])
+        self.assertRegex(body["tracking"], r"^[0-9]{20,34}$")
+        self.assertEqual(body["cost"], "12.50")
+
+    def test_gate_tracking_number_is_usps_shaped_for_any_order_id(self):
+        for order_id in (1, 2290, 123456789012):
+            self.assertRegex(stg.gate_tracking_number(order_id, now=1794863227), r"^[0-9]{22}$")
 
     def test_rpc_failure_is_a_named_fail(self):
         def fake_execute(self, model, method, args, kwargs=None):
