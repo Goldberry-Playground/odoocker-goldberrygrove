@@ -253,13 +253,59 @@ train-teardown: qa-l3-teardown
 QA_L3_SEED_ENV_FILE := $(QA_L3_DIR)/.env.op.seed
 SEED_E2E_REF ?= main
 SEED_E2E_URL := https://raw.githubusercontent.com/Goldberry-Playground/grove-odoo-modules/$(SEED_E2E_REF)/scripts/seed_e2e_test_inventory.py
+# The seed scripts are dry-run by DEFAULT and go live only on a literal
+# DRY_RUN=0 (GOL-1310), so forwarding an unset $(DRY_RUN) as "" made a plain
+# `make qa-l3-seed-e2e` a silent plan that wrote nothing -- the opposite of the
+# contract above. Map it explicitly: DRY_RUN=1 -> plan, anything else -> live.
+# The scripts' own QA-host + QA-db guard still refuses a non-QA live target.
+SEED_DRY_RUN = $(if $(filter 1,$(DRY_RUN)),1,0)
 
 ## qa-l3-seed-e2e: seed the Playwright E2E test-inventory fixture into QA Odoo (idempotent; DRY_RUN=1 for a plan)
 .PHONY: qa-l3-seed-e2e
 qa-l3-seed-e2e:
 	@tmp=$$(mktemp); trap 'rm -f "$$tmp"' EXIT; \
 		curl -fsSL "$(SEED_E2E_URL)" -o "$$tmp"; \
-		DRY_RUN="$(DRY_RUN)" op run --env-file=$(QA_L3_SEED_ENV_FILE) -- python3 "$$tmp"
+		DRY_RUN="$(SEED_DRY_RUN)" op run --env-file=$(QA_L3_SEED_ENV_FILE) -- python3 "$$tmp"
+
+# ── QA planner-catalog fixture seed (GOL-3999 / GOL-4001) ────────────────────
+# QA's catalog carries no `grove_planner_ready` template (the planner facts and
+# the human listing sign-off are prod-only data), so the nursery planner feed
+# answers `plants: 0` and the five planner e2e tests SKIP on every train
+# (GOL-3997) -- the render path goes unproven. grove-odoo-modules'
+# seed_e2e_planner_catalog.py writes six synthetic, fully planner-ready nursery
+# fixtures, matched by `default_code`, so a re-run reconciles rather than
+# duplicates. Same creds, same env file and same QA-only guard as the
+# test-inventory seed above; DRY_RUN=1 for a read-only plan.
+#
+# The script reads the computed `grove_planner_ready` flag back per fixture and
+# exits non-zero on any that is not ready. With E2E_PLANNER_FEED_URL set it then
+# asks the nursery storefront BFF and exits non-zero on `plants: 0`, so a broken
+# bring-up fails HERE instead of as five quiet skips in the gate. The storefront
+# answer is cached in three stacked 5-minute layers (BFF memo, Next data cache
+# served stale-while-revalidate, Cloudflare edge), so on a QA whose feed was
+# already fetched empty the probe can lag a correct seed by up to ~15 minutes:
+# wait and re-run, or pass SEED_PLANNER_FEED_URL= to skip the storefront probe.
+# A re-run rewrites the fixture fields (it reconciles, it does not diff), which
+# bumps planner_catalog_version each time -- harmless on QA.
+SEED_PLANNER_REF ?= $(SEED_E2E_REF)
+SEED_PLANNER_URL := https://raw.githubusercontent.com/Goldberry-Playground/grove-odoo-modules/$(SEED_PLANNER_REF)/scripts/seed_e2e_planner_catalog.py
+SEED_PLANNER_FEED_URL ?= https://nursery.qa.gatheringatthegrove.com/api/planner/catalog
+
+## qa-l3-seed-planner: seed the planner-ready nursery fixtures into QA Odoo so the planner e2e specs run (idempotent; DRY_RUN=1 for a plan)
+.PHONY: qa-l3-seed-planner
+qa-l3-seed-planner:
+	@tmp=$$(mktemp); trap 'rm -f "$$tmp"' EXIT; \
+		curl -fsSL "$(SEED_PLANNER_URL)" -o "$$tmp"; \
+		DRY_RUN="$(SEED_DRY_RUN)" E2E_PLANNER_FEED_URL="$(SEED_PLANNER_FEED_URL)" \
+		op run --env-file=$(QA_L3_SEED_ENV_FILE) -- python3 "$$tmp"
+
+## qa-l3-seed: run every QA e2e fixture seed (test inventory, then planner catalog) — the one post-train-up seed command
+# Recursive $(MAKE) rather than a prerequisite list so the order holds under -j
+# and a failed inventory seed stops before the planner one.
+.PHONY: qa-l3-seed
+qa-l3-seed:
+	@$(MAKE) qa-l3-seed-e2e
+	@$(MAKE) qa-l3-seed-planner
 
 # ── QA bundle-photo sync from prod (GOL-3785) ────────────────────────────────
 # QA's Odoo DB + filestore SURVIVE the train teardown (qa-app-platform README,
