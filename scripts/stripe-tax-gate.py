@@ -120,6 +120,17 @@ NON_WV_ADDRESS = {
     "country": "US",
 }
 
+
+
+def gate_buyer_email(address: dict) -> str:
+    """One buyer per ship-to state. Checkout reuses an existing partner by email
+    WITHOUT touching its address, and that partner is the order's ship-to, so a
+    single shared buyer made the OH order settle against the WV address the
+    first case had stored (S02358, Train #5: 6% WV tax on an OH ship-to)."""
+    local, domain = GATE_BUYER_EMAIL.split("@")
+    return f"{local}-{address['state'].lower()}@{domain}"
+
+
 STATUS_PASS = "PASS"
 STATUS_FAIL = "FAIL"
 
@@ -763,7 +774,8 @@ class Runner:
     def _create_checkout(self, spec: dict) -> tuple:
         variant = self.variants[spec["cart"]]
         payload = {
-            "contact": {"name": GATE_BUYER_NAME, "email": GATE_BUYER_EMAIL, "phone": GATE_BUYER_PHONE},
+            "contact": {"name": GATE_BUYER_NAME, "email": gate_buyer_email(spec["address"]),
+                        "phone": GATE_BUYER_PHONE},
             "items": [{"variant_id": int(variant), "quantity": self.qty}],
             "shipping": dict(spec["address"]),
             "billing": dict(spec["address"]),
@@ -827,7 +839,7 @@ class Runner:
 
         # A saved test card for the off-session balance capture.
         st, cus = _stripe_post(self.stripe_key, "customers", {
-            "email": GATE_BUYER_EMAIL, "name": GATE_BUYER_NAME,
+            "email": gate_buyer_email(spec["address"]), "name": GATE_BUYER_NAME,
             "metadata[purpose]": "stripe-tax-gate", "metadata[order_ref]": order_ref or ""})
         if st != 200:
             return res.fail("STRIPE_HTTP_%d" % st, "create customer: " + json.dumps(cus)[:300])

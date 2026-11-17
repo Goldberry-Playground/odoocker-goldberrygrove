@@ -401,11 +401,13 @@ class TestDormantSeason(unittest.TestCase):
 
     def _settle_4b(self, order, intent):
         shipped_to = []
+        buyers = self.buyers = []
 
         def fake_post_json(url, body, headers, timeout=45):
             if url.endswith("/checkout/session"):
                 shipped_to.append((body["fulfillment"], body["shipping"]["state"],
                                    body["items"][0]["variant_id"]))
+                buyers.append(body["contact"]["email"])
                 return 200, {"order_id": 42, "order_ref": "S00042", "has_preorder": True}
             return 200, {"settlement": "settled"}
 
@@ -440,6 +442,15 @@ class TestDormantSeason(unittest.TestCase):
         order = _settled_order(tax_cents=0, breakdown="[]")
         out, _ = self._settle_4b(order, {"amount": 5250, "status": "succeeded"})
         self.assertEqual(out.status, stg.STATUS_PASS, out.reasons)
+
+    def test_4b_buys_as_its_own_oh_buyer_not_the_wv_one(self):
+        # Checkout reuses a partner by email and keeps its stored address as the
+        # ship-to, so a buyer shared with the WV cases settles OH at WV's 6%.
+        order = _settled_order(tax_cents=0, breakdown="[]")
+        self._settle_4b(order, {"amount": 5250, "status": "succeeded"})
+        self.assertEqual(self.buyers, [stg.gate_buyer_email(stg.NON_WV_ADDRESS)])
+        self.assertNotEqual(self.buyers[0], stg.gate_buyer_email(stg.WV_ADDRESS))
+        self.assertTrue(self.buyers[0].endswith("@grove.invalid"))
 
     def test_4b_any_tax_outside_nexus_fails(self):
         out, _ = self._settle_4b(_settled_order(), {"amount": 5625, "status": "succeeded"})
