@@ -301,7 +301,7 @@ Terraform change is a provable no-op on the running box, and a plain (or
 
 | Path | Cost | When |
 |------|------|------|
-| **A — promote-script converge** (recommended) | seconds, no outage | promote day, on the Leg B run: `GROVE_STRIPE_TAX_NURSERY=1 TARGET_REF=<40-char sha> CONFIRM=PROMOTE PROD_HOST=grove-prod-odoo scripts/prod-modules-promote.sh`. The script writes the `.env` line, adds the compose passthrough if the box predates it, recreates odoo and verifies the three-way state (`.env` / deployed compose / process env). A falsey value (`0`) is the one-command rollback. Without a pin bump, the same converge is the GOL-1772 Option B hand edit (`.env` line + compose passthrough + `docker compose --env-file /etc/grove/.env up -d --force-recreate --no-deps odoo`); **a plain `restart` does nothing**, a container's env is fixed at create time. |
+| **A — promote-script converge** (recommended) | seconds, no outage | promote day, on the Leg B run: `GROVE_STRIPE_TAX_NURSERY=1 TARGET_REF=<40-char sha> CONFIRM=PROMOTE scripts/prod-modules-promote.sh`. The script writes the `.env` line, adds the compose passthrough if the box predates it, recreates odoo and verifies the three-way state (`.env` / deployed compose / process env). A falsey value (`0`) is the one-command rollback. Without a pin bump, the same converge is the GOL-1772 Option B hand edit (`.env` line + compose passthrough + `docker compose --env-file /etc/grove/.env up -d --force-recreate --no-deps odoo`); **a plain `restart` does nothing**, a container's env is fixed at create time. |
 | **B — droplet REPLACE** | ~10-20 min Odoo outage | only if a rebuild is already planned; re-triggers the GOL-93 filestore gate |
 
 Verify against the **process**, not the files:

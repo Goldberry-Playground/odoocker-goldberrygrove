@@ -171,9 +171,14 @@ frontend never goes live against an API that does not have its field yet.
 Both workarounds that Train #1 needed were fixed on 2026-09-30 and are now
 wrong advice:
 
-- **`PROD_HOST` needs no override.** It defaults to prod's reserved IP, and the
-  script now refuses a Cloudflare-proxied hostname up front instead of hanging
-  on a connect that can never complete (#787).
+- **`PROD_HOST` needs no override.** The `scripts/prod-*` scripts default to
+  the `grove-prod-odoo` SSH alias, which **must exist in the operator's
+  `~/.ssh/config`** (`Host grove-prod-odoo` with `HostName`, `User root`,
+  `IdentityFile`). The earlier default, `root@174.138.119.171`, is refused; on
+  the Train #5 promote day `prod-discord-events-apply.sh` only worked through
+  the alias (GOL-4011).
+  The promote script also refuses a Cloudflare-proxied hostname up front
+  instead of hanging on a connect that can never complete (#787).
 - **The first attempt no longer exits 6.** Bulk-sourcing `.env` used to export
   the *old* `CUSTOM_MODULES_REF` into the payload shell, where compose
   interpolation prefers it over `--env-file`, so git-sync was recreated on the
@@ -190,7 +195,7 @@ cutover `GROVE_STRIPE_TAX_{TENANT}` (GOL-2568) — is step 7, a *separate named
 step*, never a side effect of steps 3–6. prod's `user_data` is in
 `ignore_changes`, so no `terraform apply` injects it into the running droplet;
 flip it on the Leg B run itself:
-`GROVE_STRIPE_TAX_NURSERY=1 TARGET_REF=<40-char sha> CONFIRM=PROMOTE PROD_HOST=grove-prod-odoo scripts/prod-modules-promote.sh`
+`GROVE_STRIPE_TAX_NURSERY=1 TARGET_REF=<40-char sha> CONFIRM=PROMOTE scripts/prod-modules-promote.sh`
 (details in [`RUNBOOK-module-upgrade.md`](RUNBOOK-module-upgrade.md) → "Flipping
 the Stripe Tax cutover flag on prod").
 
