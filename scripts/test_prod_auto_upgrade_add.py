@@ -25,7 +25,9 @@ Run:  python3 scripts/test_prod_auto_upgrade_add.py
 
 from __future__ import annotations
 
+import glob
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -197,6 +199,28 @@ class Tests(unittest.TestCase):
         self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
         self.assertIn("is NOT at", r.stderr)
         self.assertEqual(box.compose_text(), COMPOSE)
+
+    def test_default_host_is_the_ssh_alias(self):
+        # GOL-4011: root@174.138.119.171 is refused; the default must be the
+        # grove-prod-odoo ~/.ssh/config alias, and PROD_HOST still overrides.
+        box = Box(self.tmp)
+        r = box.run()
+        self.assertIn(f">> target grove-prod-odoo:{box.deploy}", r.stdout, r.stdout + r.stderr)
+        r = box.run(PROD_HOST="root@fake-prod")
+        self.assertIn(f">> target root@fake-prod:{box.deploy}", r.stdout, r.stdout + r.stderr)
+
+    def test_no_prod_script_defaults_to_a_root_at_ip_host(self):
+        # Every scripts/prod-*.sh that takes PROD_HOST defaults to the alias,
+        # so the next promote-day script does not fail on first run.
+        default = re.compile(r'^PROD_HOST="\$\{PROD_HOST:-([^}]*)\}"', re.M)
+        seen = []
+        for path in sorted(glob.glob(os.path.join(HERE, "prod-*.sh"))):
+            with open(path) as f:
+                for value in default.findall(f.read()):
+                    seen.append(os.path.basename(path))
+                    self.assertEqual(value, "grove-prod-odoo", path)
+        self.assertIn("prod-discord-events-apply.sh", seen)
+        self.assertIn("prod-modules-promote.sh", seen)
 
 
 if __name__ == "__main__":

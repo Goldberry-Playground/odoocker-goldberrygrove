@@ -165,21 +165,24 @@
 # Usage:
 #   TARGET_REF=<40-char sha> scripts/prod-modules-promote.sh            # pre-flight only
 #   TARGET_REF=<40-char sha> CONFIRM=PROMOTE scripts/prod-modules-promote.sh
-#   PROD_HOST=grove-prod-odoo TARGET_REF=<sha> CONFIRM=PROMOTE ...   # ~/.ssh/config alias
+#   PROD_HOST=<user@host> TARGET_REF=<sha> CONFIRM=PROMOTE ...        # override the alias
 #
 # After a successful run, converge committed HCL onto the now-live pin:
 #   gh workflow run reconcile-modules-pin.yml -f modules_sha=<TARGET_REF>
 ###############################################################################
 set -euo pipefail
 
-# Default = prod's DigitalOcean RESERVED IP (digitalocean_reserved_ip.odoo in
-# infra/terraform/environments/production/odoo.tf) -- stable across droplet
-# replacement, unlike the droplet's own IPv4. NOT the odoo.gatheringatthegrove.com
-# hostname: that record is `proxied = true`, so it resolves to Cloudflare edge
-# IPs that never carry port 22, and ssh hangs until the OS TCP timeout. That
-# old default made every promote from a stock shell hang silently after the
-# banner (2026-09-30, GOL-2677 promote).
-PROD_HOST="${PROD_HOST:-root@174.138.119.171}"
+# Default = the `grove-prod-odoo` ~/.ssh/config alias, which must exist on the
+# operator's machine (Host grove-prod-odoo + HostName/User root/IdentityFile).
+# Without it ssh fails fast with "Could not resolve hostname grove-prod-odoo";
+# add the alias, or override PROD_HOST=<user@host>. NOT the reserved IP
+# (root@174.138.119.171): that connection is refused, as found on the Train #5
+# promote day (GOL-4011). And NOT the odoo.gatheringatthegrove.com hostname:
+# that record is `proxied = true`, so it resolves to Cloudflare edge IPs that
+# never carry port 22, and ssh hangs until the OS TCP timeout. That old default
+# made every promote from a stock shell hang silently after the banner
+# (2026-09-30, GOL-2677 promote).
+PROD_HOST="${PROD_HOST:-grove-prod-odoo}"
 DEPLOY_DIR="${DEPLOY_DIR:-/etc/grove}"
 FILESTORE_DIR="${FILESTORE_DIR:-/mnt/odoo-filestore}"
 MARKER="${MARKER:-${FILESTORE_DIR}/.grove-modules-rev}"
@@ -232,8 +235,8 @@ die() { echo "ERROR: $*" >&2; exit 2; }
 case "${PROD_HOST#*@}" in
   odoo.gatheringatthegrove.com|*.gatheringatthegrove.com)
     die "PROD_HOST=${PROD_HOST} is Cloudflare-proxied -- port 22 never reaches the droplet.
-       Use the reserved IP (the default, root@174.138.119.171) or an ~/.ssh/config
-       alias that points at it (e.g. PROD_HOST=grove-prod-odoo)."
+       Use the ~/.ssh/config alias (the default, grove-prod-odoo) or another
+       user@host that reaches the droplet's own port 22."
     ;;
 esac
 

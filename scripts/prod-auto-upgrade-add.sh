@@ -46,9 +46,14 @@
 # Exit codes: 0 in the list (already, or applied and verified); 2 check mode,
 # pending or a gate failed; 3 local validation failure; 10 remote failure
 # (file restored where the script could).
+# PROD_HOST defaults to the `grove-prod-odoo` ~/.ssh/config alias, which must
+# exist on the operator's machine (Host grove-prod-odoo + HostName/User root/
+# IdentityFile). The old default, root@174.138.119.171, is refused (Train #5
+# promote, GOL-4011). Without the alias ssh fails fast with "Could not resolve
+# hostname grove-prod-odoo"; add it, or override PROD_HOST=<user@host>.
 set -euo pipefail
 
-PROD_HOST="${PROD_HOST:-root@174.138.119.171}"   # DO reserved IP; the proxied hostname has no :22
+PROD_HOST="${PROD_HOST:-grove-prod-odoo}"   # ~/.ssh/config alias; the proxied hostname has no :22
 DEPLOY_DIR="${DEPLOY_DIR:-/etc/grove}"
 TARGET_REF="${TARGET_REF:-}"
 MODULE="${MODULE:-grove_schedule_f}"
