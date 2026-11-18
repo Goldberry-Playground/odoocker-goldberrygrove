@@ -50,8 +50,9 @@ filter the VPC interface too, so using the private address does not route around
 this. ADR-010 decision #2 already fixes it by admitting app-plane collectors via
 the `role-odoo` **droplet tag** (prod-odoo carries that tag) — but that decision
 lives only in `variables.tf` defaults and **has not been applied**. Tag matching
-also survives droplet replaces, which matters: ADR-010 records prod-odoo as
-`138.197.44.60`, an IP it no longer has.
+also survives droplet replaces, which matters. (Correction 2026-11-18, DO API:
+`138.197.44.60` is still the droplet's own public IPv4 and `174.138.119.171` is
+its reserved IP; both answer, as ADR-010 records.)
 
 Apply it per ADR-010 (firewall-only, cannot replace the droplet), from the
 operator checkout holding the observability tfvars — **first delete the

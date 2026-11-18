@@ -131,8 +131,8 @@ E2E-test-ready **from code alone, with no manual reseed**:
 
 ```bash
 # From the repo root, after `make qa-l3-up` has the Odoo droplet serving.
-make qa-l3-seed-e2e DRY_RUN=1   # read-only plan (recommended first)
-make qa-l3-seed-e2e            # converge the fixture (idempotent no-op if present)
+make qa-l3-seed-e2e             # read-only plan (the default: anything but DRY_RUN=0 is a dry run)
+make qa-l3-seed-e2e DRY_RUN=0   # converge the fixture (idempotent no-op if present)
 ```
 
 - The seed script lives in `grove-odoo-modules` (GOL-1148); `qa-l3-seed-e2e`

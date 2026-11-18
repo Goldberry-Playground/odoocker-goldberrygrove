@@ -1,7 +1,7 @@
 # Runbook — Grove Release Train (biweekly QA window)
 
 **Owner:** DevOps (Terra) · **Epic:** GOL-2324 · **Automation issue:** GOL-2326
-**Cadence:** biweekly. Train-up **Monday**, promote **Wednesday**, teardown **Thursday**.
+**Cadence:** biweekly. Freeze **Friday**, train-up **Monday**, promote **Wednesday**, teardown **Thursday**.
 **Train #1 anchor:** Mon **2026-09-21** (promote Wed **2026-09-23**, first
 teardown **scheduled** Thu **2026-09-24**). The weekday is authoritative —
 2026-09-25 is a Friday. **That first teardown actually ran 2026-09-29**, five
@@ -50,6 +50,34 @@ the per-tenant Stripe secret keys (#969) — is a hand edit of
 `/etc/grove/docker-compose.yml` + `/etc/grove/.env` and an odoo recreate. The
 Discord **calendar** env (Train #5, GOL-3831) has that hand edit scripted:
 `scripts/prod-discord-events-apply.sh`, see the gate below.
+
+### Pinned QA: train-up at the freeze SHAs (since Train #5)
+
+By default the QA env floats: `custom_modules_ref` defaults to `main` and
+`hub_image_tag` / `tenant_image_tag` default to `latest`
+(`qa-app-platform/variables.tf`). For a train, QA is pinned to the Friday freeze
+SHAs so a merge during the window cannot change what is under test. None of the
+three vars is set in `qa-app-platform/.env.op`, so pass them from the shell and
+`op run` hands them through to terraform:
+
+```bash
+TF_VAR_custom_modules_ref=<gom freeze sha, 40 chars> \
+TF_VAR_hub_image_tag=<grove-sites freeze sha, 40 chars> \
+TF_VAR_tenant_image_tag=<same grove-sites sha> \
+  make train-up
+```
+
+- `custom_modules_ref` accepts only `main` or a full 40-char SHA (TF validation).
+- The image tags are the bare commit SHA that grove-sites `docker.yml` pushed
+  to GHCR, the same form prod pins.
+- **Pass the same three vars on every `make qa-l3-plan` / `make train-up`
+  re-run in the window.** A re-run without them plans QA back to `main` /
+  `latest` (unless your local `terraform.tfvars` sets them).
+- A fix found in the window rides a `train<N>/...` branch cut from the freeze
+  SHA; re-pin QA to that branch's head SHA the same way, and promote that SHA.
+- After train-up, seed the E2E fixture: `make qa-l3-seed-e2e` is a **dry run
+  by default** (the seed script treats anything but `DRY_RUN=0` as dry);
+  `make qa-l3-seed-e2e DRY_RUN=0` is the live run.
 
 Preview before either (read-only, no spend, no lock-and-leave):
 
@@ -148,6 +176,7 @@ back for the next train.
 | 3 | **Leg B pre-flight** (writes nothing; reports the recorded version and whether the tax migration is due). | `TARGET_REF=<modules-sha> scripts/prod-modules-promote.sh` |
 | 4 | **Leg B promote.** Rewrites `CUSTOM_MODULES_REF` in the droplet's `/etc/grove/.env`, waits for git-sync, runs the migrations, then **proves** the WV tax bound for every company. | `TARGET_REF=<modules-sha> CONFIRM=PROMOTE scripts/prod-modules-promote.sh` |
 | 5 | **Reconcile the committed pin** onto what is now live, or the next droplet rebuild rolls prod back. Drift-only; never touches prod. Merge the PR it opens. | `gh workflow run reconcile-modules-pin.yml -f modules_sha=<modules-sha>` |
+| 5b | **Tag the prod pin when it is not on `main`.** If the promoted modules SHA is the head of a `train<N>/...` or hotfix branch (Train #5: `32321e4d`, not an ancestor of `main`), tag it so the rollback target survives branch deletion. Precedent: `prod-pin-2026-10-05-v19.0.1.55.5`, `prod-pin-2026-11-18-v19.0.1.106.2`. | `git tag prod-pin-<date>-v<grove_headless version> <modules-sha> && git push origin <tag>` (in grove-odoo-modules) |
 | 6 | **Leg A storefronts.** Then approve the `production` Environment gate, and merge the reconcile PR it opens. | `gh workflow run promote-storefronts.yml -f target_sha=<sites-sha> -f confirm=PROMOTE` |
 | 7 | **Named flag step — only if this train carries a per-tenant env flag.** See "Flag flips are conditional" below. Skipping it is a valid outcome. | see `RUNBOOK-module-upgrade.md` |
 
@@ -294,8 +323,8 @@ approval gate) or stay *local one-command* with only a scheduled reminder?
    any credential.
 
 **Rejected alternative — CI `workflow_dispatch` + `environment:` approval:**
-technically feasible (the repo already gates `release.yml` behind
-`environment: production`), but it forces the Admin-vault-SA and delete-token
+technically feasible (the repo already gates `promote-storefronts.yml` behind
+`environment: production`; the old `release.yml` was retired in #572), but it forces the Admin-vault-SA and delete-token
 expansions above. Revisit only if the reminder proves insufficient *and* a
 scoped, delete-only, QA-only DO token + an Admin-read SA scoped to *just* the
 QA env's items can be minted — i.e. when least privilege can be preserved. Until
@@ -333,8 +362,9 @@ module `google_calendar` (phase A, Josh) is tracked in
 [`prod-hand-installed-core-modules.md`](prod-hand-installed-core-modules.md).
 
 **Merge order.** Both compose files add `grove_calendar` to
-`AUTO_UPGRADE_MODULES`. QA git-sync floats grove-odoo-modules `main`, so a QA
-train-up on a `main` that lacks `grove_calendar/__manifest__.py` crash-loops
+`AUTO_UPGRADE_MODULES`. QA git-sync floats grove-odoo-modules `main` unless the
+train pins it (see "Pinned QA" above), so a QA
+train-up on a ref that lacks `grove_calendar/__manifest__.py` crash-loops
 odoo on the boot `--init`. Merge the odoocker phase C PR only **after** the
 module is on grove-odoo-modules `main`.
 
@@ -371,10 +401,22 @@ TARGET_REF=<same sha> CONFIRM=PROMOTE scripts/prod-modules-promote.sh
 ### Rider: `grove_schedule_f` auto-install (farm books)
 
 `grove_schedule_f` (grove-odoo-modules#390) is in both `AUTO_UPGRADE_MODULES`
-lists in this repo, so QA installs it at train-up and a rebuilt prod installs
-it. The live prod box needs the same append in its deployed compose, and the
-module's OCA dependencies live in the image, not the git-synced tree, so the
-script proves they are inside the running container before it writes anything.
+lists in this repo. **It was not installed on prod at the Train #5 promote
+(2026-11-18)**, and the committed config does not put its dependencies where
+Odoo looks: the module's OCA dependencies (`account_reconcile_oca`,
+`account_statement_import_sheet_file`) are baked into the image under
+`/usr/lib/python3/dist-packages/odoo/third-party-addons`
+(`docker-odoo.yml` `THIRD_PARTY_ADDONS`), but both cloud-init templates render
+`ADDONS_PATH=/usr/lib/python3/dist-packages/odoo/addons,/workspace/current`,
+which does not include that directory, and nothing in the entrypoint adds it.
+So do not assume a QA train-up or a prod rebuild installs the module until
+`ADDONS_PATH` carries the directory (Train #6, GOL-3939 / GOL-3940, with the
+image upgrade #997). What the boot `--init` does with the unmet dependencies
+(skip the module, or fail the upgrade pass, which the entrypoint turns into a
+restart loop) has not been tested; check it on QA before any prod rebuild. The
+live prod box needs the same append in its deployed compose, and the script
+below checks the dependencies against the running container's addons path
+before it writes anything.
 
 ```bash
 # Any time, read-only. exit 0 = already in the list, 2 = pending or refused.
@@ -385,9 +427,10 @@ scripts/prod-auto-upgrade-add.sh
 NO_RECREATE=1 TARGET_REF=<gom 40-char sha> scripts/prod-auto-upgrade-add.sh --apply
 ```
 
-If the report says `REFUSED. The running image lacks: ...`, the box runs an
-image older than #986. Skip the rider: the promote is unaffected, and the books
-module is installed later (after an image refresh) with the same script
+If the report says `REFUSED. The running image lacks: ...`, either the box runs
+an image older than #986 or (the Train #5 case) the addons are in the image but
+not on `ADDONS_PATH`. Skip the rider: the promote is unaffected, and the books
+module is installed later (after the image refresh and the `ADDONS_PATH` fix) with the same script
 followed by `scripts/module-upgrade.sh`, or by hand in Apps.
 
 Why step 2 comes first: the recreate it performs happens on the *current*

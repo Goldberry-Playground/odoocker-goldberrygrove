@@ -348,7 +348,7 @@ docker compose -f docker-compose.yml \
 |---|---|---|
 | `ci.yml` | push/PR to `main` | Lint Python (Ruff), validate compose YAML, validate nginx config, third-party-addon branch check, reject tracked `.env`, gitleaks (push only), backend-stack smoke test |
 | `docker-odoo.yml` | push/PR touching `odoo/**` or `.env.example` | Build `grove-odoo` image, smoke test (`odoo --stop-after-init`), Trivy scan (HIGH+CRITICAL blocking, `ignore-unfixed`), on main push to `ghcr.io/goldberry-playground/grove-odoo:{sha,latest}` |
-| `release.yml` | semver tag push OR manual dispatch | Build + smoke + Trivy → require-approval (GitHub Environment gate) → deploy → post-deploy verify. Uses the `grove-odoo` image from `docker-odoo.yml`. |
+| ~~`release.yml`~~ | — | **Retired** (#572, GOL-1846). A semver tag deploys nothing. Prod releases: `scripts/prod-modules-promote.sh` (modules) + `promote-storefronts.yml` (storefronts, `production` Environment gate), see `docs/RUNBOOK-release-train.md`. |
 | ~~`sandbox-deploy.yml`~~ | — | **Retired** (#131, 2026-06). Level-3 QA is provisioned by `qa-app-platform`/`qa` Terraform env + `qa-health.yml`, not a sandbox droplet. |
 | ~~`sandbox-reaper.yml`~~ | — | **Retired** (#131, 2026-06) alongside `sandbox-deploy.yml`. |
 | `qa-health.yml` | cron + dispatch | Content-validating QA health probes (asset bundle + attachment image). The QA CI health check that actually runs (applies are manual). |
@@ -363,7 +363,7 @@ docker compose -f docker-compose.yml \
 | `docker.yml` | push/PR touching `apps/**` | Matrix-build all 4 frontend images, smoke, Trivy, push to ghcr (main only) |
 | `preview-up.yml` | PR labeled `qa` OR synchronize-while-labeled | Build the 4 frontend images for the PR SHA → `terraform apply` in `odoocker/infra/terraform/environments/preview/` to spin up a per-PR droplet with the PR's stack. Posts the URL to the PR + Discord. |
 | `preview-down.yml` | PR closed/unlabeled | `terraform destroy` the per-PR droplet. |
-| `release.yml` | semver tag push | Cuts a release of the frontend images. |
+| `release.yml` | semver tag push | Legacy SSH deploy job; not the prod path (prod storefronts are promoted by odoocker `promote-storefronts.yml`). Do not tag to deploy. |
 
 ### Injection-safe pattern (enforced across all workflows)
 

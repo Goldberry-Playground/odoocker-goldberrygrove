@@ -38,7 +38,9 @@ odoo --init=base,$AUTO_UPGRADE_MODULES --update=$AUTO_UPGRADE_MODULES \
 ```
 
 - **Opt-in** via `AUTO_UPGRADE_MODULES` (comma list; today `grove_headless,grove_support,grove_calendar,grove_schedule_f`
-  on prod, plus the livechat stack on QA) in
+  in the committed prod compose, plus the livechat stack on QA; the live prod box
+  does not carry `grove_schedule_f` yet, see the rider in
+  [`RUNBOOK-release-train.md`](RUNBOOK-release-train.md)) in
   the qa (`environments/qa-app-platform/compose/docker-compose.qa.yml`) and
   production (`environments/production/compose/docker-compose.odoo.yml`) compose
   `environment:` blocks. Local / preview / testing don't set it → untouched.
