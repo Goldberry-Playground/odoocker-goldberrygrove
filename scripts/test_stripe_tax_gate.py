@@ -121,6 +121,22 @@ class TestGate4aWvFull(unittest.TestCase):
         self.assertEqual(out.reasons[0]["code"], "FLAG_NOT_ON")
 
 
+class TestFullChargeCartBecameDeposit(unittest.TestCase):
+    # GOL-3801, 2026-11-18: the in-stock fixture had 50 on hand and 56 reserved,
+    # so the 4a pickup cart took the deposit and the gate blamed the flag.
+    def test_deposit_cart_is_named_instead_of_blaming_the_flag(self):
+        res = _case("wv_full")
+        self.assertTrue(stg.fail_if_cart_became_deposit(res, {"has_preorder": True}))
+        self.assertEqual(res.status, stg.STATUS_FAIL)
+        self.assertEqual(res.reasons[0]["code"], "CART_BECAME_DEPOSIT")
+
+    def test_full_charge_cart_is_left_alone(self):
+        res = _case("wv_full")
+        self.assertFalse(stg.fail_if_cart_became_deposit(res, {"has_preorder": False}))
+        self.assertEqual(res.status, stg.STATUS_PASS)
+        self.assertEqual(res.reasons, [])
+
+
 class TestGate4bNonWv(unittest.TestCase):
     def test_zero_tax_outside_nexus_passes(self):
         res = _case("nonwv_full")
@@ -335,6 +351,140 @@ class TestGate4dDriver(unittest.TestCase):
             out = self._runner().run_case("settlement")
         self.assertEqual(out.reasons[0]["code"], "NOT_A_DEPOSIT")
         sp.assert_not_called()
+
+
+class TestDormantSeason(unittest.TestCase):
+    """Oct 16 to Apr 30 the checkout refuses a shipped potted cart, so 4a/4b/3
+    as first written cannot run (GOL-3801). Josh's ruling: 4a and 3 on a
+    farm-pickup cart, 4b as a deposit shipped to OH and settled at $0."""
+
+    def _runner(self, season=stg.SEASON_DORMANT, **over):
+        args = argparse.Namespace(**dict(dict(
+            odoo_url="https://odoo.qa.example.invalid", api_key="k", stripe_key="sk_test_x",
+            tenant="nursery", variant_instock=None, variant_bareroot="2", variant_pickup="3",
+            wv_rate=6.0, quantity=1, odoo_db="odoo", odoo_rpc_login="gate",
+            odoo_rpc_password="pw", settle_shipping=12.5, season=season), **over))
+        return stg.Runner(args)
+
+    def test_season_boundaries_follow_the_potted_ship_window(self):
+        import datetime
+        day = datetime.date
+        self.assertEqual(stg.gate_season(day(2026, 10, 15)), stg.SEASON_SHIP)
+        self.assertEqual(stg.gate_season(day(2026, 10, 16)), stg.SEASON_DORMANT)
+        self.assertEqual(stg.gate_season(day(2027, 4, 30)), stg.SEASON_DORMANT)
+        self.assertEqual(stg.gate_season(day(2027, 5, 1)), stg.SEASON_SHIP)
+
+    def test_dormant_needs_the_pickup_variant_not_the_potted_one(self):
+        self.assertEqual(self._runner().preconditions(["wv_full"]), [])
+        problems = self._runner(variant_pickup=None).preconditions(["wv_full"])
+        self.assertTrue(any("--variant-pickup" in p for p in problems))
+        # The ship season is unchanged: it still wants the potted variant.
+        problems = self._runner(season=stg.SEASON_SHIP).preconditions(["wv_full"])
+        self.assertTrue(any("--variant-instock" in p for p in problems))
+
+    def test_dormant_4b_settles_so_it_needs_rpc_creds(self):
+        with mock.patch.dict(os.environ, {"QA_ODOO_RPC_LOGIN": "", "QA_ODOO_RPC_PASSWORD": ""}):
+            runner = self._runner(odoo_rpc_login=None, odoo_rpc_password=None)
+            self.assertFalse(runner.preconditions(["wv_full", "rollback_wv"]))
+            self.assertTrue(any("QA_ODOO_RPC_LOGIN" in p
+                                for p in runner.preconditions(["nonwv_full"])))
+
+    def _checkout_bodies(self, name, session):
+        bodies = []
+
+        def fake_post_json(url, body, headers, timeout=45):
+            bodies.append(body)
+            return 200, {"order_ref": "S00042", "session_id": "cs_test_1"}
+
+        with mock.patch.object(stg, "_post_json", side_effect=fake_post_json), \
+                mock.patch.object(stg, "_stripe_get", return_value=(200, session)):
+            out = self._runner().run_case(name)
+        return out, bodies
+
+    def test_4a_buys_the_pickup_variant_for_farm_pickup(self):
+        out, bodies = self._checkout_bodies("wv_full", _session(4452, 252, auto=True))
+        self.assertEqual(out.status, stg.STATUS_PASS, out.reasons)
+        self.assertEqual(out.season, stg.SEASON_DORMANT)
+        self.assertEqual(bodies[0]["fulfillment"], "pickup")
+        self.assertEqual(bodies[0]["items"][0]["variant_id"], 3)
+
+    def test_gate3_runs_on_the_same_pickup_cart(self):
+        session = _session(4452)
+        session["line_items"] = {"data": [{"description": "Sales tax (WV)"}]}
+        out, bodies = self._checkout_bodies("rollback_wv", session)
+        self.assertEqual(out.status, stg.STATUS_PASS, out.reasons)
+        self.assertEqual(bodies[0]["fulfillment"], "pickup")
+
+    def _settle_4b(self, order, intent):
+        shipped_to = []
+        buyers = self.buyers = []
+
+        def fake_post_json(url, body, headers, timeout=45):
+            if url.endswith("/checkout/session"):
+                shipped_to.append((body["fulfillment"], body["shipping"]["state"],
+                                   body["items"][0]["variant_id"]))
+                buyers.append(body["contact"]["email"])
+                return 200, {"order_id": 42, "order_ref": "S00042", "has_preorder": True}
+            return 200, {"settlement": "settled"}
+
+        def fake_execute(self, model, method, args, kwargs=None):
+            return [order] if method == "read" else True
+
+        with mock.patch.object(stg, "_post_json", side_effect=fake_post_json), \
+                mock.patch.object(stg, "_stripe_post", side_effect=[
+                    (200, {"id": "cus_gate"}), (200, {"id": "pm_gate"})]), \
+                mock.patch.object(stg, "_stripe_get", return_value=(200, intent)), \
+                mock.patch.object(stg.OdooRpc, "execute", fake_execute):
+            out = self._runner().run_case("nonwv_full")
+        return out, shipped_to
+
+    def test_4b_ships_a_deposit_to_oh_and_stripe_settles_zero_tax(self):
+        order = _settled_order(tax_cents=0, breakdown=json.dumps([
+            {"amount": 0, "inclusive": False, "taxability_reason": "not_collecting"}]))
+        out, shipped_to = self._settle_4b(order, {"amount": 5250, "status": "succeeded"})
+        self.assertEqual(out.status, stg.STATUS_PASS, out.reasons)
+        self.assertEqual((out.name, out.gate), ("nonwv_full", "4"))
+        self.assertEqual(shipped_to, [("ship", "OH", 2)])
+        self.assertEqual(out.observed["expected_balance_cents"], 5250)
+
+    def test_4b_fallback_to_odoo_tax_is_red_though_the_amounts_match(self):
+        # Odoo also charges $0 to OH, so only the missing breakdown tells them apart.
+        order = _settled_order(tax_cents=0)
+        order["grove_stripe_tax_jurisdictions"] = False
+        out, _ = self._settle_4b(order, {"amount": 5250, "status": "succeeded"})
+        self.assertEqual(out.reasons[0]["code"], "STRIPE_TAX_NOT_USED")
+
+    def test_4b_an_empty_breakdown_still_counts_as_stripe(self):
+        order = _settled_order(tax_cents=0, breakdown="[]")
+        out, _ = self._settle_4b(order, {"amount": 5250, "status": "succeeded"})
+        self.assertEqual(out.status, stg.STATUS_PASS, out.reasons)
+
+    def test_4b_buys_as_its_own_oh_buyer_not_the_wv_one(self):
+        # Checkout reuses a partner by email and keeps its stored address as the
+        # ship-to, so a buyer shared with the WV cases settles OH at WV's 6%.
+        order = _settled_order(tax_cents=0, breakdown="[]")
+        self._settle_4b(order, {"amount": 5250, "status": "succeeded"})
+        self.assertEqual(self.buyers, [stg.gate_buyer_email(stg.NON_WV_ADDRESS)])
+        self.assertNotEqual(self.buyers[0], stg.gate_buyer_email(stg.WV_ADDRESS))
+        self.assertTrue(self.buyers[0].endswith("@grove.invalid"))
+
+    def test_4b_any_tax_outside_nexus_fails(self):
+        out, _ = self._settle_4b(_settled_order(), {"amount": 5625, "status": "succeeded"})
+        self.assertEqual(out.reasons[0]["code"], "UNEXPECTED_TAX")
+
+    def test_4b_capture_must_be_base_minus_deposit(self):
+        order = _settled_order(tax_cents=0, breakdown=json.dumps([{"amount": 0, "inclusive": False}]))
+        out, _ = self._settle_4b(order, {"amount": 5625, "status": "succeeded"})
+        self.assertEqual(out.reasons[0]["code"], "BALANCE_MISMATCH")
+
+    def test_render_labels_a_merged_case_by_the_season_it_ran_in(self):
+        verdict = stg.aggregate([stg.CaseResult(
+            name="wv_full", gate="4", status=stg.STATUS_PASS, expect_flag="on",
+            season=stg.SEASON_DORMANT)])
+        self.assertIn("farm pickup", stg.render(verdict))
+        # A verdict JSON written before the field existed still loads and renders.
+        old = {k: v for k, v in verdict["cases"][0].items() if k != "season"}
+        self.assertIn("WV ship-to", stg.render(stg.aggregate([stg.CaseResult(**old)])))
 
 
 class TestGate3Rollback(unittest.TestCase):

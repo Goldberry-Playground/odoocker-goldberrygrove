@@ -43,6 +43,17 @@ USAGE
     bash scripts/stripe-tax-gate.sh --case settlement  # ship-time leg only (GOL-2910)
     bash scripts/stripe-tax-gate.sh --gate 3           # flag must be OFF
     bash scripts/stripe-tax-gate.sh --verdict          # merge both runs -> flip?
+
+DORMANT SEASON (Oct 16 to Apr 30)
+---------------------------------
+4a, 4b and 3 as first written buy a SHIPPED potted tree at full charge. The
+nursery checkout refuses that cart outside May 1 to Oct 15 (``_validate_ship_wave``)
+and every shipped bareroot order in the window is a deposit, so no full-charge
+shipped order exists and those cases 400 on every winter train. Josh's ruling
+(GOL-3801, 2026-11-16) for the window: 4a and 3 buy an in-stock bareroot tree
+for FARM PICKUP (charged in full year-round), and 4b ships a deposit order to
+OH and asserts Stripe Tax settles it at $0. ``--season`` picks the shape
+(default ``auto``, by today's date); the dormant shape needs ``--variant-pickup``.
 """
 
 from __future__ import annotations
@@ -57,6 +68,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field, asdict
+from datetime import datetime, timezone
 
 # ── Expected tax ────────────────────────────────────────────────────────────
 # WV is a 6% STATE rate. QA's e2e fixtures are deliberately bound to the
@@ -108,8 +120,31 @@ NON_WV_ADDRESS = {
     "country": "US",
 }
 
+
+
+def gate_buyer_email(address: dict) -> str:
+    """One buyer per ship-to state. Checkout reuses an existing partner by email
+    WITHOUT touching its address, and that partner is the order's ship-to, so a
+    single shared buyer made the OH order settle against the WV address the
+    first case had stored (S02358, Train #5: 6% WV tax on an OH ship-to)."""
+    local, domain = GATE_BUYER_EMAIL.split("@")
+    return f"{local}-{address['state'].lower()}@{domain}"
+
+
 STATUS_PASS = "PASS"
 STATUS_FAIL = "FAIL"
+
+SEASON_SHIP = "ship"
+SEASON_DORMANT = "dormant"
+
+
+def gate_season(today) -> str:
+    """Which cart shape the nursery checkout accepts on ``today``.
+
+    Potted ships May 1 through Oct 15 (the GOL-2233 cutover); outside it a
+    shipped potted cart is refused and shipped bareroot is always a deposit.
+    """
+    return SEASON_SHIP if (5, 1) <= (today.month, today.day) <= (10, 15) else SEASON_DORMANT
 
 
 @dataclass
@@ -119,6 +154,7 @@ class CaseResult:
     status: str
     expect_flag: str
     observed_flag: str = "unknown"
+    season: str = SEASON_SHIP
     reasons: list = field(default_factory=list)
     observed: dict = field(default_factory=dict)
 
@@ -176,6 +212,28 @@ def has_explicit_wv_tax_line(line_items: list) -> bool:
             if candidate and pat.search(str(candidate)):
                 return True
     return False
+
+
+def fail_if_cart_became_deposit(res: CaseResult, order_resp: dict) -> bool:
+    """Fail a FULL-CHARGE case whose cart fell onto the deposit path.
+
+    4a, 4b (ship season) and 3 need a cart that charges in full today. When the
+    in-stock fixture variant has no free stock left (every confirmed e2e order
+    reserves a unit), checkout takes the flat deposit instead, and a deposit
+    session never carries automatic_tax or the WV line. That reads as
+    FLAG_NOT_ON / NO_ODOO_TAX_LINE and sends the operator to the flag when the
+    fault is the fixture (GOL-3801, 2026-11-18: 50 on hand, 56 reserved).
+    """
+    if not order_resp.get("has_preorder"):
+        return False
+    res.fail(
+        "CART_BECAME_DEPOSIT",
+        "the cart took the flat deposit, so this full-charge case proves nothing "
+        "about the flag. The in-stock variant has no free stock: reap test orders "
+        "(scripts/qa-test-data-cleanup.sh --apply) or re-seed the fixture, then "
+        "re-run.",
+    )
+    return True
 
 
 def evaluate_wv_full(res: CaseResult, session: dict, line_items: list, rate_pct: float) -> CaseResult:
@@ -346,7 +404,29 @@ def breakdown_exclusive_cents(entries: list) -> int:
     return sum(int(e.get("amount") or 0) for e in entries if not e.get("inclusive"))
 
 
-def evaluate_settlement(res: CaseResult, settle_status, order: dict, intent, rate_pct: float) -> CaseResult:
+def _evaluate_balance(res: CaseResult, base_cents: int, tax_cents: int, intent) -> CaseResult:
+    """The off-session capture at ship must be ``base + tax - $10 deposit``."""
+    expected_balance = base_cents + tax_cents - int(round(DEPOSIT_DOLLARS * 100))
+    res.observed["expected_balance_cents"] = expected_balance
+    if not intent:
+        return res.fail("NO_SETTLEMENT_INTENT",
+                        "the order is settled but carries no settlement PaymentIntent.")
+    res.observed.update(captured_cents=int(intent.get("amount") or 0),
+                        intent_status=intent.get("status"))
+    if intent.get("status") != "succeeded":
+        return res.fail("INTENT_STATUS",
+                        f"settlement PaymentIntent is {intent.get('status')!r}, not 'succeeded'.")
+    if abs(int(intent.get("amount") or 0) - expected_balance) > 1:
+        return res.fail(
+            "BALANCE_MISMATCH",
+            f"captured {intent.get('amount')}c at ship, expected base {base_cents}c + "
+            f"Stripe tax {tax_cents}c - ${DEPOSIT_DOLLARS:.0f} deposit = {expected_balance}c.",
+        )
+    return res
+
+
+def evaluate_settlement(res: CaseResult, settle_status, order: dict, intent, rate_pct: float,
+                        taxed: bool = True) -> CaseResult:
     """Gate 4d — flag ON, deposit order SHIPPED: Stripe Tax computes the balance.
 
     Gate 4c proves Stripe Tax stands DOWN on a deposit checkout. This proves the
@@ -358,6 +438,9 @@ def evaluate_settlement(res: CaseResult, settle_status, order: dict, intent, rat
 
     ``order`` is the sale.order read back after settlement; ``intent`` is the
     settlement PaymentIntent from Stripe (None when the order recorded none).
+
+    ``taxed=False`` is the dormant-season Gate 4b: the same deposit order shipped
+    to a no-nexus state, where Stripe Tax must compute the balance at $0.
     """
     res.observed.update(settlement=settle_status,
                         checkout_status=order.get("grove_checkout_status"))
@@ -376,11 +459,34 @@ def evaluate_settlement(res: CaseResult, settle_status, order: dict, intent, rat
             f"checkout recorded ${charged:.2f} charged today, expected the flat "
             f"${DEPOSIT_DOLLARS:.2f} deposit (GOL-2233); the balance arithmetic is meaningless.",
         )
-    entries = _breakdown_entries(order.get("grove_stripe_tax_jurisdictions"))
+    recorded = order.get("grove_stripe_tax_jurisdictions")
+    entries = _breakdown_entries(recorded)
     tax_cents = int(round(float(order.get("grove_stripe_tax_amount") or 0.0) * 100))
     base_cents = int(round(float(order.get("amount_untaxed") or 0.0) * 100))
     res.observed.update(stripe_tax_cents=tax_cents, shipped_base_cents=base_cents,
                         observed_rate_pct=observed_rate_pct(base_cents, tax_cents))
+    if not taxed:
+        # Odoo's own tax is ALSO $0 for a no-nexus ship-to, so the amounts cannot
+        # tell Stripe from the fallback. The recorded breakdown can: the module
+        # writes it (even as "[]") only when the calc returned.
+        if not (isinstance(recorded, str) and recorded.strip()):
+            res.observed_flag = "off"
+            return res.fail(
+                "STRIPE_TAX_NOT_USED",
+                "no grove_stripe_tax_jurisdictions on the settled order: the balance "
+                "was computed on Odoo's tax, not Stripe's. Flag OFF on the running "
+                "process, or the ship-time /v1/tax/calculations failed and fell back "
+                "(look for a 'Stripe Tax FALLBACK' Discord alert / order chatter).",
+            )
+        res.observed_flag = "on"
+        if tax_cents != 0 or breakdown_exclusive_cents(entries) != 0:
+            return res.fail(
+                "UNEXPECTED_TAX",
+                f"Stripe Tax settled {max(tax_cents, breakdown_exclusive_cents(entries))}c "
+                "tax for a ship-to where Grove has no registered nexus. Either a stray "
+                "registration exists in test mode or the ship-to did not reach the calc.",
+            )
+        return _evaluate_balance(res, base_cents, tax_cents, intent)
     if not entries:
         # The module writes grove_stripe_tax_* ONLY when the calc returned. Empty
         # here means the balance was settled on Odoo's tax — either the flag is
@@ -420,23 +526,18 @@ def evaluate_settlement(res: CaseResult, settle_status, order: dict, intent, rat
             "NO_WV_JURISDICTION",
             "the settlement tax breakdown names no West Virginia jurisdiction.",
         )
-    expected_balance = base_cents + tax_cents - int(round(DEPOSIT_DOLLARS * 100))
-    res.observed["expected_balance_cents"] = expected_balance
-    if not intent:
-        return res.fail("NO_SETTLEMENT_INTENT",
-                        "the order is settled but carries no settlement PaymentIntent.")
-    res.observed.update(captured_cents=int(intent.get("amount") or 0),
-                        intent_status=intent.get("status"))
-    if intent.get("status") != "succeeded":
-        return res.fail("INTENT_STATUS",
-                        f"settlement PaymentIntent is {intent.get('status')!r}, not 'succeeded'.")
-    if abs(int(intent.get("amount") or 0) - expected_balance) > 1:
-        return res.fail(
-            "BALANCE_MISMATCH",
-            f"captured {intent.get('amount')}c at ship, expected base {base_cents}c + "
-            f"Stripe tax {tax_cents}c - ${DEPOSIT_DOLLARS:.0f} deposit = {expected_balance}c.",
-        )
-    return res
+    return _evaluate_balance(res, base_cents, tax_cents, intent)
+
+
+def gate_tracking_number(order_id, now=None) -> str:
+    """A unique 22-digit, USPS-shaped tracking number for the gate's hand label.
+
+    mark-shipped requires ``tracking`` and ``cost`` in its body since gom#408 and
+    accepts only a UPS 1Z number or 20 to 34 digits. The same number goes to the
+    hand-label step and to mark-shipped, so the route finds the label it expects
+    and settles on the recorded cost instead of replacing it.
+    """
+    return f"9400{int(now if now is not None else time.time()):010d}{int(order_id) % 10**8:08d}"
 
 
 def gate_tracking_number(order_id, now=None) -> str:
@@ -615,6 +716,34 @@ CASES = {
                         label="Gate 3 — flag OFF: Odoo's own WV tax line is back"),
 }
 
+# Oct 16 to Apr 30 (Josh's GOL-3801 ruling): the full-charge cases move to a
+# farm-pickup cart, which is charged in full year-round, and 4b becomes a
+# deposit order shipped to OH. Same case names, so aggregate() and --merge are
+# unchanged; 4c and 4d already run on the deposit path.
+DORMANT_CASES = {
+    "wv_full": dict(CASES["wv_full"], cart="pickup", fulfillment="pickup",
+                    label="Gate 4a — flag ON, WV farm pickup: Stripe charges the 6% state tax"),
+    "nonwv_full": dict(CASES["nonwv_full"], cart="bareroot", settles=True,
+                       label="Gate 4b — flag ON, OH deposit SHIPPED: Stripe Tax settles at $0 (no nexus)"),
+    "rollback_wv": dict(CASES["rollback_wv"], cart="pickup", fulfillment="pickup",
+                        label="Gate 3 — flag OFF, WV farm pickup: Odoo's own WV tax line is back"),
+}
+
+VARIANT_HELP = {
+    "instock": "--variant-instock is required (an in-stock, ships-now nursery variant id)",
+    "bareroot": "--variant-bareroot is required (a sold-out bareroot variant id, for Gate 4c)",
+    "pickup": "--variant-pickup is required in the dormant season (an in-stock bareroot "
+              "variant id, bought for farm pickup)",
+}
+
+
+def case_specs(season: str) -> dict:
+    return {**CASES, **DORMANT_CASES} if season == SEASON_DORMANT else CASES
+
+
+def _settles(name: str, spec: dict) -> bool:
+    return name == "settlement" or bool(spec.get("settles"))
+
 
 class Runner:
     def __init__(self, args):
@@ -622,7 +751,13 @@ class Runner:
         self.api_key = args.api_key or os.environ.get("QA_ODOO_API_KEY") or ""
         self.tenant = args.tenant
         self.stripe_key = args.stripe_key or os.environ.get("STRIPE_TEST_SECRET_KEY") or ""
-        self.variants = {"instock": args.variant_instock, "bareroot": args.variant_bareroot}
+        self.variants = {"instock": args.variant_instock, "bareroot": args.variant_bareroot,
+                         "pickup": getattr(args, "variant_pickup", None)}
+        # getattr: older callers build a Namespace without it, and they mean the
+        # shape the gate was first written for.
+        season = getattr(args, "season", None) or SEASON_SHIP
+        self.season = gate_season(datetime.now(timezone.utc)) if season == "auto" else season
+        self.cases = case_specs(self.season)
         self.rate = args.wv_rate
         self.qty = args.quantity
         # Settlement leg only (GOL-2910): an Odoo login that may write sale.order
@@ -651,31 +786,33 @@ class Runner:
         elif not _is_test_mode_key(self.stripe_key):
             problems.append("STRIPE_TEST_SECRET_KEY is not a test-mode key (must start with sk_test or rk_test). "
                             "Refusing: a live key here would create real charges.")
-        if not self.variants["instock"]:
-            problems.append("--variant-instock is required (an in-stock, ships-now nursery variant id)")
-        if not self.variants["bareroot"]:
-            problems.append("--variant-bareroot is required (a sold-out bareroot variant id, for Gate 4c)")
-        if "settlement" in names and not (self.rpc_login and self.rpc_password):
-            problems.append("QA_ODOO_RPC_LOGIN / QA_ODOO_RPC_PASSWORD are unset (Gate 4d drives the "
-                            "deposit order to the ship event over Odoo JSON-RPC)")
+        # Every cart the season's cases use, whichever cases this run picked, so a
+        # gate-4 run cannot go green on variants gate 3 will then lack.
+        for cart in sorted({spec["cart"] for spec in self.cases.values()}):
+            if not self.variants[cart]:
+                problems.append(VARIANT_HELP[cart])
+        if any(_settles(n, self.cases[n]) for n in names) and not (self.rpc_login and self.rpc_password):
+            problems.append("QA_ODOO_RPC_LOGIN / QA_ODOO_RPC_PASSWORD are unset (the settlement cases "
+                            "drive a deposit order to the ship event over Odoo JSON-RPC)")
         return problems
 
     def run_case(self, name: str) -> CaseResult:
-        if name == "settlement":
-            return self.run_settlement()
-        spec = CASES[name]
+        spec = self.cases[name]
+        if _settles(name, spec):
+            return self.run_settlement(name)
         res = CaseResult(name=name, gate=spec["gate"], status=STATUS_PASS,
-                         expect_flag=spec["expect_flag"])
+                         expect_flag=spec["expect_flag"], season=self.season)
         return self._checkout_and_evaluate(name, spec, res)
 
     def _create_checkout(self, spec: dict) -> tuple:
         variant = self.variants[spec["cart"]]
         payload = {
-            "contact": {"name": GATE_BUYER_NAME, "email": GATE_BUYER_EMAIL, "phone": GATE_BUYER_PHONE},
+            "contact": {"name": GATE_BUYER_NAME, "email": gate_buyer_email(spec["address"]),
+                        "phone": GATE_BUYER_PHONE},
             "items": [{"variant_id": int(variant), "quantity": self.qty}],
             "shipping": dict(spec["address"]),
             "billing": dict(spec["address"]),
-            "fulfillment": "ship",
+            "fulfillment": spec.get("fulfillment", "ship"),
             "success_url": "https://example.invalid/gate/ok",
             "cancel_url": "https://example.invalid/gate/cancel",
         }
@@ -701,6 +838,8 @@ class Runner:
         line_items = ((session.get("line_items") or {}).get("data")) or []
         res.observed_flag = observed_flag_state(session)
         res.observed["session_id"] = session_id
+        if name != "deposit" and fail_if_cart_became_deposit(res, body):
+            return res
         if name == "wv_full":
             return evaluate_wv_full(res, session, line_items, self.rate)
         if name == "nonwv_full":
@@ -709,18 +848,19 @@ class Runner:
             return evaluate_deposit(res, session, body)
         return evaluate_rollback_wv(res, session, line_items)
 
-    def run_settlement(self) -> CaseResult:
+    def run_settlement(self, name: str = "settlement") -> CaseResult:
         """Gate 4d driver: deposit checkout -> saved test card -> wave -> hand
         label -> mark-shipped (which settles) -> read back order + intent.
+        The dormant-season 4b runs the same walk to a no-nexus ship-to.
 
         The hosted deposit payment itself is SIMULATED (the webhook's writes are
         made over RPC) because completing a Checkout Session needs a browser; the
         webhook half stays with the @stripe Playwright suite. Everything from the
         ship event on is the real production code path.
         """
-        spec = CASES["settlement"]
-        res = CaseResult(name="settlement", gate=spec["gate"], status=STATUS_PASS,
-                         expect_flag=spec["expect_flag"])
+        spec = self.cases[name]
+        res = CaseResult(name=name, gate=spec["gate"], status=STATUS_PASS,
+                         expect_flag=spec["expect_flag"], season=self.season)
         status, body = self._create_checkout(spec)
         if status != 200:
             return res.fail("CHECKOUT_HTTP_%d" % status, json.dumps(body)[:300])
@@ -734,7 +874,7 @@ class Runner:
 
         # A saved test card for the off-session balance capture.
         st, cus = _stripe_post(self.stripe_key, "customers", {
-            "email": GATE_BUYER_EMAIL, "name": GATE_BUYER_NAME,
+            "email": gate_buyer_email(spec["address"]), "name": GATE_BUYER_NAME,
             "metadata[purpose]": "stripe-tax-gate", "metadata[order_ref]": order_ref or ""})
         if st != 200:
             return res.fail("STRIPE_HTTP_%d" % st, "create customer: " + json.dumps(cus)[:300])
@@ -781,14 +921,15 @@ class Runner:
             st, intent = _stripe_get(self.stripe_key, f"payment_intents/{pi_id}")
             if st != 200:
                 return res.fail("STRIPE_HTTP_%d" % st, "read settlement intent: " + json.dumps(intent)[:300])
-        return evaluate_settlement(res, shipped.get("settlement"), order, intent, self.rate)
+        return evaluate_settlement(res, shipped.get("settlement"), order, intent, self.rate,
+                                   taxed=spec["address"] is WV_ADDRESS)
 
 
 def render(verdict: dict) -> str:
     lines = ["", "Stripe Tax cutover gate (GOL-2568 / GOL-2584)", "=" * 46]
     for c in verdict["cases"]:
         mark = "PASS" if c["status"] == STATUS_PASS else "FAIL"
-        lines.append(f"[{mark}] {CASES[c['name']]['label']}")
+        lines.append(f"[{mark}] {case_specs(c.get('season') or SEASON_SHIP)[c['name']]['label']}")
         lines.append(f"        flag expected={c['expect_flag']} observed={c['observed_flag']}")
         for r in c["reasons"]:
             lines.append(f"        -> {r['code']}: {r['detail']}")
@@ -816,6 +957,11 @@ def main(argv=None) -> int:
     p.add_argument("--tenant", default="nursery")
     p.add_argument("--variant-instock", default=os.environ.get("GATE_VARIANT_INSTOCK"))
     p.add_argument("--variant-bareroot", default=os.environ.get("GATE_VARIANT_BAREROOT"))
+    p.add_argument("--variant-pickup", default=os.environ.get("GATE_VARIANT_PICKUP"),
+                   help="dormant season only: an in-stock bareroot variant id, bought for farm pickup")
+    p.add_argument("--season", choices=["auto", SEASON_SHIP, SEASON_DORMANT], default="auto",
+                   help="cart shape for 4a/4b/3: ship = shipped potted (May 1 to Oct 15), "
+                        "dormant = farm pickup + OH deposit settlement; auto picks by today's date")
     p.add_argument("--wv-rate", type=float, default=DEFAULT_WV_RATE_PCT)
     p.add_argument("--quantity", type=int, default=1)
     p.add_argument("--odoo-db", default=None, help="QA Odoo DB for the settlement case (QA_ODOO_DB, default odoo)")
@@ -840,11 +986,12 @@ def main(argv=None) -> int:
     if args.dry_run:
         print("DRY RUN — nothing will be created.")
         print(f"  QA Odoo : {runner.odoo_base or '(unset)'}  tenant={runner.tenant}")
+        print(f"  season  : {runner.season}")
         key_kind = _test_mode_key_kind(runner.stripe_key)
         print(f"  Stripe  : {key_kind + '…' if key_kind else '(unset/not test)'}")
         print("  cases   :")
         for n in names:
-            print(f"    - {CASES[n]['label']}")
+            print(f"    - {runner.cases[n]['label']}")
         if problems:
             print("\n  BLOCKED — unmet preconditions:")
             for prob in problems:
@@ -864,7 +1011,7 @@ def main(argv=None) -> int:
             # so the verdict is red rather than silently short.
             for n in names:
                 r = CaseResult(name=n, gate=CASES[n]["gate"], status=STATUS_PASS,
-                               expect_flag=CASES[n]["expect_flag"])
+                               expect_flag=CASES[n]["expect_flag"], season=runner.season)
                 for prob in problems:
                     r.fail("PRECONDITION", prob)
                 results.append(r)
