@@ -22,7 +22,8 @@
 
 ## Why this appendix exists
 
-`docs/RELEASE.md` + `.github/workflows/release.yml` deploy **only the Odoo
+`docs/RELEASE.md` + `.github/workflows/release.yml` (both historical: the workflow
+was retired in #572, GOL-1846) deployed **only the Odoo
 compose stack** (SSH → `git checkout <tag>` → `docker compose pull/up`). They do
 **not** roll the four revenue storefronts, which run as DigitalOcean App
 Platform apps pulling GHCR images. Cutting a `vX.Y.Z` tag updates Odoo and
@@ -81,6 +82,6 @@ canonical doc) — step 3 is not optional.
   not just merged. Full before/after in the GOL-1325 thread.
   **Gap flagged (since closed):** at the time of the exercise the storefront
   roll had no GitHub-Environment `production` approval gate (that gate lived
-  only in the dormant, Odoo-only `release.yml`), leaving operator discipline
+  only in the Odoo-only `release.yml`, since retired in #572), leaving operator discipline
   (single-fire + poll) as the only control — GOL-1600. `promote-storefronts.yml`
   now supplies that gate.

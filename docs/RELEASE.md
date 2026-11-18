@@ -1,5 +1,12 @@
 # Release Guide
 
+> **RETIRED, do not follow.** `.github/workflows/release.yml` was removed in #572
+> (GOL-1846); pushing a `vX.Y.Z` tag to this repo deploys nothing. Production is
+> released by the biweekly release train: see
+> [`RUNBOOK-release-train.md`](RUNBOOK-release-train.md) (Leg B modules:
+> `scripts/prod-modules-promote.sh`; Leg A storefronts:
+> `promote-storefronts.yml`). Kept for history only.
+
 This document covers the full release lifecycle for the Grove production stack:
 cutting a tag, watching the pipeline, approving the deploy, and rolling back.
 

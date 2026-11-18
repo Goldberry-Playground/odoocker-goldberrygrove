@@ -32,8 +32,7 @@ an explicit `-u <module>` pass.** This runbook is that pass.
 ## Access constraint (why this is not a CI job)
 
 Port 22 on the L3 droplets is scoped by firewall to the **admin IP** only
-(config goes IN via cloud-init; app deploys via image pull — the L3 pattern,
-see `release.yml` header). GitHub Actions runners and Paperclip agent runtimes
+(config goes IN via cloud-init; app deploys via image pull — the L3 pattern). GitHub Actions runners and Paperclip agent runtimes
 are **not** on the admin IP, so this cannot (today) be a `workflow_dispatch`
 job — it is run from an operator machine that holds the admin IP + the
 `grove-qa` SSH key. If/when a bastion or IP-allowlisted runner exists, wrap

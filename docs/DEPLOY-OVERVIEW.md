@@ -123,7 +123,9 @@ End state: deploys never block on cert provisioning. If you ever see a browser w
 
 ---
 
-## 3. Production — STUB / DEFERRED pending Level 3
+## 3. Production — LIVE on Level 3 (the text below is historical)
+
+> **Updated 2026-11-18:** production is live. `infra/terraform/environments/production/` manages Managed PG, the Odoo droplet, the blogs droplet and the four App Platform apps (see that env's README), and releases go through [`RUNBOOK-release-train.md`](./RUNBOOK-release-train.md). The "not currently deployable" / "deferred" paragraphs that follow describe the pre-Phase-6 state and are kept for history.
 
 > ⚠️ **Production is not currently deployable.** The TF scaffold at `infra/terraform/environments/production/` is intentionally gated behind a "DO NOT DEPLOY YET" banner.
 

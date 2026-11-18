@@ -30,8 +30,8 @@ Ghost is NOT the website — it's a headless content source. Next.js is the fron
 |-------------|-----------------|-----------------|
 | Local | `override.local.yml` | Ports exposed, `restart: no`, modules bind-mounted from `../grove-odoo-modules` |
 | Grove Local | `override.grove.yml` + `override.local.yml` | Adds Ghost CMS instances + frontends (`--profile frontends`) |
-| Sandbox/QA | `override.grove.yml` + `override.sandbox.yml` | `APP_ENV=staging`, sandbox DB |
-| Production | `override.grove.yml` + `override.production.yml` | Memory limits, `restart: unless-stopped`, git-sync active |
+| Sandbox (legacy compose) | `override.grove.yml` + `override.sandbox.yml` | `APP_ENV=staging`, sandbox DB. Not how QA runs: QA is Terraform (`infra/terraform/environments/qa-app-platform`) |
+| Production (legacy compose) | `override.grove.yml` + `override.production.yml` | Memory limits, `restart: unless-stopped`, git-sync active. Not applied to the live prod droplet: prod is Terraform (`infra/terraform/environments/production`), Caddy in front, modules pinned by `var.custom_modules_ref` |
 
 ## Deploy invariants (read before touching cloud-init / Terraform envs)
 

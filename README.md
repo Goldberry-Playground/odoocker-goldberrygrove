@@ -80,7 +80,7 @@ There are two shapes: Docker Compose for local development, and **Level 3** ([AD
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-Everything in the Level 3 diagram is Terraform-managed under `infra/terraform/environments/` (`qa-app-platform/` for QA; `production/` is a gated stub until ADR-007 Phase 6). The grove-odoo image bakes **no** custom modules — the git-sync sidecar delivers them at runtime. See [docs/DEPLOY-OVERVIEW.md](docs/DEPLOY-OVERVIEW.md) for the full deployment map.
+Everything in the Level 3 diagram is Terraform-managed under `infra/terraform/environments/` (`qa-app-platform/` for QA; `production/` for prod, live since ADR-007 Phase 6). The grove-odoo image bakes **no** custom modules — the git-sync sidecar delivers them at runtime. See [docs/DEPLOY-OVERVIEW.md](docs/DEPLOY-OVERVIEW.md) for the full deployment map.
 
 ## Prerequisites
 
@@ -373,8 +373,10 @@ The grove-odoo image bakes **no** custom modules. On the Odoo droplet, the
 `custom-modules-sync` sidecar (git-sync) delivers them at runtime into
 `/workspace/current`:
 
-- **QA** tracks the `main` branch of grove-odoo-modules (polling; no Docker
-  rebuild needed).
+- **QA** tracks the `main` branch of grove-odoo-modules by default (polling; no
+  Docker rebuild needed). During a release-train window it is pinned to the
+  freeze SHA with `TF_VAR_custom_modules_ref` (see
+  [docs/RUNBOOK-release-train.md](docs/RUNBOOK-release-train.md)).
 - **Production** pins a specific SHA via `var.custom_modules_ref` in
   `infra/terraform/environments/production` (written to `CUSTOM_MODULES_REF`/
   `GITSYNC_REF` in `/etc/grove/.env` by cloud-init; a TF `validation` block
@@ -493,7 +495,7 @@ make all-up          # postgres + odoo + frontends (canonical local bring-up)
 make monitoring-up   # optional: OpenObserve + Keep
 ```
 
-### QA (Level 3 — live)
+### QA (Level 3 — up only during a release-train window)
 
 Everything is Terraform-managed under
 `infra/terraform/environments/qa-app-platform/`. There is no droplet-rebuild
@@ -501,21 +503,25 @@ pipeline in this repo anymore:
 
 - **Frontends** — grove-sites CI publishes images to GHCR; the App Platform
   apps auto-redeploy (`deploy_on_push`). No SSH, no compose, no cert dance.
-- **Odoo + observability droplets** — `terraform apply` in the
+- **Odoo droplet** — `terraform apply` in the
   `qa-app-platform` env (droplet compose + Caddy come from the env's
   `compose/` and cloud-init templates).
 - **Custom modules** — git-sync sidecar pulls grove-odoo-modules (see
   [Custom Odoo Modules](#custom-odoo-modules)).
 - **URLs** — `hub.qa.gatheringatthegrove.com`, `goldberry.qa.*`, `ggg.qa.*`,
-  `nursery.qa.*`, `odoo.qa.*` (plus firewall-allowlisted `oo.qa.*` /
-  `keep.qa.*` for observability).
+  `nursery.qa.*`, `odoo.qa.*`. The QA-only observability droplet
+  (`oo.qa.*` / `keep.qa.*`) was retired 2026-09-29 (ADR-010); observability
+  lives on `grove-obs` (`infra/terraform/environments/observability/`).
 
-### Production (Phase 6 — pending)
+### Production (Level 3 — live)
 
-Production is **not yet deployable**: `infra/terraform/environments/production/`
-is a gated stub behind a "DO NOT DEPLOY YET" banner until ADR-007 Phase 6
-replicates the QA shape (larger sizes, HA Managed Postgres). Status updates
-land in that env's README.
+Production is live on the same shape: `infra/terraform/environments/production/`
+manages the Managed Postgres, the Odoo droplet, the blogs droplet and the four
+App Platform storefront apps (see that env's README). Applies are manual and
+targeted. Storefront images and the grove-odoo-modules ref are pinned to commit
+SHAs (`hub_image_tag`, `tenant_image_tag`, `custom_modules_ref` in
+`variables.tf`) and move only through the release train:
+[docs/RUNBOOK-release-train.md](docs/RUNBOOK-release-train.md).
 
 ### Reference docs
 
