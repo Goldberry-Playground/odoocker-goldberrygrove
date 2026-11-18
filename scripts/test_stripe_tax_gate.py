@@ -121,6 +121,22 @@ class TestGate4aWvFull(unittest.TestCase):
         self.assertEqual(out.reasons[0]["code"], "FLAG_NOT_ON")
 
 
+class TestFullChargeCartBecameDeposit(unittest.TestCase):
+    # GOL-3801, 2026-11-18: the in-stock fixture had 50 on hand and 56 reserved,
+    # so the 4a pickup cart took the deposit and the gate blamed the flag.
+    def test_deposit_cart_is_named_instead_of_blaming_the_flag(self):
+        res = _case("wv_full")
+        self.assertTrue(stg.fail_if_cart_became_deposit(res, {"has_preorder": True}))
+        self.assertEqual(res.status, stg.STATUS_FAIL)
+        self.assertEqual(res.reasons[0]["code"], "CART_BECAME_DEPOSIT")
+
+    def test_full_charge_cart_is_left_alone(self):
+        res = _case("wv_full")
+        self.assertFalse(stg.fail_if_cart_became_deposit(res, {"has_preorder": False}))
+        self.assertEqual(res.status, stg.STATUS_PASS)
+        self.assertEqual(res.reasons, [])
+
+
 class TestGate4bNonWv(unittest.TestCase):
     def test_zero_tax_outside_nexus_passes(self):
         res = _case("nonwv_full")

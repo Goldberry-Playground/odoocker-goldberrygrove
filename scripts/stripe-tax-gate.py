@@ -214,6 +214,28 @@ def has_explicit_wv_tax_line(line_items: list) -> bool:
     return False
 
 
+def fail_if_cart_became_deposit(res: CaseResult, order_resp: dict) -> bool:
+    """Fail a FULL-CHARGE case whose cart fell onto the deposit path.
+
+    4a, 4b (ship season) and 3 need a cart that charges in full today. When the
+    in-stock fixture variant has no free stock left (every confirmed e2e order
+    reserves a unit), checkout takes the flat deposit instead, and a deposit
+    session never carries automatic_tax or the WV line. That reads as
+    FLAG_NOT_ON / NO_ODOO_TAX_LINE and sends the operator to the flag when the
+    fault is the fixture (GOL-3801, 2026-11-18: 50 on hand, 56 reserved).
+    """
+    if not order_resp.get("has_preorder"):
+        return False
+    res.fail(
+        "CART_BECAME_DEPOSIT",
+        "the cart took the flat deposit, so this full-charge case proves nothing "
+        "about the flag. The in-stock variant has no free stock: reap test orders "
+        "(scripts/qa-test-data-cleanup.sh --apply) or re-seed the fixture, then "
+        "re-run.",
+    )
+    return True
+
+
 def evaluate_wv_full(res: CaseResult, session: dict, line_items: list, rate_pct: float) -> CaseResult:
     """Gate 4a — flag ON, WV destination: Stripe computes the 6% state tax."""
     if res.observed_flag != "on":
@@ -805,6 +827,8 @@ class Runner:
         line_items = ((session.get("line_items") or {}).get("data")) or []
         res.observed_flag = observed_flag_state(session)
         res.observed["session_id"] = session_id
+        if name != "deposit" and fail_if_cart_became_deposit(res, body):
+            return res
         if name == "wv_full":
             return evaluate_wv_full(res, session, line_items, self.rate)
         if name == "nonwv_full":
