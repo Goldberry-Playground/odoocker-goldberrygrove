@@ -149,6 +149,37 @@ make qa-l3-seed-e2e            # converge the fixture (idempotent no-op if prese
   docker-compose.preview.yml`), so `/shop` can't render the catalog there
   regardless of the fixture. Revisit when preview gains the custom modules.
 
+## Post-apply: seed the planner-catalog fixtures (GOL-3999 / GOL-4001)
+
+QA carries no `grove_planner_ready` template — the planner facts and the human
+listing sign-off are prod-only data — so the nursery planner feed answers
+`plants: 0` and the five planner e2e tests (`planner-build-order`,
+`planner-winter-beta`) **skip** instead of proving the render path (GOL-3997).
+A second idempotent seed writes six synthetic, fully planner-ready nursery
+fixtures, matched by `default_code`:
+
+```bash
+make qa-l3-seed-planner DRY_RUN=1   # read-only plan
+make qa-l3-seed-planner             # converge + verify the storefront feed
+make qa-l3-seed                     # both seeds in order (inventory, then planner)
+```
+
+- `make qa-l3-seed` is the one post-train-up seed command; run it before the
+  `e2e-nursery` gate is dispatched.
+- Same script source (`grove-odoo-modules`, pinned to `SEED_PLANNER_REF`, which
+  defaults to `SEED_E2E_REF`), same `.env.op.seed` creds and the same QA-only
+  guard as the test-inventory seed.
+- The script reads `grove_planner_ready` back per fixture and exits non-zero on
+  any that is not ready, then probes `SEED_PLANNER_FEED_URL` (the nursery QA
+  storefront `/api/planner/catalog`) and exits non-zero on `plants: 0`. A broken
+  bring-up therefore fails at seed time, not as five quiet skips in the gate.
+- The storefront answer is cached in three stacked 5-minute layers (BFF memo,
+  Next data cache served stale-while-revalidate, Cloudflare edge). If the feed
+  was fetched while still empty, the probe can fail on a correct seed for up to
+  ~15 minutes: wait and re-run, or pass `SEED_PLANNER_FEED_URL=` to skip the
+  storefront probe. On a fresh train-up the seed lands before the first fetch.
+- A plain `make qa-l3-seed*` is a **live** run; only `DRY_RUN=1` plans.
+
 ## Post-apply: sync the nursery bundle photos from prod (GOL-3785)
 
 The Managed PG + filestore volumes survive every teardown, so QA is **never
