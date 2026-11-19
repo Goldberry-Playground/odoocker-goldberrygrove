@@ -200,6 +200,10 @@ write_files:
       # empty => order alerts visibly misroute into #grove-ops rather than drop.
       # Same bare-URL / no-/slack rule as DISCORD_OPS.
       DISCORD_ORDERS_WEBHOOK_URL=${discord_orders_webhook_url}
+      # Shipping topic channel (gom#384; GOL-3930): carrier, Printify and oversell
+      # alerts plus the live ZIP quote alerts (GOL-3927 / GOL-3928). Falls back
+      # to ORDERS, then OPS above when empty. Same bare-URL / no-/slack rule.
+      DISCORD_SHIPPING_WEBHOOK_URL=${discord_shipping_webhook_url}
       # Discord calendar (GOL-3831, grove-odoo-modules#395 phase C). grove_calendar
       # reads these from os.environ via the compose environment: block. EVENTS =
       # the channel for the Monday "Coming up" digest, falls back to DISCORD_OPS

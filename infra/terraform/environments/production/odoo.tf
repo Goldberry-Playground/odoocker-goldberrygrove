@@ -249,6 +249,12 @@ resource "digitalocean_droplet" "odoo" {
     # prefers this and falls back to the ops webhook above, so order alerts
     # separate from bot-logs once the webhook is provisioned.
     discord_orders_webhook_url = var.discord_orders_webhook_url
+    # Shipping topic channel (gom#384; GOL-3930): carrier / Printify / oversell
+    # alerts and the live ZIP quote alerts. Falls back to ORDERS, then OPS when
+    # empty. The live box already carries the line (hand edit 2026-10-30, #967);
+    # rendering it here makes a rebuild reproduce it. user_data is in
+    # ignore_changes (below), so landing this does NOT touch the running droplet.
+    discord_shipping_webhook_url = var.discord_shipping_webhook_url
     # Discord calendar (GOL-3831, grove-odoo-modules#395 phase C). grove_calendar
     # posts the Monday digest to EVENTS (falls back to the ops webhook above when
     # empty) and, from Train #5, syncs native guild events with BOT_TOKEN +
