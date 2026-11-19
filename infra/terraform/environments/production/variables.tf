@@ -831,9 +831,9 @@ variable "consult_access_aud" {
 # === Storefront shared data cache (GOL-3907) - valkey.tf, apps.tf ===========
 
 variable "storefront_cache_apps" {
-  description = "Storefront apps that get the shared Valkey cache env (VALKEY_URL + GROVE_CACHE_NAMESPACE, RUN_TIME). Members: goldberry, ggg, nursery, hub. Default [] = no env on any app, so the app specs are unchanged. Rollout (Josh decides each step): goldberry, then nursery, then ggg + hub, 24h soak between, each as a targeted apply. Rollback = remove the app from the set; @grove/next-cache falls back to the local cache when VALKEY_URL is unset."
+  description = "Storefront apps that get the shared Valkey cache env (VALKEY_URL + GROVE_CACHE_NAMESPACE, RUN_TIME). Members: goldberry, ggg, nursery, hub. [] = no env on any app. The default IS the rollout state: promote-storefronts applies the four apps from main on every train, so a local -var override would be reverted by the next promote. Rollout (Josh decides each step): goldberry, then nursery, then ggg + hub, 24h soak between, each as a targeted apply. Rollback = remove the app from the set; @grove/next-cache falls back to the local cache when VALKEY_URL is unset."
   type        = set(string)
-  default     = []
+  default     = ["goldberry"] # rollout step 1 (GOL-3907); next: + nursery, then + ggg, hub
   validation {
     condition     = alltrue([for a in var.storefront_cache_apps : contains(["goldberry", "ggg", "nursery", "hub"], a)])
     error_message = "storefront_cache_apps members must be goldberry, ggg, nursery or hub."
