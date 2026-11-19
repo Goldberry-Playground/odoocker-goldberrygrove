@@ -13,7 +13,8 @@ ARG GOSU_VERSION=1.19
 # 1.26.6 was flagged HIGH by CVE-2026-78667 + CVE-2026-78669 + CVE-2026-97031
 # (fixed in Go 1.26.9).
 # 1.26.9 was flagged HIGH by CVE-2026-111943 (fixed in Go 1.26.10) — GOL-3563.
-FROM golang:1.26.10-bookworm AS gosu-builder
+# 1.26.10 was flagged HIGH by CVE-2026-97054 (fixed in Go 1.26.11) — GOL-4037.
+FROM golang:1.26.11-bookworm AS gosu-builder
 ARG GOSU_VERSION
 RUN set -eux; \
     git clone --depth 1 --branch "${GOSU_VERSION}" \
