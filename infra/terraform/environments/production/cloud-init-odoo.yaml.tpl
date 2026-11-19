@@ -98,9 +98,8 @@ write_files:
 
       # Stripe LIVE-mode keys for grove_headless prod checkout (GOL-973).
       # LOWERCASE names on purpose: grove_headless controllers/main.py reads
-      # them via os.environ.get("stripe_test_secret_key") /
-      # ...("stripe_test_webhook_secret") (the env NAMES are historical; the
-      # VALUES are live in prod). These lines are the `--env-file` SOURCE:
+      # them via os.environ.get(...) (the stripe_test_* env NAME is
+      # historical; the VALUES are live in prod). These lines are the `--env-file` SOURCE:
       # `docker compose --env-file /etc/grove/.env up` interpolates them into
       # the odoo service's `environment:` block in docker-compose.odoo.yml,
       # which is what actually reaches os.environ (the /.env mount only feeds
@@ -114,7 +113,8 @@ write_files:
       # Empty default => grove_headless treats it as "" (checkout inert), so
       # this scaffold is a safe no-op until CFO (Penny) mints the live keys and
       # the board greenlights a prod-checkout rebuild (see .env.op + GOL-973).
-      stripe_test_secret_key=${stripe_test_secret_key}
+      # The global stripe_test_secret_key fallback is RETIRED (GOL-3802): the
+      # secret key is per-tenant only, see stripe_secret_key_{tenant} below.
       stripe_test_webhook_secret=${stripe_test_webhook_secret}
       # Per-tenant Stripe webhook signing secrets (GOL-973 Gap A, mirrors QA
       # GOL-1016). grove_headless _configured_webhook_secrets() tries EACH

@@ -108,6 +108,18 @@ mint a dedicated backend key (`sk_test_`/live equivalent, or a restricted key
 scoped to session + webhook operations), store it as its own 1Password item, and
 wire it to `stripe_test_secret_key` in the prod env's `.env.op`.
 
+> **Superseded for prod (GOL-3802, 2026-11-13).** Prod no longer has a global
+> `stripe_test_secret_key` at all. Since 2026-10-30 each storefront charges into
+> its own LLC's account through `stripe_secret_key_{goldberry,nursery,ggg}`, and
+> `grove_headless` `_tenant_secret_key()` never reads the global key once any
+> per-tenant key is set. The global var, its `.env.op` ref, and its cloud-init
+> and compose lines were removed. The prod chain for rule 2 above is now
+> `os.environ["stripe_secret_key_<tenant>"]` ← `/etc/grove/.env` ← cloud-init
+> `user_data` ← `var.stripe_secret_key_<tenant>` ← `.env.op` ← 1Password.
+> `scripts/check-checkout-secrets-wired.sh` requires all three prod refs and
+> rejects the retired global. QA is unchanged (one `sk_test_` key, correctly
+> named there).
+
 **Prod arming is codified in `infra/terraform/environments/production/.env.op`**
 (GOL-973 block). Two hard gates before the key is wired:
 
