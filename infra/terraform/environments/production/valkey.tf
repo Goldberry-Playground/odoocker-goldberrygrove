@@ -9,8 +9,8 @@
 # starts each app with an empty cache.
 #
 # The apps opt in one at a time through var.storefront_cache_apps (apps.tf).
-# With the default empty set no app spec changes; the cluster and its
-# firewall are pure additions.
+# An app not in the set gets no cache env and keeps its local cache; the
+# cluster and its firewall are pure additions.
 #
 # No prevent_destroy: this is a rebuildable cache. Losing it only makes pages
 # slower until the cache warms again; no data lives only here. To roll back an
