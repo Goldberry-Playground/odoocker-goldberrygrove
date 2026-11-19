@@ -45,8 +45,14 @@ was retired 2026-09-29 (ADR-010).
 - **grove-sites PRs:** #___ , #___  (one line each: what it changes + verify note)
 - **grove-odoo-modules ref (backend):** `main HEAD` @ <SHA>  (list the money/compliance
   PRs this SHA carries so the release is explicit)
+- **odoo_image_tag (only when the train moves the Odoo image):** odoocker `<SHA>`
+  = `sha256:<digest>`, base `19.0-<date>`  (RUNBOOK-release-train.md "Odoo image step")
 
 #### Gate (on QA)
+- [ ] Image step rehearsed, when the train carries one:
+      `FORCE_UPGRADE=1 scripts/prod-odoo-image-apply.sh --apply` against QA,
+      exit 0, `0 CRITICAL, 0 ERROR` (or the tolerated lines listed here), Stripe
+      provider lines read  — result: <fill>
 - [ ] `scripts/qa-test-data-cleanup.sh` run BEFORE recording verdicts
 - [ ] Catalog compat baseline captured BEFORE `qa-module-upgrade.sh`, verified
       after — `scripts/verify-shop-departments-compat.py` (see
@@ -73,6 +79,9 @@ was retired 2026-09-29 (ADR-010).
 
 #### Promote (Wed — Josh approves production environment)
 - [ ] Reconcile PRs deduped (no competing storefront pins) — winner: #___, closed: #___
+- [ ] **Odoo image step (before everything else), when the train carries one:**
+      `IMAGE_TAG=<odoocker sha> EXPECT_DIGEST=<digest> scripts/prod-odoo-image-apply.sh --apply`
+      — PITR point: <fill>, rollback tag: <fill>
 - [ ] **Leg B (first, steps 3–5):** `TARGET_REF=<modules-sha> scripts/prod-modules-promote.sh`
       pre-flight, then `CONFIRM=PROMOTE`, then `reconcile-modules-pin.yml`. **NOT**
       "tag -> `release.yml`" and **NOT** an SSH `docker compose pull`. **Run it

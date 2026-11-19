@@ -189,6 +189,10 @@ jobs:
           # The smoke test must mirror that or the loader crashes with
           # ".env: No such file or directory" (caught by this exact step on
           # the first run -- proof the smoke catches real runtime gaps).
+          # ADDONS_PATH is the exact line the prod / QA / preview cloud-init
+          # templates render (scripts/test_addons_path_third_party.py keeps the
+          # four in step), so an image that cannot boot on that path -- e.g. the
+          # third-party-addons dir missing -- fails here, not on a droplet.
           cat > /tmp/smoke.env <<'EOF'
           POSTGRES_PASSWORD=odoosmoketestpw
           ODOO_ADMIN_PASSWORD=smoketestadmin
@@ -201,6 +205,7 @@ jobs:
           INIT=base
           WORKERS=0
           LIST_DB=false
+          ADDONS_PATH=/usr/lib/python3/dist-packages/odoo/addons,/usr/lib/python3/dist-packages/odoo/third-party-addons,/workspace/current
           EOF
 
           # Minimal compose stack reproducing how QA wires odoo to postgres.
