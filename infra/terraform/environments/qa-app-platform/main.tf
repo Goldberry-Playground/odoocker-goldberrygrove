@@ -550,6 +550,11 @@ resource "digitalocean_droplet" "odoo" {
     # on QA by design (events cron inert, never touches the real server).
     discord_events_webhook_url = var.discord_events_webhook_url
 
+    # Shipping topic channel (gom#384; GOL-3930): carrier / Printify / oversell
+    # alerts and the live ZIP quote alerts (Train #6 gate). Falls back to
+    # ORDERS, then OPS when empty. QA = the real shipping channel, tagged.
+    discord_shipping_webhook_url = var.discord_shipping_webhook_url
+
     # Perenual plant-facts enrichment (GOL-2507, parent GOL-2383). The
     # grove.enrich.job cron only drains when PerenualProvider.configured is
     # true, i.e. os.environ PERENUAL_API_KEY is non-empty; default-empty here

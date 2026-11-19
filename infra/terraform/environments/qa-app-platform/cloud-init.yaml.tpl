@@ -239,6 +239,10 @@ write_files:
       # the QA ops channel. DISCORD_BOT_TOKEN / DISCORD_GUILD_ID are deliberately
       # NOT written on QA so the phase D events cron stays inert here. Bare URL.
       DISCORD_EVENTS_WEBHOOK_URL=${discord_events_webhook_url}
+      # Shipping topic channel (gom#384; GOL-3930): carrier, Printify and oversell
+      # alerts plus the live ZIP quote alerts (GOL-3927 / GOL-3928). Falls back
+      # to ORDERS, then OPS above when empty. Bare URL.
+      DISCORD_SHIPPING_WEBHOOK_URL=${discord_shipping_webhook_url}
       # Perenual plant-facts enrichment (GOL-2507, parent GOL-2383).
       # grove_headless services/plant_data/perenual.py reads this from
       # os.environ (compose environment: block -> here), so it MUST also be
