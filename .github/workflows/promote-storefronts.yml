@@ -272,13 +272,32 @@ jobs:
             echo "TF_VAR_discord_orders_webhook_url=$DISCORD_ORDERS_WEBHOOK_URL"
             echo "TF_VAR_odoo_api_keys=$ODOO_API_KEYS_TF_JSON"
             echo "TF_VAR_ghost_content_keys=$GHOST_CONTENT_KEYS_TF_JSON"
-            # Not app-spec-relevant to the four targeted resources below;
-            # placeholders are safe here for the same reason prod-plan-guard.yml
-            # uses them (see that workflow for the full rationale).
-            echo "TF_VAR_grove_assets_key=ci-promote-placeholder"
-            echo "TF_VAR_grove_assets_secret=ci-promote-placeholder"
-            echo "TF_VAR_grove_assets_optimize_token=ci-promote-placeholder"
           } >> "$GITHUB_ENV"
+
+      # The three grove_assets_* variables ARE app-spec-relevant here: the
+      # targeted apply below includes digitalocean_app.hub, whose spec sets
+      # GROVE_ASSETS_KEY / GROVE_ASSETS_SECRET / GROVE_ASSETS_OPTIMIZE_TOKEN
+      # from them (apps.tf). Until 2026-11-18 this job passed the literal
+      # "ci-promote-placeholder" for all three -- copied from
+      # prod-plan-guard.yml, where it is safe because that job only plans --
+      # so every promotion overwrote the hub's real asset credentials.
+      #
+      # The real values sit in the Admin vault, which this job's 1Password
+      # service account cannot read. So carry the hub's LIVE values through
+      # unchanged: a promotion moves the image pin and nothing else. The
+      # script fails the job, before any apply, if the live values are
+      # missing or already a placeholder. Values are masked, never echoed.
+      - name: Carry the hub's live asset credentials through the apply
+        timeout-minutes: 2
+        run: |
+          umask 077
+          apps_json="$RUNNER_TEMP/do-apps.json"
+          trap 'rm -f "$apps_json"' EXIT
+          curl -fsS --retry 3 --retry-delay 5 --max-time 30 \
+            -H "Authorization: Bearer $DIGITALOCEAN_TOKEN" \
+            "https://api.digitalocean.com/v2/apps?per_page=200" \
+            -o "$apps_json"
+          scripts/ci/hub-assets-env.sh "$apps_json" "$GITHUB_ENV"
 
       # --- Step 2: apply, scoped to ONLY the four storefront apps. Never a
       # bare `terraform apply` here -- see prod-plan-guard.yml for why an
