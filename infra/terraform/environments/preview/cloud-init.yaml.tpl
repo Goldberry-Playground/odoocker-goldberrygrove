@@ -46,7 +46,7 @@ write_files:
       # start on a nonexistent addons dir (2026-07-05 incident). No
       # git-sync sidecar in the preview stack yet, so /workspace/current
       # is the empty dir entrypoint.sh mkdirs.
-      ADDONS_PATH=/usr/lib/python3/dist-packages/odoo/addons,/workspace/current
+      ADDONS_PATH=/usr/lib/python3/dist-packages/odoo/addons,/usr/lib/python3/dist-packages/odoo/third-party-addons,/workspace/current
 
   - path: /etc/grove/Caddyfile
     content: |

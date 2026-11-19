@@ -407,17 +407,19 @@ lists in this repo. **It was not installed on prod at the Train #5 promote
 Odoo looks: the module's OCA dependencies (`account_reconcile_oca`,
 `account_statement_import_sheet_file`) are baked into the image under
 `/usr/lib/python3/dist-packages/odoo/third-party-addons`
-(`docker-odoo.yml` `THIRD_PARTY_ADDONS`), but both cloud-init templates render
+(`docker-odoo.yml` `THIRD_PARTY_ADDONS`), and until GOL-3939 the cloud-init
+templates rendered
 `ADDONS_PATH=/usr/lib/python3/dist-packages/odoo/addons,/workspace/current`,
-which does not include that directory, and nothing in the entrypoint adds it.
-So do not assume a QA train-up or a prod rebuild installs the module until
-`ADDONS_PATH` carries the directory (Train #6, GOL-3939 / GOL-3940, with the
-image upgrade #997). What the boot `--init` does with the unmet dependencies
-(skip the module, or fail the upgrade pass, which the entrypoint turns into a
-restart loop) has not been tested; check it on QA before any prod rebuild. The
-live prod box needs the same append in its deployed compose, and the script
-below checks the dependencies against the running container's addons path
-before it writes anything.
+which does not include that directory. With the module in the list and its
+dependencies off the path, the boot `--init` fails and the entrypoint turns
+that into a restart loop: that is what took QA down on 2026-11-16 until the
+line was edited by hand. The templates now carry the directory
+(`scripts/test_addons_path_third_party.py` keeps them and the image smoke in
+step), so a QA train-up installs the module. **The live prod box is not
+covered by that**: its `.env` only changes through
+`scripts/prod-odoo-image-apply.sh` (see "Odoo image step" below), which must
+run before this rider. The script below still checks the dependencies against
+the running container's addons path before it writes anything.
 
 ```bash
 # Any time, read-only. exit 0 = already in the list, 2 = pending or refused.
@@ -430,9 +432,10 @@ NO_RECREATE=1 TARGET_REF=<gom 40-char sha> scripts/prod-auto-upgrade-add.sh --ap
 
 If the report says `REFUSED. The running image lacks: ...`, either the box runs
 an image older than #986 or (the Train #5 case) the addons are in the image but
-not on `ADDONS_PATH`. Skip the rider: the promote is unaffected, and the books
-module is installed later (after the image refresh and the `ADDONS_PATH` fix) with the same script
-followed by `scripts/module-upgrade.sh`, or by hand in Apps.
+not on `ADDONS_PATH`: the "Odoo image step" below has not run on this box.
+Skip the rider: the promote is unaffected, and the books module is installed
+later (after the image step) with the same script followed by
+`scripts/module-upgrade.sh`, or by hand in Apps.
 
 Why step 2 comes first: the recreate it performs happens on the *current*
 modules revision, so the entrypoint's marker says "unchanged" and no upgrade
@@ -455,6 +458,60 @@ appears in Odoo with Privacy: Public, and the Monday 11-23 digest lists it.
 exact `cp` + `docker compose up -d --force-recreate --no-deps odoo` that undoes
 the run. Removing `grove_calendar` from the list does not uninstall the module;
 that is a separate, data-destroying Odoo action.
+
+## Odoo image step (Train #6, GOL-3939)
+
+Module promotes (Leg B) never change the Odoo **image**. Terraform ignores
+`user_data` on the prod droplet, so `var.odoo_image_tag` and the cloud-init
+`ADDONS_PATH` line only reach a rebuilt box; the running one keeps whatever
+`ODOO_TAG=latest` resolved to when it was built. Measured 2026-11-19: prod
+serves base `19.0-20260513` while `main` builds `19.0-20261102` (#997) with the
+OCA accounting addons (#986). `scripts/prod-odoo-image-apply.sh` is the one
+path that moves a live box: digest-gated pull, `.env` pin + `ADDONS_PATH`,
+recreate, `-u all`, verify, automatic return to the old image on failure.
+
+The image is identified by **two** values, both recorded in the manifest at the
+freeze: the odoocker commit sha `docker-odoo.yml` pushed as the tag, and the
+registry digest of that tag (the script header shows the `curl` that reads it).
+The digest QA was gated on is the only one prod will accept.
+
+```bash
+# 0. Fri freeze: record <sha> + <digest> in the manifest (`odoo_image_tag` row).
+
+# 1. Mon train-up: pin QA to the same tag, with the other three pins.
+TF_VAR_odoo_image_tag=<odoocker sha> TF_VAR_custom_modules_ref=... make train-up
+
+# 2. Mon, BEFORE qa-module-upgrade.sh: the rehearsal. QA Managed PG survives
+#    teardown, so its DB still carries the old base's module data; FORCE_UPGRADE
+#    runs the pass even though train-up already put the box on the pinned tag.
+#    Read the check output first: it lists the Stripe providers and whether each
+#    has a webhook secret (#997: payment_stripe answers a webhook 403 without one).
+export PROD_HOST=root@odoo.qa.gatheringatthegrove.com IMAGE_TAG=<sha> EXPECT_DIGEST=sha256:<...>
+scripts/prod-odoo-image-apply.sh
+FORCE_UPGRADE=1 scripts/prod-odoo-image-apply.sh --apply
+#    Clean = exit 0 with "0 CRITICAL, 0 ERROR". Any ERROR line is a finding: fix
+#    it, or record it in the manifest and carry MAX_ERROR_LINES=<n> to prod.
+#    Then the normal gate (steps 1-2c above) runs on the new image.
+
+# 3. Wed, promote day, FIRST (before the Discord/schedule_f compose edits and
+#    Leg B). Unset PROD_HOST so the default alias applies. Odoo is down for the
+#    length of the pass; the QA run tells you how long.
+unset PROD_HOST
+scripts/prod-odoo-image-apply.sh            # read-only; note the Stripe provider lines
+scripts/prod-odoo-image-apply.sh --apply    # prints the PITR point + the rollback lines
+```
+
+Rollback: the script tags the image the box was running as
+`grove-odoo:rollback-<stamp>` and keeps `.env.bak.<stamp>`; a failed recreate,
+pass or health check puts the box back on that tag by itself, and the printed
+"Rollback by hand" lines do the same later. The DB does not roll back with the
+image. Old 19.0 code on a partly upgraded 19.0 DB normally serves; if checkout
+or the backend disagrees, restore Managed PG to the printed PITR point (7-day
+window) and say so on the train issue.
+
+After a clean prod run, set `odoo_image_tag` in
+`infra/terraform/environments/production` to the same sha in a reviewed PR, so
+the next rebuild does not go back to `latest`.
 
 ## Gate: newsletter bulk mail servers (Train #4, GOL-3455 / GOL-3454)
 
