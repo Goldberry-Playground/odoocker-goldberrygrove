@@ -62,6 +62,12 @@ locals {
 resource "digitalocean_database_valkey_config" "valkey" {
   cluster_id              = digitalocean_database_cluster.valkey.id
   valkey_maxmemory_policy = "volatile-lru"
+  # 0 = never close idle clients. The default (300s) equals the grove-sites
+  # warmer interval, so on a quiet app the server dropped the warmer's
+  # connection just as the next cycle's lock SET went out ("Reached the max
+  # retries per request limit (which is 0)", 4/10 cycles skipped on goldberry,
+  # GOL-3907). Dead peers are still reaped by tcp-keepalive.
+  timeout = 0
 }
 
 # Trusted sources: only the four storefront apps. type = "app" takes the App
