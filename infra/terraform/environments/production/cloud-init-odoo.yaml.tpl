@@ -76,7 +76,13 @@ write_files:
       # /workspace/current is populated by the custom-modules-sync git-sync
       # sidecar (grove-odoo-modules; grove_headless lives there). Without this
       # var Odoo silently runs stock community addons only.
-      ADDONS_PATH=/usr/lib/python3/dist-packages/odoo/addons,/workspace/current
+      # third-party-addons is baked into the grove-odoo image
+      # (odoo/third-party-addons.txt; docker-odoo.yml THIRD_PARTY_ADDONS). It
+      # holds the OCA addons grove_schedule_f depends on. Left off this path,
+      # the boot --init of that module crash-loops odoo (QA, 2026-11-16).
+      # The LIVE box gets this line from scripts/prod-odoo-image-apply.sh
+      # (Terraform ignores user_data), GOL-3939.
+      ADDONS_PATH=/usr/lib/python3/dist-packages/odoo/addons,/usr/lib/python3/dist-packages/odoo/third-party-addons,/workspace/current
 
       # Pinned grove-odoo-modules ref for the custom-modules-sync git-sync
       # sidecar (GOL-892). Consumed by compose as CUSTOM_MODULES_REF; the

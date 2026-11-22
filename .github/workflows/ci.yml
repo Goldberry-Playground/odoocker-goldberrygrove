@@ -306,6 +306,10 @@ jobs:
         run: python3 scripts/test_prod_modules_promote.py
       - name: Run prod auto-upgrade-add tests (image-addon gate before a module joins AUTO_UPGRADE_MODULES)
         run: python3 scripts/test_prod_auto_upgrade_add.py
+      - name: Run prod odoo-image-apply tests (GOL-3939 digest gate, .env pin, -u pass, rollback)
+        run: python3 scripts/test_prod_odoo_image_apply.py
+      - name: Run ADDONS_PATH third-party-addons tests (GOL-3939, cloud-init templates + image smoke agree)
+        run: python3 scripts/test_addons_path_third_party.py
       - name: Run Terraform state-lock guard tests (GOL-2584, gates train-up + teardown)
         run: python3 scripts/test_tf_state_lock_check.py
       - name: Run release-train preflight tests (GOL-2584, gates make train-up)

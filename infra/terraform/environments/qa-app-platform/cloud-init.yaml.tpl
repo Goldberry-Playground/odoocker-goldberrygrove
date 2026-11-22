@@ -80,7 +80,12 @@ write_files:
       # placeholder substitutes to empty and Odoo silently runs with stock
       # community addons only (how the 2026-07-05 "module not in list"
       # incident happened).
-      ADDONS_PATH=/usr/lib/python3/dist-packages/odoo/addons,/workspace/current
+      # third-party-addons is baked into the grove-odoo image
+      # (odoo/third-party-addons.txt; docker-odoo.yml THIRD_PARTY_ADDONS). It
+      # holds the OCA addons grove_schedule_f depends on. Left off this path,
+      # the boot --init of that module crash-looped odoo at the 2026-11-16
+      # train-up until the droplet .env was edited by hand (GOL-3939).
+      ADDONS_PATH=/usr/lib/python3/dist-packages/odoo/addons,/usr/lib/python3/dist-packages/odoo/third-party-addons,/workspace/current
 
       # GOL-1859/GOL-1876: the QA host Odoo bakes into every ABSOLUTE URL it
       # generates (password-reset / set-password links, sale-order + customer-
