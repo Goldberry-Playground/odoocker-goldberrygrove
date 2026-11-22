@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
 # Bump the prod storefront image-tag pins in a variables.tf, in place.
 #
-#   scripts/ci/bump-storefront-pin.sh <path/to/variables.tf> <40-hex grove-sites sha>
+#   scripts/ci/bump-storefront-pin.sh <path/to/variables.tf> <40-hex grove-sites sha> [<40-hex AgriforestryOS sha>]
 #
 # Prints exactly one word on stdout: `changed` or `nochange`. Exits non-zero on
-# a bad argument or if the edit touched anything but the two storefront pins.
+# a bad argument or if the edit touched anything but the pins it was asked to
+# move.
+#
+# The optional third argument is the consult pin (GOL-3723): the grove-consult
+# image is built by AgriforestryOS, so `consult_image_tag` carries that repo's
+# SHA and is moved ONLY when this argument is given. Omitted or empty, the
+# consult pin must come out byte-for-byte unchanged -- a storefront promotion
+# never moves it by accident, and it never receives a grove-sites SHA.
 #
 # Called twice by promote-storefronts.yml: once on the runner's working tree
 # (the targeted terraform apply reads that), and once inside a throwaway
@@ -20,11 +27,16 @@
 # belt to that anchor's suspenders.
 set -euo pipefail
 
-FILE="${1:?usage: bump-storefront-pin.sh <variables.tf> <40-hex sha>}"
-SHA="${2:?usage: bump-storefront-pin.sh <variables.tf> <40-hex sha>}"
+FILE="${1:?usage: bump-storefront-pin.sh <variables.tf> <40-hex sha> [<40-hex consult sha>]}"
+SHA="${2:?usage: bump-storefront-pin.sh <variables.tf> <40-hex sha> [<40-hex consult sha>]}"
+CONSULT_SHA="${3:-}"
 
 if ! [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]; then
   echo "::error::target '$SHA' is not a 40-char lowercase hex commit SHA" >&2
+  exit 1
+fi
+if [ -n "$CONSULT_SHA" ] && ! [[ "$CONSULT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "::error::consult target '$CONSULT_SHA' is not a 40-char lowercase hex commit SHA" >&2
   exit 1
 fi
 if [ ! -f "$FILE" ]; then
@@ -47,10 +59,16 @@ cp "$FILE" "$WORK"
 
 # No `sed -i`: its flag differs between GNU and BSD sed and the test runs on
 # macOS too. Edit the scratch copy, then compare it to the original.
-for v in hub_image_tag tenant_image_tag; do
-  sed -E "/^variable \"$v\" \{/,/^\}/ s|^([[:space:]]*default[[:space:]]*=[[:space:]]*\")[0-9a-f]{40}(\")|\1${SHA}\2|" "$WORK" > "$WORK.next"
+set_pin() {
+  sed -E "/^variable \"$1\" \{/,/^\}/ s|^([[:space:]]*default[[:space:]]*=[[:space:]]*\")[0-9a-f]{40}(\")|\1${2}\2|" "$WORK" > "$WORK.next"
   mv "$WORK.next" "$WORK"
+}
+for v in hub_image_tag tenant_image_tag; do
+  set_pin "$v" "$SHA"
 done
+if [ -n "$CONSULT_SHA" ]; then
+  set_pin consult_image_tag "$CONSULT_SHA"
+fi
 
 if [ "$(pin_default "$WORK" custom_modules_ref)" != "$(pin_default "$FILE" custom_modules_ref)" ]; then
   echo "::error::pin-bump touched custom_modules_ref -- aborting (GOL-1708 finding 1 guard)." >&2
@@ -62,6 +80,16 @@ for v in hub_image_tag tenant_image_tag; do
     exit 1
   fi
 done
+
+if [ -n "$CONSULT_SHA" ]; then
+  if [ "$(pin_default "$WORK" consult_image_tag)" != "$CONSULT_SHA" ]; then
+    echo "::error::consult_image_tag is not at $CONSULT_SHA after the edit -- is its \`variable\` block still shaped as expected?" >&2
+    exit 1
+  fi
+elif [ "$(pin_default "$WORK" consult_image_tag)" != "$(pin_default "$FILE" consult_image_tag)" ]; then
+  echo "::error::pin-bump touched consult_image_tag without a consult SHA -- aborting (it is an AgriforestryOS pin, GOL-3723)." >&2
+  exit 1
+fi
 
 if cmp -s "$WORK" "$FILE"; then
   echo "nochange"

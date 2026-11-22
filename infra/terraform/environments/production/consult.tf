@@ -2,8 +2,11 @@
 # Grove Consult host — PRODUCTION (consult phase 2 E, GOL-3577).
 #
 # Spec: grove-odoo-modules docs/superpowers/specs/2026-10-22-consult-dashboard-
-# design.md §D/§E. The consult dashboard (grove-sites apps/consult, Iris,
-# GOL-3576) is an INTERNAL staff tool served on consult.gatheringatthegrove.com.
+# design.md §D/§E, amended by AgriforestryOS docs/superpowers/specs/2026-11-01-
+# consult-platform-restructure-design.md §C (GOL-3723): the app lives in
+# AgriforestryOS, not grove-sites. The consult dashboard (AgriforestryOS
+# apps/consult) is an INTERNAL staff tool served on
+# consult.gatheringatthegrove.com.
 # Three things live here, all of them separate from the four revenue apps:
 #
 #   1. digitalocean_app.consult      — its own App Platform app (never a
@@ -29,12 +32,13 @@
 # exists. The two halves meet through var.consult_access_aud (below).
 #
 # ── Gate: var.consult_enabled (default false) ───────────────────────────────
-# The image ghcr.io/goldberry-playground/grove-consult:<sha> does not exist
-# until grove-sites' Docker — Frontends matrix gains the `consult` leg (rides
-# Iris's apps/consult PR). An App Platform app whose image cannot be pulled
-# fails its first deploy and sits in ERROR -- harmless to the other apps but
-# noisy -- so the app AND its DNS record are `count`-gated off until Train #6.
-# Flip to true in the same PR that bumps the pin to a SHA whose
+# The image ghcr.io/goldberry-playground/grove-consult:<sha> is published by
+# AgriforestryOS' consult-image.yml on every main push that touches
+# apps/consult (the image NAME is unchanged from the grove-sites days; the
+# tags are now AgriforestryOS SHAs). An App Platform app whose image cannot be
+# pulled fails its first deploy and sits in ERROR -- harmless to the other
+# apps but noisy -- so the app AND its DNS record are `count`-gated off until
+# Train #6. Flip to true once var.consult_image_tag pins a SHA whose
 # `grove-consult` image is on GHCR. Flipping back to false is the codified
 # KILL SWITCH: the app and the CNAME are destroyed, the nursery is untouched
 # (see docs/RUNBOOK-consult-host.md).
@@ -48,11 +52,14 @@
 #                                  droplet's custom_modules_ref.
 #   (c) Josh, manual targeted apply — everything else (DNS, firewalls, TLS,
 #                                  buckets).
-# digitalocean_app.consult is owner (a): it pins var.tenant_image_tag (the
-# shared grove-sites SHA, same reason the three tenants share one tag) and
-# promote-storefronts.yml targets it and rolls it after the four storefronts
-# whenever the app exists. The CNAME + the Spaces README are owner (c): one
-# manual `-target` apply at first enable, then inert.
+# digitalocean_app.consult is owner (a), but NOT on the storefronts' pin: it
+# pins var.consult_image_tag, an AgriforestryOS SHA, because its image comes
+# from a different repo than the four storefronts (var.hub_image_tag /
+# var.tenant_image_tag are grove-sites SHAs). promote-storefronts.yml moves
+# that pin only when its optional `consult_tag` input is given; either way it
+# targets the app and rolls it after the four storefronts whenever the app
+# exists. The CNAME + the Spaces README are owner (c): one manual `-target`
+# apply at first enable, then inert.
 ###############################################################################
 
 locals {
@@ -67,15 +74,16 @@ locals {
 
 # ── 1. App Platform app ──────────────────────────────────────────────────────
 #
-# Same image family + deploy mechanism as the nursery app: GHCR image published
-# by grove-sites' Docker — Frontends workflow at the shared SHA, SHA-pinned,
+# Same deploy mechanism as the nursery app: GHCR image (published by
+# AgriforestryOS' consult-image.yml, not grove-sites), SHA-pinned,
 # deploy_on_push off (GOL-1304 Option-A; moot for GHCR anyway, GOL-1607), rolled
 # by `doctl apps create-deployment`. Differences from the nursery, on purpose:
 #   - BASIC tier, 1 instance (var.consult_instance_size_slug): a handful of
 #     staff sessions, no checkout, no market-season load. ~$5/mo vs ~$12.
 #   - http_port 3001: apps/consult uses the nursery toolchain (spec §D), whose
-#     Dockerfile sets PORT=3001. MUST match apps/consult/Dockerfile -- if Iris
-#     ships a different port, change it here in the same train.
+#     Dockerfile sets PORT=3001. MUST match AgriforestryOS
+#     apps/consult/Dockerfile -- if that port changes, change it here in the
+#     same train.
 #   - No Ghost / newsletter / livechat env. The consult BFF talks to Odoo only.
 resource "digitalocean_app" "consult" {
   count = var.consult_enabled ? 1 : 0
@@ -94,17 +102,20 @@ resource "digitalocean_app" "consult" {
         registry_type = "GHCR"
         registry      = "goldberry-playground"
         repository    = "grove-consult"
-        tag           = var.tenant_image_tag
+        tag           = var.consult_image_tag
         deploy_on_push {
           enabled = false
         }
       }
 
-      # The app sits behind Cloudflare Access; "/" renders the pipeline shell
-      # (or its login-less placeholder) -- no auth challenge on the origin
-      # itself, so the platform health check sees a 200.
+      # The app's middleware 403s every request that carries no valid
+      # Cf-Access-Jwt-Assertion -- "/" included -- and App Platform's health
+      # probe carries none. GET /healthz is the one path the middleware
+      # exempts (AgriforestryOS apps/consult/middleware.ts + lib/access.ts;
+      # consult-image.yml smokes the same path), so probe that. Probing "/"
+      # would fail every deploy.
       health_check {
-        http_path             = "/"
+        http_path             = "/healthz"
         initial_delay_seconds = 30
         period_seconds        = 30
         timeout_seconds       = 5

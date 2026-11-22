@@ -800,9 +800,20 @@ variable "nursery_planner_enabled" {
 # === Consult phase 2 E (GOL-3577) - grove-consult-prod, consult.tf ==========
 
 variable "consult_enabled" {
-  description = "Gate for digitalocean_app.consult + cloudflare_record.consult (consult.tf). false (default) = no app, no DNS record: the grove-consult GHCR image does not exist until grove-sites' Docker — Frontends matrix gains the consult leg (Iris, GOL-3576), and an App Platform app with an unpullable image sits in ERROR. Flip to true in the Train #6 PR that bumps var.tenant_image_tag to a SHA whose grove-consult image is on GHCR. Flipping back to false is the codified kill switch: destroys the consult app + CNAME only, never the nursery (docs/RUNBOOK-consult-host.md). The Spaces prefix README is NOT gated (it is the settled path, harmless to create early)."
+  description = "Gate for digitalocean_app.consult + cloudflare_record.consult (consult.tf). false (default) = no app, no DNS record: an App Platform app with an unpullable image sits in ERROR, so the gate stays off until var.consult_image_tag pins an AgriforestryOS SHA whose grove-consult image is on GHCR and the Access app exists (first enable, Train #6). Flipping back to false is the codified kill switch: destroys the consult app + CNAME only, never the nursery (docs/RUNBOOK-consult-host.md). The Spaces prefix README is NOT gated (it is the settled path, harmless to create early)."
   type        = bool
   default     = false
+}
+
+variable "consult_image_tag" {
+  description = "Tag of the grove-consult image on GHCR (ghcr.io/goldberry-playground/grove-consult:<tag>) that grove-consult-prod pulls. A 40-char AgriforestryOS commit SHA -- NOT a grove-sites SHA: since the consult platform restructure (AgriforestryOS docs/superpowers/specs/2026-11-01-consult-platform-restructure-design.md §C, GOL-3722/GOL-3723) the image is built by AgriforestryOS' consult-image.yml from apps/consult, so it no longer shares var.tenant_image_tag with the storefronts. Same GOL-1304 Option-A rule as the storefront pins: never a moving 'latest'. Moved by promote-storefronts.yml's optional `consult_tag` input (blank = this pin is left alone) or a reviewed PR. Inert while var.consult_enabled is false. Current pin 01c34e21: AgriforestryOS main at the apps/consult move (#45), first grove-consult image published from that repo (consult-image.yml run 44584111355, 2026-11-22)."
+  type        = string
+  default     = "01c34e2134f848fdfc3073c76b56f8cb142fb7a7"
+
+  validation {
+    condition     = can(regex("^[0-9a-f]{40}$", var.consult_image_tag))
+    error_message = "consult_image_tag must be a full 40-char lowercase hex AgriforestryOS commit SHA -- 'latest'/branch names are rejected so prod can never track a moving tag."
+  }
 }
 
 variable "consult_instance_size_slug" {

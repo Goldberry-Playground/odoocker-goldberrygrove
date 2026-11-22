@@ -2,7 +2,9 @@
 # Build + push the storefront reconcile branch ON TOP OF THE CURRENT REMOTE
 # MAIN, not on the commit the promote run happened to check out.
 #
-#   scripts/ci/promote-reconcile-branch.sh <branch> <40-hex grove-sites sha>
+#   scripts/ci/promote-reconcile-branch.sh <branch> <40-hex grove-sites sha> [<40-hex AgriforestryOS sha>]
+#     (third argument = the consult pin, only when the promotion moved it --
+#      see bump-storefront-pin.sh)
 #   env: TF_DIR (default infra/terraform/environments/production)
 #        REMOTE (default origin)   BASE_BRANCH (default main)
 #
@@ -28,8 +30,9 @@
 # is still what the targeted terraform apply read.
 set -euo pipefail
 
-BRANCH="${1:?usage: promote-reconcile-branch.sh <branch> <40-hex sha>}"
-SHA="${2:?usage: promote-reconcile-branch.sh <branch> <40-hex sha>}"
+BRANCH="${1:?usage: promote-reconcile-branch.sh <branch> <40-hex sha> [<40-hex consult sha>]}"
+SHA="${2:?usage: promote-reconcile-branch.sh <branch> <40-hex sha> [<40-hex consult sha>]}"
+CONSULT_SHA="${3:-}"
 REMOTE="${REMOTE:-origin}"
 BASE_BRANCH="${BASE_BRANCH:-main}"
 TF_DIR="${TF_DIR:-infra/terraform/environments/production}"
@@ -37,6 +40,10 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if ! [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]; then
   echo "::error::target '$SHA' is not a 40-char lowercase hex commit SHA" >&2
+  exit 1
+fi
+if [ -n "$CONSULT_SHA" ] && ! [[ "$CONSULT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "::error::consult target '$CONSULT_SHA' is not a 40-char lowercase hex commit SHA" >&2
   exit 1
 fi
 
@@ -52,14 +59,14 @@ trap cleanup EXIT
 git worktree add --quiet --detach "$WT" "$REMOTE/$BASE_BRANCH"
 BASE_SHA="$(git -C "$WT" rev-parse HEAD)"
 
-RESULT="$("$HERE/bump-storefront-pin.sh" "$WT/$TF_DIR/variables.tf" "$SHA")"
+RESULT="$("$HERE/bump-storefront-pin.sh" "$WT/$TF_DIR/variables.tf" "$SHA" "$CONSULT_SHA")"
 if [ "$RESULT" = "nochange" ]; then
   echo "result=nochange base=$BASE_SHA"
   exit 0
 fi
 
 git -C "$WT" -c user.name="grove-promote-bot" -c user.email="actions@github.com" \
-  commit --quiet -am "infra(prod): promote storefronts to ${SHA} (promote-storefronts.yml)"
+  commit --quiet -am "infra(prod): promote storefronts to ${SHA}${CONSULT_SHA:+, consult to ${CONSULT_SHA}} (promote-storefronts.yml)"
 TIP="$(git -C "$WT" rev-parse HEAD)"
 git -C "$WT" push --quiet "$REMOTE" "HEAD:refs/heads/$BRANCH"
 echo "result=pushed base=$BASE_SHA tip=$TIP"

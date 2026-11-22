@@ -99,6 +99,8 @@ was retired 2026-09-29 (ADR-010).
       no escalation). **Rollback = flag off.**
   - gates passed? <fill: yes/no + evidence>  → flipped? <fill>
 - **Storefront image pinned:** <SHA>  (`hub_image_tag` == `tenant_image_tag`)
+- **Consult image pinned (only if this train moved it):** <AgriforestryOS SHA>
+  (`consult_image_tag`, via the promote's `consult_tag` input)
 - **Modules pin live on prod:** <SHA> (`CUSTOM_MODULES_REF` in `/etc/grove/.env`,
   the truth for Leg B) = grove_headless <version>
 - **Prod verified:** rate probe / health-check link
