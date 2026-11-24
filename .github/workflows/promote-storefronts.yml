@@ -45,6 +45,13 @@ on:
         description: "grove-sites commit SHA to promote (40-char hex). Leave blank to use the newest grove-sites main commit whose Docker — Frontends build succeeded."
         required: false
         type: string
+      # GOL-3723: the consult image is built by AgriforestryOS, not grove-sites,
+      # so it has its own pin (var.consult_image_tag). Blank = leave that pin
+      # alone; there is no auto-resolve for it.
+      consult_tag:
+        description: "OPTIONAL AgriforestryOS commit SHA (40-char hex) to pin grove-consult-prod to. Leave blank to keep the current consult pin. NOT a grove-sites SHA."
+        required: false
+        type: string
       confirm:
         description: 'Type PROMOTE to confirm you intend to release to production.'
         required: true
@@ -67,6 +74,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       target_sha: ${{ steps.resolve.outputs.target_sha }}
+      consult_tag: ${{ steps.consult.outputs.consult_tag }}
     steps:
       - name: Guard the typed confirmation
         env:
@@ -100,6 +108,21 @@ jobs:
           INPUT_SHA: ${{ inputs.target_sha }}
         run: node scripts/ci/storefront-target.mjs
 
+      # GOL-3723: same "verify before the gate" rule for the optional consult
+      # pin. Blank passes straight through (output empty, pin untouched). A
+      # given SHA must be a 40-hex commit on AgriforestryOS main with a
+      # published grove-consult image, or the run fails here. The on-main check
+      # matters: grove-consult still carries tags from grove-sites' retired
+      # consult leg, so a grove-sites SHA pasted into this box would pass an
+      # image-only gate. Logic + tests: scripts/ci/consult-target{,.test}.mjs.
+      - name: Verify consult build (only when consult_tag is given)
+        id: consult
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_CONSULT_TAG: ${{ inputs.consult_tag }}
+        run: node scripts/ci/consult-target.mjs
+
       - name: Write plan summary
         env:
           TARGET: ${{ steps.resolve.outputs.target_sha }}
@@ -124,7 +147,7 @@ jobs:
               echo "Compare: https://github.com/Goldberry-Playground/grove-sites/compare/${CURRENT_HUB}...${TARGET}"
             fi
             echo ""
-            echo "Approving the \`production\` environment below will: bump the pin in the working tree + \`terraform apply\` it (targeted to the four storefront apps), issue one \`doctl create-deployment\` per app, verify the build fingerprint against QA, notify Discord, and open a reconcile PR to bring committed \`main\` up to the promoted SHA (merge it to un-drift main)."
+            echo "Approving the \`production\` environment below will: bump the pin in the working tree + \`terraform apply\` it (targeted to the four storefront apps, plus the consult app when it exists -- see **Consult build** above for whether its pin moves), issue one \`doctl create-deployment\` per app, verify the build fingerprint against QA, notify Discord, and open a reconcile PR to bring committed \`main\` up to the promoted SHA (merge it to un-drift main)."
           } >> "$GITHUB_STEP_SUMMARY"
 
   # --- The gated work. Requires production Environment approval to start. ---
@@ -145,6 +168,8 @@ jobs:
     env:
       TF_DIR: infra/terraform/environments/production
       TARGET_SHA: ${{ needs.prepare.outputs.target_sha }}
+      # Empty unless the run was dispatched with consult_tag (GOL-3723).
+      CONSULT_TAG: ${{ needs.prepare.outputs.consult_tag }}
 
     steps:
       - name: Checkout odoocker (this repo)
@@ -226,10 +251,13 @@ jobs:
         run: |
           # Anchored to the hub_image_tag / tenant_image_tag blocks ONLY, with
           # the custom_modules_ref guard (GOL-1708 finding 1) -- see the script.
-          RESULT="$(scripts/ci/bump-storefront-pin.sh "$TF_DIR/variables.tf" "$TARGET_SHA")"
+          # GOL-3723: $CONSULT_TAG (an AgriforestryOS SHA) moves
+          # consult_image_tag as well; empty, the script guarantees that pin is
+          # untouched.
+          RESULT="$(scripts/ci/bump-storefront-pin.sh "$TF_DIR/variables.tf" "$TARGET_SHA" "$CONSULT_TAG")"
           if [ "$RESULT" = "nochange" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "Pin already at $TARGET_SHA -- nothing to reconcile."
+            echo "Pins already at $TARGET_SHA${CONSULT_TAG:+ (consult $CONSULT_TAG)} -- nothing to reconcile."
             exit 0
           fi
           echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -304,10 +332,12 @@ jobs:
       # untargeted prod apply is dangerous on this state file.
       #
       # GOL-3577: digitalocean_app.consult (consult.tf, the internal consult
-      # dashboard) rides the same shared pin, so it is targeted here too. It
+      # dashboard) has the same deploy owner, so it is targeted here too. It
       # is `count`-gated on var.consult_enabled -- while that is false the
-      # target matches zero instances and is a no-op; once true, the consult
-      # app's spec pin moves in lockstep with the four storefronts.
+      # target matches zero instances and is a no-op. GOL-3723: it does NOT
+      # ride the storefronts' pin; its image is an AgriforestryOS build pinned
+      # by var.consult_image_tag, which only moves when this run was given
+      # `consult_tag`. Without it the consult app's spec is unchanged here.
       - name: Terraform apply (targeted to the storefront apps + consult)
         timeout-minutes: 10
         run: |
@@ -392,8 +422,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           BRANCH: ${{ steps.bump.outputs.branch }}
         run: |
-          RESULT="$(scripts/ci/promote-reconcile-branch.sh "$BRANCH" "$TARGET_SHA")" || {
-            echo "::error::Roll SUCCEEDED (prod is on ${TARGET_SHA}) but pushing the reconcile branch FAILED. Committed HCL is now BEHIND live -- open a PR bumping hub_image_tag + tenant_image_tag in ${TF_DIR}/variables.tf to ${TARGET_SHA} by hand, or main will drift back on the next full apply."
+          RESULT="$(scripts/ci/promote-reconcile-branch.sh "$BRANCH" "$TARGET_SHA" "$CONSULT_TAG")" || {
+            echo "::error::Roll SUCCEEDED (prod is on ${TARGET_SHA}) but pushing the reconcile branch FAILED. Committed HCL is now BEHIND live -- open a PR bumping hub_image_tag + tenant_image_tag in ${TF_DIR}/variables.tf to ${TARGET_SHA}${CONSULT_TAG:+ and consult_image_tag to ${CONSULT_TAG}} by hand, or main will drift back on the next full apply."
             exit 1
           }
           echo "$RESULT"
@@ -413,7 +443,11 @@ jobs:
           # Build the body with printf (single-quoted format => backticks are
           # literal, \n produces real newlines) so no raw multi-line string has
           # to sit in this YAML block scalar.
-          BODY="$(printf 'Auto-opened by promote-storefronts.yml after rolling the four prod storefronts to `%s` (run: %s).\n\n**Live prod is already on this SHA.** This PR only reconciles committed HCL (`hub_image_tag` + `tenant_image_tag`) so `main` matches what is serving. Until it merges, `main` is intentionally behind live and prod-deploy-drift.yml will flag the gap. Review + merge through the normal protected-paths-guard (SHA-bound human approval).' "$TARGET_SHA" "$RUN_URL")"
+          CONSULT_NOTE=""
+          if [ -n "$CONSULT_TAG" ]; then
+            CONSULT_NOTE="$(printf '\n\nThis run was also given `consult_tag`: `consult_image_tag` moves to AgriforestryOS `%s` (a different repo than the storefront SHA above).' "$CONSULT_TAG")"
+          fi
+          BODY="$(printf 'Auto-opened by promote-storefronts.yml after rolling the four prod storefronts to `%s` (run: %s).\n\n**Live prod is already on this SHA.** This PR only reconciles committed HCL (`hub_image_tag` + `tenant_image_tag`) so `main` matches what is serving. Until it merges, `main` is intentionally behind live and prod-deploy-drift.yml will flag the gap. Review + merge through the normal protected-paths-guard (SHA-bound human approval).' "$TARGET_SHA" "$RUN_URL")${CONSULT_NOTE}"
           PR_URL="$(gh pr create --base main --head "$BRANCH" \
             --title "infra(prod): reconcile storefront pin to ${TARGET_SHA}" \
             --body "$BODY")" || {
@@ -456,7 +490,8 @@ jobs:
             -d "$(jq -n --arg sha "$TARGET_SHA" \
               --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
               --arg pr "${RECONCILE_PR_URL:-(none -- pin already matched, nothing to reconcile)}" \
-              '{username:"Grove Prod Deploy", embeds:[{title:"Storefronts promoted", description:("Target: `" + $sha + "`\nRun: " + $run + "\nReconcile PR (merge to un-drift main): " + $pr), color: 3066993}]}')" \
+              --arg consult "${CONSULT_TAG:-}" \
+              '{username:"Grove Prod Deploy", embeds:[{title:"Storefronts promoted", description:("Target: `" + $sha + "`" + (if $consult != "" then "\nConsult (AgriforestryOS): `" + $consult + "`" else "" end) + "\nRun: " + $run + "\nReconcile PR (merge to un-drift main): " + $pr), color: 3066993}]}')" \
             "$DISCORD_OPS_WEBHOOK_URL" || echo "::warning::Discord notify failed (deploy itself already completed)"
 
       # Best-effort only: secrets.GITHUB_TOKEN is scoped to THIS repo and cannot
