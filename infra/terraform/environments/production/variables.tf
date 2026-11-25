@@ -386,8 +386,9 @@ variable "grove_assets_optimize_token" {
 # the storefront and grove_headless as an accepted QA-only shortcut; prod must
 # not repeat it, or revoking a storefront key would also kill checkout (a
 # self-inflicted revenue outage). These resolve from their OWN 1Password item
-# (see .env.op), wired via TF_VAR_stripe_test_secret_key /
-# TF_VAR_stripe_test_webhook_secret. Empty default keeps plan/apply working and
+# (see .env.op). The global var.stripe_test_secret_key fallback was RETIRED in
+# GOL-3802: prod secret keys are per-tenant only (stripe_secret_key_{tenant}
+# below). Empty default keeps plan/apply working and
 # checkout INERT until CFO mints the live keys AND the board greenlights a
 # prod-checkout rebuild (activation replaces the droplet — board-gated per
 # GOL-920). Sensitive so the value never prints in plan/apply output.
@@ -399,13 +400,6 @@ variable "web_base_url" {
     condition     = var.web_base_url == "" || can(regex("^https?://[^/]+$", var.web_base_url))
     error_message = "web_base_url must be empty or an absolute origin with NO trailing slash (e.g. https://odoo.gatheringatthegrove.com)."
   }
-}
-
-variable "stripe_test_secret_key" {
-  description = "Stripe LIVE-mode restricted secret key (rk_live_...) for grove_headless prod checkout — scoped to Checkout Session create + webhook ops only (live equivalent of the QA rk_test_ scope GOL-956 proved sufficient). DEDICATED backend key, never a storefront key (runbook §4). Injected into /etc/grove/.env as lowercase `stripe_test_secret_key`; grove_headless reads it via os.environ. VALUE is its own item in the `Goldberry Grove - Admin` vault (minted by CFO under GOL-973); read via TF_VAR_stripe_test_secret_key. Empty default keeps apply/plan working and checkout inert until provisioned + board-greenlit."
-  type        = string
-  sensitive   = true
-  default     = ""
 }
 
 variable "stripe_test_webhook_secret" {
@@ -445,21 +439,21 @@ variable "stripe_webhook_secret_goldberry" {
 }
 
 variable "stripe_secret_key_goldberry" {
-  description = "Stripe LIVE restricted secret key (rk_live_...) for the goldberry storefront's checkout, charging into Goldberry Grove LLC (acct_1RbD4BIYoWGe7JHE). From `op://Grove Prod/stripe/goldberry_stripe_key` via TF_VAR_stripe_secret_key_goldberry. Rendered into /etc/grove/.env lowercase; grove_headless _tenant_secret_key() prefers it over the global stripe_test_secret_key. All three per-tenant keys must be set together (a tenant without one 503s once any is set). user_data input => droplet-replace semantics; the running droplet was converged by hand 2026-10-30."
+  description = "Stripe LIVE restricted secret key (rk_live_...) for the goldberry storefront's checkout, charging into Goldberry Grove LLC (acct_1RbD4BIYoWGe7JHE). From `op://Grove Prod/stripe/goldberry_stripe_key` via TF_VAR_stripe_secret_key_goldberry. Rendered into /etc/grove/.env lowercase; grove_headless _tenant_secret_key() reads it; there is no global fallback key in prod (retired GOL-3802). All three per-tenant keys must be set together (a tenant without one 503s once any is set). user_data input => droplet-replace semantics; the running droplet was converged by hand 2026-10-30."
   type        = string
   sensitive   = true
   default     = ""
 }
 
 variable "stripe_secret_key_nursery" {
-  description = "Stripe LIVE restricted secret key (rk_live_...) for the nursery storefront's checkout, charging into At The Grove Nursery (acct_16cKwAEkDEtb2GgD). From `op://Grove Prod/stripe/atthegrovenursery_stripe_key` via TF_VAR_stripe_secret_key_nursery. Rendered into /etc/grove/.env lowercase; grove_headless _tenant_secret_key() prefers it over the global stripe_test_secret_key. All three per-tenant keys must be set together (a tenant without one 503s once any is set). user_data input => droplet-replace semantics; the running droplet was converged by hand 2026-10-30."
+  description = "Stripe LIVE restricted secret key (rk_live_...) for the nursery storefront's checkout, charging into At The Grove Nursery (acct_16cKwAEkDEtb2GgD). From `op://Grove Prod/stripe/atthegrovenursery_stripe_key` via TF_VAR_stripe_secret_key_nursery. Rendered into /etc/grove/.env lowercase; grove_headless _tenant_secret_key() reads it; there is no global fallback key in prod (retired GOL-3802). All three per-tenant keys must be set together (a tenant without one 503s once any is set). user_data input => droplet-replace semantics; the running droplet was converged by hand 2026-10-30."
   type        = string
   sensitive   = true
   default     = ""
 }
 
 variable "stripe_secret_key_ggg" {
-  description = "Stripe LIVE restricted secret key (rk_live_...) for the ggg storefront's checkout, charging into GGG Woodworking (acct_1Ttsj9IJGb3xPPqT). From `op://Grove Prod/stripe/ggg_stripe_key` via TF_VAR_stripe_secret_key_ggg. Rendered into /etc/grove/.env lowercase; grove_headless _tenant_secret_key() prefers it over the global stripe_test_secret_key. All three per-tenant keys must be set together (a tenant without one 503s once any is set). user_data input => droplet-replace semantics; the running droplet was converged by hand 2026-10-30."
+  description = "Stripe LIVE restricted secret key (rk_live_...) for the ggg storefront's checkout, charging into GGG Woodworking (acct_1Ttsj9IJGb3xPPqT). From `op://Grove Prod/stripe/ggg_stripe_key` via TF_VAR_stripe_secret_key_ggg. Rendered into /etc/grove/.env lowercase; grove_headless _tenant_secret_key() reads it; there is no global fallback key in prod (retired GOL-3802). All three per-tenant keys must be set together (a tenant without one 503s once any is set). user_data input => droplet-replace semantics; the running droplet was converged by hand 2026-10-30."
   type        = string
   sensitive   = true
   default     = ""

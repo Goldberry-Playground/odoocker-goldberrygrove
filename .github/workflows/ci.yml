@@ -185,7 +185,9 @@ jobs:
         # change commented out that op:// ref; the TF var defaults to "" so
         # plan/apply stayed green while checkout 503'd for a week. This static
         # ref-presence check (no secret VALUES read) makes that regression loud
-        # at PR time. See docs/RUNBOOK-checkout-stripe-guardrails.md.
+        # at PR time. Prod has no global key (GOL-3802): there the guard
+        # requires all three per-tenant refs and rejects the retired global.
+        # See docs/RUNBOOK-checkout-stripe-guardrails.md.
         run: bash scripts/check-checkout-secrets-wired.sh
 
   no-tracked-env-files:
