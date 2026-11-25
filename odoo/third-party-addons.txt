@@ -24,4 +24,10 @@ public https://github.com/OCA/server-ux.git date_range true
 public https://github.com/OCA/reporting-engine.git report_xlsx true report_xlsx_helper true
 public https://github.com/OCA/mis-builder.git mis_builder true mis_builder_budget true
 
+# OCA project/timesheet/web addons for grove_ops (farm ops, Phase 2)
+public https://github.com/OCA/project.git project_milestone_status true project_timeline true project_task_code true project_task_pull_request true project_hr_expense_analytic true
+public https://github.com/OCA/web.git web_timeline true web_widget_x2many_2d_matrix true web_responsive true web_pwa_customize true web_notify true
+public https://github.com/OCA/timesheet.git hr_timesheet_sheet true hr_timesheet_time_control true
+public https://github.com/OCA/account-budgeting.git account_budget_oca true
+
 # Private repositories
