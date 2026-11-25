@@ -513,6 +513,74 @@ After a clean prod run, set `odoo_image_tag` in
 `infra/terraform/environments/production` to the same sha in a reviewed PR, so
 the next rebuild does not go back to `latest`.
 
+## Gate: live ZIP shipping quotes (Train #6, GOL-3927 / GOL-3930)
+
+Checkout can price each box from Pirate Ship's keyless `RatesQuery` behind
+`grove_headless.zip_live_quotes_enabled` (default **off**; spec
+`grove-odoo-modules/docs/superpowers/specs/2026-10-14-live-zip-shipping-design.md`).
+The flag ships off and Josh flips it on prod after promote, so this gate runs
+with the flag turned **on by hand on QA only**.
+
+**Wiring (codified).** Alerts post to `DISCORD_SHIPPING_WEBHOOK_URL`, falling
+back to ORDERS, then OPS. The compose passthrough has existed on both stacks
+since #967; cloud-init now renders the value from TF var
+`discord_shipping_webhook_url` (`op://Grove Prod/odoocker/DISCORD_SHIPPING_WEBHOOK_URL`
+in both `.env.op` files), so train-up brings QA up with it and a prod rebuild
+reproduces it. QA posts land in the real shipping channel with the QA instance
+tag. The weekly `pirateship-query-drift` workflow in grove-odoo-modules watches
+the pinned hash against upstream.
+
+Run on the QA stack, in this order:
+
+```bash
+# 0. The webhook reached the odoo process (expect a non-zero count, ~122).
+ssh <qa-odoo> 'cd /etc/grove && docker compose --env-file .env exec -T odoo printenv DISCORD_SHIPPING_WEBHOOK_URL | wc -c'
+```
+
+1. **Flag off = no change.** With the parameter unset, a tree checkout charges
+   the same shipping as prod does today for that ZIP (code zone table).
+2. **Flag on.** Settings -> Technical -> System Parameters, set
+   `grove_headless.zip_live_quotes_enabled` = `True`.
+3. **Rural and urban quote.** One checkout to a rural ZIP (26651, carries the
+   UPS Delivery Area surcharge) and one to an urban ZIP (28401). Each order's
+   shipping line equals the pirateship.com/rates calculator for the same box
+   and weight **+ $2.50**, and the order shows `grove_shipping_source` = `live`.
+4. **Forced fallback.** Point the client at a dead host, then check out again
+   to a ZIP that has no cached quote (the cache holds a quote for 24 h):
+
+   ```bash
+   ssh <qa-odoo> 'cd /etc/grove && docker compose --env-file .env exec -T -u root odoo sh -c "echo 127.0.0.1 ship.pirateship.com >> /etc/hosts"'
+   ```
+
+   The checkout completes, the order records the fallback level (`zip_area`
+   once the area table is seeded, else `zone`) and a fallback reason.
+5. **Fallback alert.** Five or more box quotes inside an hour with more than
+   20% of them fallbacks post **one** message to the shipping channel, tagged
+   as QA. Further fallbacks inside the same hour do not post again.
+6. **Undo the dead host.** `docker compose --env-file .env up -d --force-recreate odoo`
+   (a recreated container gets a fresh `/etc/hosts`), then one more live
+   checkout to prove quotes are back.
+7. **Drift watch.** In grove-odoo-modules, dispatch `pirateship-query-drift`
+   with `expected_hash` = 64 zeros: the run opens the `pirateship-query-drift`
+   issue and pings Discord. Dispatch it again with no input: the run is green
+   and closes the issue.
+
+**Promote day.** Nothing to apply for this gate: the flag stays off through
+Leg B. Before Josh flips it on prod, confirm the live box still carries the
+webhook (it was set by hand on 2026-10-30; cloud-init only covers a rebuild):
+
+```bash
+ssh grove-prod-odoo 'cd /etc/grove && docker compose --env-file .env exec -T odoo printenv DISCORD_SHIPPING_WEBHOOK_URL | wc -c'
+```
+
+A count of 0 or 1 means the alerts would land in the orders channel instead;
+they are not lost. Then set `grove_headless.zip_live_quotes_enabled` = `True`
+and watch the shipping channel for a day.
+
+**Rollback.** Unset the parameter (or set it to `0`). Checkout is back on the
+code zone table on the next request; no deploy. A retired persisted query does
+this on its own and posts once a day until the hash is updated.
+
 ## Gate: newsletter bulk mail servers (Train #4, GOL-3455 / GOL-3454)
 
 Train #4 brings `mass_mailing` into `grove_headless` (gom#363): Odoo Email

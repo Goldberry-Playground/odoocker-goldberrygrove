@@ -221,7 +221,10 @@ services:
       # starts + customer-email failures; shipping = carrier, Printify and
       # oversell alerts. Each falls back to the ORDERS/OPS webhook above when
       # empty, so these are inert until /etc/grove/.env sets them. Same
-      # bare-URL / no-/slack rule as DISCORD_OPS.
+      # bare-URL / no-/slack rule as DISCORD_OPS. SHIPPING also carries the live
+      # ZIP quote alerts (GOL-3927 / GOL-3928) and is rendered into .env by
+      # cloud-init from TF var discord_shipping_webhook_url (GOL-3930); SALES
+      # and SUPPORT are still hand-set on the box.
       DISCORD_SALES_WEBHOOK_URL: ${DISCORD_SALES_WEBHOOK_URL:-}
       DISCORD_SUPPORT_WEBHOOK_URL: ${DISCORD_SUPPORT_WEBHOOK_URL:-}
       DISCORD_SHIPPING_WEBHOOK_URL: ${DISCORD_SHIPPING_WEBHOOK_URL:-}

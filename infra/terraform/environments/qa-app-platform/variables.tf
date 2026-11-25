@@ -675,6 +675,24 @@ variable "discord_events_webhook_url" {
   }
 }
 
+# Shipping topic channel (gom#384; GOL-3930). grove_headless sends carrier,
+# Printify and oversell alerts and the live ZIP quote alerts (GOL-3927 /
+# GOL-3928) to os.environ DISCORD_SHIPPING_WEBHOOK_URL, falling back to ORDERS,
+# then OPS. QA points at the REAL shipping channel, like the orders webhook, so
+# the Train #6 gate ("forced fallback alert lands in the shipping channel")
+# exercises the same route prod uses; posts carry the QA instance tag.
+variable "discord_shipping_webhook_url" {
+  description = "Discord webhook for the shipping topic channel on QA (os.environ DISCORD_SHIPPING_WEBHOOK_URL; falls back to DISCORD_ORDERS_WEBHOOK_URL, then DISCORD_OPS_WEBHOOK_URL when empty). Same channel as prod so the live ZIP quote alert gate is visible; posts are instance-tagged. 1P: op://Grove Prod/odoocker/DISCORD_SHIPPING_WEBHOOK_URL (via .env.op). BARE url, no /slack suffix. Feeds user_data -- changing it REPLACES the QA odoo droplet (which is what train-up does anyway)."
+  type        = string
+  sensitive   = true
+  default     = ""
+
+  validation {
+    condition     = var.discord_shipping_webhook_url == "" || can(regex("^https://discord(app)?\\.com/api/webhooks/[0-9]+/[A-Za-z0-9_-]+$", var.discord_shipping_webhook_url))
+    error_message = "discord_shipping_webhook_url must be empty or a bare Discord webhook URL (https://discord.com/api/webhooks/<id>/<token>) with NO /slack suffix and no whitespace -- cloud-init writes it UNQUOTED into the bash-sourced /etc/grove/.env."
+  }
+}
+
 # === Storefront shared data cache QA gate (GOL-3907) - valkey.tf ============
 
 variable "valkey_outage_mode" {

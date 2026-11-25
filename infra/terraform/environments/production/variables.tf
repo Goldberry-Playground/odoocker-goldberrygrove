@@ -498,6 +498,25 @@ variable "discord_events_webhook_url" {
   }
 }
 
+# Shipping topic channel (Josh 2026-10-30, gom#384; GOL-3930). Carrier, Printify
+# and oversell alerts already post here, and the live ZIP quote alerts (fallback
+# rate, retired persisted query, nightly ZIP-area refresh: GOL-3927 / GOL-3928)
+# join them. The #967 wiring put the value on the live box by hand and never
+# rendered it from cloud-init, so a rebuild silently sent every shipping alert
+# back to the orders channel. This variable closes that gap. user_data is in
+# ignore_changes, so merging this does NOT touch the running droplet.
+variable "discord_shipping_webhook_url" {
+  description = "Discord webhook for the shipping topic channel: carrier, Printify and oversell alerts plus the live ZIP quote alerts (GOL-3927 / GOL-3928). grove_headless falls back to DISCORD_ORDERS_WEBHOOK_URL, then DISCORD_OPS_WEBHOOK_URL when this is empty, so an unset value misroutes visibly instead of dropping. BARE url, no /slack suffix. 1P: op://Grove Prod/odoocker/DISCORD_SHIPPING_WEBHOOK_URL (via .env.op). user_data input => same droplet-replace semantics as discord_orders_webhook_url."
+  type        = string
+  sensitive   = true
+  default     = ""
+
+  validation {
+    condition     = var.discord_shipping_webhook_url == "" || can(regex("^https://(discord\\.com|discordapp\\.com)/api/webhooks/[0-9]+/[A-Za-z0-9_.-]+$", var.discord_shipping_webhook_url))
+    error_message = "discord_shipping_webhook_url must be empty or a bare Discord webhook URL (https://discord.com/api/webhooks/<id>/<token>) with NO trailing /slack and no whitespace -- cloud-init writes it UNQUOTED into the bash-sourced /etc/grove/.env."
+  }
+}
+
 variable "discord_bot_token" {
   description = "Discord bot token with the Manage Events permission on the Grove guild (phase D, Train #5; GOL-3829 minted it, joins the December rotation batch). grove_calendar's 15-minute events cron creates/patches/deletes guild scheduled events with it; empty => the cron logs once at INFO and does nothing, and the digest webhook above keeps working without it. 1P: op://Grove Prod/odoocker/DISCORD_BOT_TOKEN. PROD ONLY -- QA never sets it, so QA can never write events to the real server."
   type        = string
